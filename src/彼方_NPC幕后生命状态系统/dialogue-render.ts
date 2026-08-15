@@ -877,7 +877,7 @@ function buildAvatarHtml(name, char, settings, shape, colorOverride) {
         const varName = char.__avatarVar ?? '';
         if (varName)
             return `<div class="bfd-avatar" data-shape="${shape}" style="${style}background-image:var(${varName});background-size:cover;background-position:center;"></div>`;
-        return `<div class="bfd-avatar" data-shape="${shape}" style="${style}"><img src="${escapeAttr(char.头像)}" alt="${escapeAttr(name)}" /></div>`;
+        return `<div class="bfd-avatar" data-shape="${shape}" style="${style}"><img src="${escapeAttr(toBlobUrl(char.头像))}" alt="${escapeAttr(name)}" /></div>`;
     }
     const initial = (name || '?').trim().slice(0, 1) || '?';
     return `<div class="bfd-avatar bfd-avatar-initial" data-shape="${shape}" style="${style}"><span>${escapeHtml(initial)}</span></div>`;
@@ -957,6 +957,8 @@ function renderBlocksHtml(blocks, characters, settings) {
                 continue;
             const innerHtml = clean
                 .split(/\n/)
+                .map(line => line.split(/(?<=[。！？…])/))
+                .flat()
                 .map(p => p.trim())
                 .filter(Boolean)
                 .map(p => `<p>${escapeHtml(p)}</p>`)
@@ -970,10 +972,12 @@ function renderBlocksHtml(blocks, characters, settings) {
             const clean = normalizeDisplayText(block.text, 'narration');
             if (!clean)
                 continue;
-            // 旁白: 按原文行(\n)分 <p>(每句一行对应原文结构), 保持与原文一致的段落边界 ——
-            // st-chatu8 生图按原文句子(regex)定位, 若把多行合并成一长段(<br/>), 图片会全堆到段末
+            // 旁白: 按句子分 <p>(句末标点。！？…分割)。st-chatu8 生图的定位 regex 是"原文的一句话",
+            // 段落边界必须精确到句, 一行多句若合并在一个 <p> 里图片会堆到段末
             const paras = clean
                 .split(/\n/)
+                .map(line => line.split(/(?<=[。！？…])/))
+                .flat()
                 .map(p => p.trim())
                 .filter(Boolean)
                 .filter(p => !SPEECH_VERB_ONLY.test(p))
@@ -991,9 +995,11 @@ function renderBlocksHtml(blocks, characters, settings) {
                 continue;
             const actionChar = charMap.get(block.speaker);
             const color = resolveColor(block.speaker, actionChar, settings);
-            // 按原文行分 <p>(与旁白一致): 避免多行合并成一长段导致 st-chatu8 生图定位偏差
+            // 按句子分 <p>(与旁白一致): 避免一行多句合并导致 st-chatu8 生图定位偏差
             const paras = clean
                 .split(/\n/)
+                .map(line => line.split(/(?<=[。！？…])/))
+                .flat()
                 .map(p => p.trim())
                 .filter(Boolean)
                 .map(p => `<p>${escapeHtml(p)}</p>`)
@@ -1028,10 +1034,11 @@ function renderBlocksHtml(blocks, characters, settings) {
         const avatarHtml = buildAvatarHtml(displayName, char, settings, shape, isProtagonist ? settings.主角头像色 || undefined : undefined);
         const nameHtml = settings.显示角色名 ? `<div class="bfd-name" style="color:${nameColor || accent}">${escapeHtml(displayName)}</div>` : '';
         const clean = normalizeDisplayText(block.text, block.type);
-        // 对白: 按原文行分 <p>(与旁白一致), 保持与原文一致的句子边界, 避免合并成一长段导致
-        // st-chatu8 生图按原文句子定位偏差(图片堆到段末)
+        // 对白: 按句子分 <p>(句末标点。！？…分割), 段落边界精确到句, 与 st-chatu8 按句定位一致
         const innerHtml = clean
             .split(/\n/)
+            .map(line => line.split(/(?<=[。！？…])/))
+            .flat()
             .map(p => p.trim())
             .filter(Boolean)
             .map(p => `<p>${escapeHtml(p)}</p>`)
