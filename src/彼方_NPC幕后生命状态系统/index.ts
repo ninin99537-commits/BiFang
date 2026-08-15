@@ -142,6 +142,23 @@ $(() => {
         if (_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().启用幕后)
             maybeInjectNpcStates();
     });
+    // 任何生成结束(含 MVU 等额外模型的变量更新)后, 延迟恢复正文渲染:
+    // MVU 更新时 generatingMessage=true, 彼方在 MESSAGE_UPDATED 里会跳过(避免打断),
+    // 但酒馆会因消息数据变化把楼层 DOM 覆盖回原文(清掉 bfd-reader);
+    // 生成结束后再恢复"有缓存且已被清掉渲染"的楼层, 避免渲染掉落后无人恢复。
+    {
+        let restoreTimer = undefined;
+        eventOn(tavern_events.GENERATION_ENDED, () => {
+            if (!_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().正文渲染?.启用)
+                return;
+            if (restoreTimer !== undefined)
+                window.clearTimeout(restoreTimer);
+            restoreTimer = window.setTimeout(() => {
+                restoreTimer = undefined;
+                _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderCachedMessagesInChat().catch(error => console.warn('[彼方] 生成结束后恢复渲染失败:', error));
+            }, 1200);
+        });
+    }
     // 设置变化时: 处理"正文渲染"开关切换
     // (酒馆助手的脚本设置界面里改"正文渲染·启用"会触发 SETTINGS_UPDATED;
     //  关闭→清除已渲染楼层, 开启→重新渲染当前聊天里已渲染过的楼层)
@@ -214,21 +231,33 @@ $(() => {
         eventOn(tavern_events.STREAM_TOKEN_RECEIVED, handleStreaming);
         eventOn(iframe_events.STREAM_TOKEN_RECEIVED_FULLY, handleStreaming);
     }
-    // 编辑正文后重新渲染; 流式生成中不渲染(避免打断), 编辑完成(非生成中)才渲染
-    eventOn(tavern_events.MESSAGE_UPDATED, message_id => {
-        if (!_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().正文渲染?.启用)
-            return;
-        try {
-            const ctx = SillyTavern?.getContext?.();
-            if (ctx?.generatingMessage)
+    // 编辑正文后重新渲染; 流式生成中(MVU等额外模型更新也会置 generatingMessage)不立即渲染,
+    // 而是挂起待渲染, 由 GENERATION_ENDED 的 renderCachedMessagesInChat 统一补渲染
+    // ——避免直接跳过导致"渲染被酒馆清掉后无人恢复"
+    {
+        let pendingRenderIds = new Set();
+        eventOn(tavern_events.MESSAGE_UPDATED, message_id => {
+            if (!_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().正文渲染?.启用)
                 return;
-        }
-        catch {
-            // 忽略
-        }
-        _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.injectDialogueStyles();
-        _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderMessageById(message_id).catch(error => console.warn('[彼方] 编辑后重新渲染失败:', error));
-    });
+            const id = Number(message_id);
+            if (!Number.isFinite(id) || id <= 0)
+                return;
+            try {
+                const ctx = SillyTavern?.getContext?.();
+                if (ctx?.generatingMessage) {
+                    // 生成中(MVU 额外模型更新): 挂起, 等 GENERATION_ENDED 补渲染
+                    pendingRenderIds.add(id);
+                    return;
+                }
+            }
+            catch {
+                // 忽略
+            }
+            pendingRenderIds.delete(id);
+            _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.injectDialogueStyles();
+            _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderMessageById(id).catch(error => console.warn('[彼方] 编辑后重新渲染失败:', error));
+        });
+    }
     // 重roll(换生成结果)后内容变化, 清掉该楼层缓存并重新渲染, 否则停在旧渲染/原文
     eventOn(tavern_events.MESSAGE_SWIPED, message_id => {
         if (!_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().正文渲染?.启用)

@@ -257,7 +257,30 @@ const useSettingsStore = pinia__WEBPACK_IMPORTED_MODULE_2__.defineStore('bifang-
     }, { deep: true });
     return { settings };
 });
+
+/**
+ * 读取设置: 优先实时读全局(悬浮球/其他 iframe 改设置后, 渲染侧能立即拿到最新值,
+ * 避免 store 缓存旧设置导致图片库/头像大小等不生效); 读失败回退 store 缓存。
+ * 全局读取带 500ms 缓存, 避免渲染频繁调用时反复序列化大设置(含 base64 头像)。
+ */
+let globalReadCache = null;
+let globalReadTime = 0;
 function getSettings() {
+    try {
+        const now = Date.now();
+        if (!globalReadCache || now - globalReadTime > 500) {
+            const global = getVariables({ type: 'global' })?.[SETTINGS_KEY];
+            if (global && typeof global === 'object' && !Array.isArray(global)) {
+                globalReadCache = Settings.parse(global);
+                globalReadTime = now;
+            }
+        }
+        if (globalReadCache)
+            return globalReadCache;
+    }
+    catch {
+        // 全局读取失败, 回退 store
+    }
     return useSettingsStore().settings;
 }
 

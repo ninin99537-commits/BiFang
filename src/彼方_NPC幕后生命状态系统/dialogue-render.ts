@@ -1,4 +1,4 @@
-// 已从酒馆导出的打包产物恢复 (webpack 编译形态还原)
+﻿// 已从酒馆导出的打包产物恢复 (webpack 编译形态还原)
 import * as _api__WEBPACK_IMPORTED_MODULE_0__ from './api';
 import * as _settings__WEBPACK_IMPORTED_MODULE_1__ from './settings';
 import * as _state__WEBPACK_IMPORTED_MODULE_2__ from './state';
@@ -807,6 +807,11 @@ function buildAvatarHtml(name, char, settings, shape, colorOverride) {
                 : derivePalette(name);
     const style = `--role-accent:${color};--role-accent-2:${accent2};width:var(--pg-avatar-size, ${settings.头像大小 ?? 50}px);height:var(--pg-avatar-size, ${settings.头像大小 ?? 50}px);`;
     if (char?.头像) {
+        // 头像去重: base64 大图只注册一次为 CSS 变量(reader style 里), 这里用 background 引用变量,
+        // 避免每个对白块都内联一份 base64 → reader 膨胀几十 MB(渲染卡死/失败)
+        const varName = char.__avatarVar ?? '';
+        if (varName)
+            return `<div class="bfd-avatar" data-shape="${shape}" style="${style}background-image:var(${varName});background-size:cover;background-position:center;"></div>`;
         return `<div class="bfd-avatar" data-shape="${shape}" style="${style}"><img src="${escapeAttr(char.头像)}" alt="${escapeAttr(name)}" /></div>`;
     }
     const initial = (name || '?').trim().slice(0, 1) || '?';
@@ -1222,6 +1227,8 @@ function observeEntryAnimations(root) {
     if (hasPending)
         ensureAnimationPoller();
 }
+/** 正文渲染版本: 渲染结构/样式变更时 +1, 强制已渲染楼层重建(否则旧的 reader 因"跳过重建"永不更新) */
+const READER_VERSION = 6;
 /** 渲染指定楼层的正文显示(只改显示, 不改 message.mes 原始内容) */
 async function renderMessageById(messageId) {
     const settings = _settings__WEBPACK_IMPORTED_MODULE_1__.getSettings().正文渲染;
@@ -1279,9 +1286,11 @@ async function renderMessageById(messageId) {
     // 缓存命中需同时满足: hash 相同 + 标签模式/列表一致(模式变化后分段结构不同, 旧缓存不能复用)
     if (cached && cached.hash === hash && cached.mode === mode && JSON.stringify(cached.tags) === JSON.stringify(tags)) {
         segmentBlocks = cached.segments;
+        console.info(`[彼方渲染] #${messageId} 缓存命中(hash=${hash} 一致), 复用解析结果, 不重新调 AI`);
     }
     else {
         // 需要实际调用 AI 解析: 显示"正在渲染"弹窗(可中断), 完成/失败/中断分别提示
+        console.info(`[彼方渲染] #${messageId} 缓存未命中: cached=${!!cached} cachedHash=${cached?.hash} newHash=${hash} mode=${mode} tags=[${tags.join(',')}], 重新调 AI 解析`);
         const updatingStore = _state__WEBPACK_IMPORTED_MODULE_2__.useUpdatingStore();
         const signal = updatingStore.start('正在渲染正文…', '渲染');
         let renderError = null;
@@ -1343,18 +1352,25 @@ async function renderMessageById(messageId) {
                 break;
         }
     }
-    if (!el)
+    if (!el) {
+        console.warn(`[彼方渲染] #${messageId} 未找到楼层 DOM(3秒等待后仍无), 放弃渲染`);
         return;
+    }
     // 关键: 若楼层已渲染(有 bfd-reader)且正文 hash 命中缓存(正文内容未变, 只是其他插件在末尾
     // 加了 UpdateVariable/StatusPlaceHolderImpl 等标签), 则完全跳过重建——重建 reader 会让
     // st-chatu8 已插入的图片失效、且有解析/渲染失败风险, 导致渲染掉落。
-    // 只有正文真正变化(hash 变化)或未渲染过时才重建。
-    if (el.querySelector('.bfd-reader') && cached && cached.hash === hash && cached.mode === mode && JSON.stringify(cached.tags) === JSON.stringify(tags)) {
+    // 只有正文真正变化(hash 变化)、未渲染过、或渲染版本不同(结构/样式升级)时才重建。
+    const existingReader = el.querySelector('.bfd-reader');
+    if (existingReader && existingReader.getAttribute('data-version') === String(READER_VERSION)
+        && cached && cached.hash === hash && cached.mode === mode && JSON.stringify(cached.tags) === JSON.stringify(tags)) {
+        console.info(`[彼方渲染] #${messageId} 已有 reader 且正文未变(hash=${hash}), 跳过重建`);
         return;
     }
+    console.info(`[彼方渲染] #${messageId} 开始重建: 已有Reader=${!!el.querySelector('.bfd-reader')} hash=${hash} cachedHash=${cached?.hash}`);
     // 清理失效状态: 若楼层有 bfd-rendered 类但没有 bfd-reader(此前渲染中途失败/被插件打断),
     // 先清除标记, 本次渲染成功后再重新添加, 避免留下"标记了却无渲染"的脏状态
     if (el.classList.contains('bfd-rendered') && !el.querySelector('.bfd-reader')) {
+        console.info(`[彼方渲染] #${messageId} 清理失效状态(有类无reader)`);
         el.classList.remove('bfd-rendered');
         el.removeAttribute('data-bfd-original');
         el.querySelectorAll('.bfd-chatu8-src').forEach(src => src.remove());
@@ -1373,6 +1389,19 @@ async function renderMessageById(messageId) {
     }
     if (!originalHtml)
         originalHtml = el.getAttribute('data-bfd-original') ?? '';
+    // 头像去重: 先给所有有头像的角色分配 CSS 变量名(renderBlocksHtml 里 buildAvatarHtml 会引用),
+    // 再在 reader style 里注入这些变量(避免每个对白块内联整份 base64 导致 reader 膨胀几十 MB)
+    const avatarVars = [];
+    {
+        let avatarIdx = 0;
+        for (const c of characters) {
+            if (c?.头像) {
+                c.__avatarVar = `--bfd-avatar-${avatarIdx++}`;
+                const cssUrl = String(c.头像).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+                avatarVars.push(`${c.__avatarVar}:url("${cssUrl}")`);
+            }
+        }
+    }
     // 只读模式: 优先"按标签块替换"——把 <content> 等正文标签块换成对白渲染, 其他标签(time_format/后话等)原样保留其正则样式
     let finalHtml = null;
     const parseSegments = segments.filter(s => s.kind === 'parse');
@@ -1477,7 +1506,25 @@ async function renderMessageById(messageId) {
     ].join(';');
     // 整个楼层包进阅读器容器: 让旁白/对白成为连续的"正文流"; data-emotion-mode 供注入样式的情绪动画分级(完整/简化/关闭)
     const emotionMode = String(settings.情绪动画 ?? '完整');
-    el.innerHTML = `<div class="bfd-reader" style="${vars}" data-emotion-mode="${emotionMode}">${finalHtml}</div>`;
+    // 头像 base64 用 <style> 块注入(而非 style 属性): 超大 base64 放 style 属性会被 innerHTML 解析截断;
+    // 放 <style> 里只出现一次, 对白块用 var(--bfd-avatar-N) 引用
+    const avatarStyleBlock = avatarVars.length > 0
+        ? `<style>${avatarVars.map(v => `.bfd-reader[data-version="${READER_VERSION}"]{${v}}`).join('')}</style>`
+        : '';
+    try {
+        el.innerHTML = `<div class="bfd-reader" style="${vars}" data-emotion-mode="${emotionMode}" data-version="${READER_VERSION}">${avatarStyleBlock}${finalHtml}</div>`;
+        console.info(`[彼方渲染] #${messageId} 渲染成功: reader长度=${(finalHtml || '').length} 段数=${segmentBlocks.length}`);
+    }
+    catch (error) {
+        console.error(`[彼方渲染] #${messageId} 设置 innerHTML 失败:`, error);
+        // 渲染失败回滚状态, 避免留下"有 bfd-rendered 类但无 reader"的脏状态
+        el.classList.remove('bfd-rendered');
+        const original = el.getAttribute('data-bfd-original');
+        if (original !== null)
+            el.innerHTML = original;
+        el.removeAttribute('data-bfd-original');
+        return;
+    }
     // st-chatu8 生图兼容: 追加隐藏原文层并监听搬运 st-chatu8 插入的图片到渲染层
     attachChatu8CompatLayer(el, originalHtml);
     // 滚动到屏幕底部 1/3 处触发入场/情绪动画(逐旁白/逐对白行)
@@ -2005,6 +2052,17 @@ function observeChatu8Insertions(mesTextEl) {
         // 自身搬运引发的变化直接忽略
         if (relocating)
             return;
+        // 自动恢复: 楼层有 bfd-rendered 类但 .bfd-reader 被外部(酒馆重渲染/MVU更新)清掉 → 延迟重渲染恢复
+        if (mesTextEl.classList.contains('bfd-rendered') && !mesTextEl.querySelector('.bfd-reader')) {
+            const mid = Number(mesTextEl.closest?.('.mes')?.getAttribute('mesid'));
+            if (Number.isFinite(mid) && mid > 0) {
+                window.setTimeout(() => {
+                    if (mesTextEl.classList.contains('bfd-rendered') && !mesTextEl.querySelector('.bfd-reader')) {
+                        renderMessageById(mid).catch(error => console.warn('[彼方] 自动恢复渲染失败:', error));
+                    }
+                }, 800);
+            }
+        }
         const relevant = mutations.some(m => {
             // 只关心新增的图片元素(按钮/容器等); 文本变化不关心, 避免 st-chatu8 处理时频繁触发
             return Array.from(m.addedNodes).some(node => {
@@ -2518,3 +2576,4 @@ function injectDialogueStyles() {
 }
 
 export { applyImportedFonts, clearDialogueRenders, clearMessageCache, findMessageTextElement, getImportedFontNames, getRenderPromptSeed, injectDialogueStyles, loadParseCache, preParseStreamingContent, reRenderLatestMessage, reapplyAllRenders, reapplyImportedFonts, reapplyLatestRender, renderCachedMessagesInChat, renderMessageById };
+
