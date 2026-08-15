@@ -2070,15 +2070,14 @@ function observeChatu8Insertions(mesTextEl) {
                         ? Array.from(reader.querySelectorAll('.st-chatu8-image-span')).find(c => c.getAttribute('data-request-id') === reqId)
                         : null;
                     if (existingClone) {
-                        // 已有克隆: 校正位置到"完整 regex 句子所在段落"之前(与原文段落开头一致),
-                        // 并同步内容(图片注入)。不做字符级拆段, 避免插到句子中间。
+                        // 已有克隆: 校正位置到"完整 regex 句子所在段落"之后, 并同步内容(图片注入)
                         const correctPara = targetPara;
                         const isWrongPlace = correctPara
-                            ? !(existingClone.nextElementSibling === correctPara || existingClone.previousElementSibling === correctPara)
+                            ? existingClone.previousElementSibling !== correctPara
                             : false;
                         if (isWrongPlace) {
                             const fresh = span.cloneNode(true);
-                            correctPara.parentElement?.insertBefore(fresh, correctPara);
+                            correctPara.parentElement?.insertBefore(fresh, correctPara.nextSibling);
                             existingClone.remove();
                             applyEntryAnimationToImage(fresh);
                         }
@@ -2097,9 +2096,8 @@ function observeChatu8Insertions(mesTextEl) {
                         applyEntryAnimationToImage(clone);
                         continue;
                     }
-                    // 插到"含完整 regex 句子的段落"之前(与 st-chatu8 在原文里段落开头插入一致);
-                    // 不做字符级拆段(那是之前插到句子中间的根源)
-                    targetPara.parentElement?.insertBefore(clone, targetPara);
+                    // 插到"含完整 regex 句子的段落"之后; 不做字符级拆段(那是之前插到句子中间的根源)
+                    targetPara.parentElement?.insertBefore(clone, targetPara.nextSibling);
                     applyEntryAnimationToImage(clone);
                 }
                 catch (error) {
