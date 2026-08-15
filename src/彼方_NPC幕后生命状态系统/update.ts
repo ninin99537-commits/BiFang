@@ -430,24 +430,28 @@ function maskBaseUrl(url) {
 function extractCurrentTimeHint(worldbook, reply, context) {
     const text = `${worldbook}\n${reply}\n${context}`;
     const pad = (n) => String(n).padStart(2, '0');
-    // 1. 优先: 明确的"当前时间"标签(时间表列), 格式固定
-    for (const pattern of [/当前时间[^\d]*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:[ T]?\d{1,2}:\d{1,2})?)/, /现在(?:是|为)?[^\d]*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:[ T]?\d{1,2}:\d{1,2})?)/]) {
-        const match = text.match(pattern);
-        if (match)
-            return match[1].replace(/[/.]/g, '-');
+    // 注意: reply 拼接顺序是"较早回复在前、最新回复在后", 必须取**最后出现**的当前时刻
+    // (最新层的正文时间), 而不是第一个(会取到较早楼层的时间)。
+    // 1. 优先: 明确的"当前时间"标签(时间表列), 取最后一次出现
+    for (const pattern of [/当前时间[^\d]*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:[ T]?\d{1,2}:\d{1,2})?)/g, /现在(?:是|为)?[^\d]*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:[ T]?\d{1,2}:\d{1,2})?)/g]) {
+        const matches = [...text.matchAll(pattern)];
+        if (matches.length > 0)
+            return matches[matches.length - 1][1].replace(/[/.]/g, '-');
     }
-    // 2. 中文格式: 2025年11月15日 ... 19:20-19:25 (时间段取结束时刻)
-    const cn = text.match(/(\d{4})年(\d{1,2})月(\d{1,2})日[^\n]*?(\d{1,2}):(\d{1,2})(?:-(\d{1,2}):(\d{1,2}))?/);
-    if (cn) {
-        const [, y, mo, d, h1, m1, h2, m2] = cn;
+    // 2. 中文格式: 2025年11月15日 ... 19:20-19:25 (时间段取结束时刻), 取最后一次
+    const cnRe = /(\d{4})年(\d{1,2})月(\d{1,2})日[^\n]*?(\d{1,2}):(\d{1,2})(?:-(\d{1,2}):(\d{1,2}))?/g;
+    const cnMatches = [...text.matchAll(cnRe)];
+    if (cnMatches.length > 0) {
+        const [, y, mo, d, h1, m1, h2, m2] = cnMatches[cnMatches.length - 1];
         const h = h2 ?? h1;
         const m = m2 ?? m1;
         return `${y}-${pad(mo)}-${pad(d)} ${pad(h)}:${pad(m)}`;
     }
-    // 3. 数字格式(日期+时间)
-    const numeric = text.match(/(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:[ T]?\d{1,2}:\d{1,2})?)/);
-    if (numeric)
-        return numeric[1].replace(/[/.]/g, '-');
+    // 3. 数字格式(日期+时间), 取最后一次
+    const numericRe = /(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:[ T]?\d{1,2}:\d{1,2})?)/g;
+    const numericMatches = [...text.matchAll(numericRe)];
+    if (numericMatches.length > 0)
+        return numericMatches[numericMatches.length - 1][1].replace(/[/.]/g, '-');
     // 4. 特殊纪年/无标准日期的时间标注: 优先取所有 "time:" 行中的**最后一行**(最新正文的 time 行), 时间段取结束时刻、单个时分直接取
     const timeLines = [...text.matchAll(/time:([^\n]*)/gi)].map(match => match[1]);
     const timeLine = timeLines[timeLines.length - 1];
@@ -460,10 +464,11 @@ function extractCurrentTimeHint(worldbook, reply, context) {
             return `${pad(h)}:${pad(m)}`;
         }
     }
-    // 5. 备选: 任意 "☆" 标注后的时分(时间段取结束时刻)
-    const hm2 = text.match(/☆[^\n]{0,80}?(\d{1,2}):(\d{1,2})(?:-(\d{1,2}):(\d{1,2}))?/);
-    if (hm2) {
-        const [, h1, m1, h2, m2] = hm2;
+    // 5. 备选: 任意 "☆" 标注后的时分(时间段取结束时刻), 取最后一次
+    const hm2Re = /☆[^\n]{0,80}?(\d{1,2}):(\d{1,2})(?:-(\d{1,2}):(\d{1,2}))?/g;
+    const hm2Matches = [...text.matchAll(hm2Re)];
+    if (hm2Matches.length > 0) {
+        const [, h1, m1, h2, m2] = hm2Matches[hm2Matches.length - 1];
         const h = h2 ?? h1;
         const m = m2 ?? m1;
         return `${pad(h)}:${pad(m)}`;
@@ -694,7 +699,8 @@ function applyUpdate(data, parsed, timeJump = null, playerName = null) {
                     const prev = prevList.find(interaction => sameNpcSet(interaction.NPC, npcList));
                     const rounds = (prev?.轮次 ?? 0) + 1;
                     newList.unshift({
-                        时间: new Date().toLocaleString(),
+                        // 时间用**剧情时间**(结束时刻), 不用现实时间——后台互动发生在剧情里
+                        时间: storyRange.endTs ? fmtStoryTime(storyRange.endTs) : (storyTimeText || new Date().toLocaleString()),
                         NPC: npcList,
                         事件: eventText,
                         轮次: rounds,
