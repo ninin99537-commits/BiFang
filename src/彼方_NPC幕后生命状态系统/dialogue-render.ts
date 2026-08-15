@@ -1345,6 +1345,13 @@ async function renderMessageById(messageId) {
     }
     if (!el)
         return;
+    // 关键: 若楼层已渲染(有 bfd-reader)且正文 hash 命中缓存(正文内容未变, 只是其他插件在末尾
+    // 加了 UpdateVariable/StatusPlaceHolderImpl 等标签), 则完全跳过重建——重建 reader 会让
+    // st-chatu8 已插入的图片失效、且有解析/渲染失败风险, 导致渲染掉落。
+    // 只有正文真正变化(hash 变化)或未渲染过时才重建。
+    if (el.querySelector('.bfd-reader') && cached && cached.hash === hash && cached.mode === mode && JSON.stringify(cached.tags) === JSON.stringify(tags)) {
+        return;
+    }
     // 清理失效状态: 若楼层有 bfd-rendered 类但没有 bfd-reader(此前渲染中途失败/被插件打断),
     // 先清除标记, 本次渲染成功后再重新添加, 避免留下"标记了却无渲染"的脏状态
     if (el.classList.contains('bfd-rendered') && !el.querySelector('.bfd-reader')) {
