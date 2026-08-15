@@ -1117,20 +1117,53 @@ function getBandTopPx() {
 /**
  * 入场/情绪动画轮询: 每 500ms 检查一次 pending 元素, 顶部已滚过 1/3 线(含快速滚动/跳转/恢复滚动位置/正常下滑)的直接显示。
  * 不用 IntersectionObserver(跨域 root 几何易错)也不用 scroll 监听(scroll 事件不冒泡, #chat 内部滚动到不了 window);
- * 无 pending 时只是空查询, 开销可忽略。
+ * 按需启动: 存在 .bfd-animate-pending 元素时才轮询, 全部显示完即停止(避免永久空转拖累页面)。
  */
+let animationPollerTimer = null;
+/** 注册的所有楼层图片重定位函数(供轮询器在滚动时对可见楼层重定位) */
+const chatu8Relocators = new Set();
 function startAnimationPoller() {
-    window.setInterval(() => {
+    if (animationPollerTimer !== null)
+        return;
+    animationPollerTimer = window.setInterval(() => {
         try {
             const doc = window.parent?.document;
             if (!doc)
                 return;
+            const pending = doc.querySelectorAll('.bfd-animate-pending');
+            // 轮询在跑(说明用户在滚动/查看) → 顺带对可见楼层的图片做一次重定位(不可见楼层被 relocate 内部跳过)
+            if (chatu8Relocators.size > 0) {
+                for (const fn of Array.from(chatu8Relocators)) {
+                    try {
+                        fn();
+                    }
+                    catch {
+                        // 忽略单个楼层失败
+                    }
+                }
+            }
+            if (pending.length === 0) {
+                // 没有待触发动画的元素, 停止轮询
+                window.clearInterval(animationPollerTimer);
+                animationPollerTimer = null;
+                return;
+            }
             const topLine = getBandTopPx();
-            for (const el of Array.from(doc.querySelectorAll('.bfd-animate-pending'))) {
+            let shown = 0;
+            for (const el of Array.from(pending)) {
                 const r = el.getBoundingClientRect();
                 if (r.top < topLine) {
                     el.classList.remove('bfd-animate-pending');
                     el.classList.add('bfd-animate');
+                    shown++;
+                }
+            }
+            // 全部显示完则停止轮询(下次新渲染会重新 start)
+            if (shown > 0) {
+                const still = doc.querySelectorAll('.bfd-animate-pending').length;
+                if (still === 0) {
+                    window.clearInterval(animationPollerTimer);
+                    animationPollerTimer = null;
                 }
             }
         }
@@ -1139,7 +1172,11 @@ function startAnimationPoller() {
         }
     }, 500);
 }
-startAnimationPoller();
+/** 新楼层渲染后调用: 确保轮询在跑(pending 存在时) */
+function ensureAnimationPoller() {
+    if (animationPollerTimer === null)
+        startAnimationPoller();
+}
 /**
  * 渲染时标记入场/情绪动画状态: 元素顶部已在触发线以上(正在看/已读过/已滚出视口顶部)直接显示;
  * 顶部在触发线以下(还没读到)挂 pending(opacity:0), 由轮询在滚到触发线时播放动画。
@@ -1148,6 +1185,7 @@ function observeEntryAnimations(root) {
     // 逐段动画: 旁白按 <p> 触发, 对白/心声按整块触发
     const targets = Array.from(root.querySelectorAll('.bfd-narration p, .bfd-line, .bfd-line-inner'));
     const topLine = getBandTopPx();
+    let hasPending = false;
     for (const el of targets) {
         const rect = el.getBoundingClientRect();
         if (rect.top < topLine) {
@@ -1155,8 +1193,12 @@ function observeEntryAnimations(root) {
         }
         else {
             el.classList.add('bfd-animate-pending');
+            hasPending = true;
         }
     }
+    // 有挂起动画的段落 → 确保轮询在跑(无 pending 时轮询会自动停止, 不空转)
+    if (hasPending)
+        ensureAnimationPoller();
 }
 /** 渲染指定楼层的正文显示(只改显示, 不改 message.mes 原始内容) */
 async function renderMessageById(messageId) {
@@ -1454,15 +1496,27 @@ function isChatu8TagText(text) {
 }
 
 /** 读取该楼层 st-chatu8 保存的图片定位数据: [{regex, tag, ...}], 读取失败返回空数组 */
+const chatu8ImageCache = new Map(); // messageId -> { time, data }
 function getChatu8ImageMatches(messageId) {
     try {
+        // 缓存 2 秒: relocate 在同一批次内会多次读取同一楼层, 避免反复访问 SillyTavern.getContext()
+        const cached = chatu8ImageCache.get(messageId);
+        const now = Date.now();
+        if (cached && now - cached.time < 2000)
+            return cached.data;
         const ctx = typeof SillyTavern?.getContext === 'function' ? SillyTavern.getContext() : undefined;
         const msg = ctx?.chat?.[messageId];
-        if (!msg || !msg.extra?.images)
-            return [];
-        const swipe = msg.swipe_id ?? 0;
-        const list = msg.extra.images[swipe] || msg.extra.images[0] || [];
-        return Array.isArray(list) ? list : [];
+        let data = [];
+        if (msg && msg.extra?.images) {
+            const swipe = msg.swipe_id ?? 0;
+            const list = msg.extra.images[swipe] || msg.extra.images[0] || [];
+            data = Array.isArray(list) ? list : [];
+        }
+        // 简单清理防内存膨胀(最多保留 50 个楼层)
+        if (chatu8ImageCache.size > 50)
+            chatu8ImageCache.clear();
+        chatu8ImageCache.set(messageId, { time: now, data });
+        return data;
     }
     catch {
         return [];
@@ -1737,6 +1791,7 @@ function applyEntryAnimationToImage(node) {
     }
     else {
         target.classList.add('bfd-animate-pending');
+        ensureAnimationPoller();
     }
 }
 
@@ -1744,9 +1799,11 @@ function applyEntryAnimationToImage(node) {
 const chatu8ObserverStore = new WeakMap();
 
 function disconnectChatu8Observer(mesTextEl) {
-    const mo = chatu8ObserverStore.get(mesTextEl);
-    if (mo) {
-        mo.disconnect();
+    const entry = chatu8ObserverStore.get(mesTextEl);
+    if (entry) {
+        entry.mo.disconnect();
+        if (entry.relocate)
+            chatu8Relocators.delete(entry.relocate);
         chatu8ObserverStore.delete(mesTextEl);
     }
 }
@@ -1789,6 +1846,21 @@ function observeChatu8Insertions(mesTextEl) {
         const src = mesTextEl.querySelector('.bfd-chatu8-src');
         if (!reader || !src)
             return;
+        // 只在楼层可见时处理: 酒馆会虚拟化楼层(只渲染最近的若干层), 对不可见楼层执行
+        // findAnchorInfo(读 SillyTavern.getContext)纯属浪费性能
+        try {
+            const mesEl = mesTextEl.closest?.('.mes');
+            if (mesEl) {
+                const rect = mesEl.getBoundingClientRect();
+                const vh = window.parent?.innerHeight ?? window.innerHeight ?? 0;
+                // 视口上下各放宽 3 屏: 超出则视为不可见, 跳过(等滚到附近由滚动重新触发)
+                if (rect.top > vh * 4 || rect.bottom < -vh * 3)
+                    return;
+            }
+        }
+        catch {
+            // 判断失败则不跳过, 保守处理
+        }
         relocating = true;
         try {
             const srcText = src.textContent || '';
@@ -1879,6 +1951,8 @@ function observeChatu8Insertions(mesTextEl) {
             relocating = false;
         }
     };
+    // 注册到全局重定位集合: 滚动时由动画轮询器对可见楼层重新调用
+    chatu8Relocators.add(relocate);
     let timer;
     const debouncedRelocate = () => {
         if (timer !== undefined)
@@ -1904,7 +1978,7 @@ function observeChatu8Insertions(mesTextEl) {
             debouncedRelocate();
     });
     mo.observe(mesTextEl, { childList: true, subtree: true });
-    chatu8ObserverStore.set(mesTextEl, mo);
+    chatu8ObserverStore.set(mesTextEl, { mo, relocate });
 }
 /** 重新解析并渲染最新一条 AI 正文(清缓存, 不动幕后数据) */
 async function reRenderLatestMessage() {
