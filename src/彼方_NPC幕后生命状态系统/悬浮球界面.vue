@@ -148,8 +148,8 @@
                         <span v-if="updating" class="bf-spinner"></span>
                         <PhArrowsClockwise v-else :size="15" weight="bold" />{{ updating ? '更新中…' : '手动更新' }}
                       </button>
-                      <button class="bf-btn" :disabled="updating" title="忽略现有卡片重新生成" @click="refillUpdate">
-                        <PhRepeat :size="15" weight="bold" />重新填写
+                      <button class="bf-btn" :disabled="updating" title="重新解析并渲染最新一条正文(不动幕后数据)" @click="reRenderDialogue">
+                        <PhImageSquare :size="15" weight="bold" />重新渲染
                       </button>
                       <button class="bf-btn" :disabled="updating" @click="reload"><PhArrowsClockwise :size="15" weight="bold" />刷新</button>
                       <button class="bf-btn bf-btn-danger" :disabled="updating" @click="clearAll">
@@ -474,6 +474,47 @@
                     </div>
                   </div>
 
+                  <div class="bf-panel-card">
+                    <div class="bf-debug-head">
+                      <span class="bf-debug-head-label"><PhImageSquare :size="14" weight="duotone" /> 正文渲染日志</span>
+                      <div class="bf-render-log-tools">
+                        <span v-if="renderLogs.length" class="bf-render-log-count">{{ renderLogs.length }} 条</span>
+                        <button class="bf-btn bf-btn-mini" @click="renderLogStore.clear()">清空</button>
+                      </div>
+                    </div>
+                    <div v-if="renderLogs.length === 0" class="bf-empty">
+                      <div class="bf-empty-text">还没有渲染日志</div>
+                      <div class="bf-empty-hint">启用正文渲染并生成新消息、或点「重新渲染」后，这里会显示每次解析发送给解析AI的请求与输出</div>
+                    </div>
+                    <div v-for="(rl, ri) in renderLogs" :key="ri" class="bf-render-log-item" :class="{ 'is-error': rl.error }">
+                      <div class="bf-render-log-head">
+                        <div class="bf-render-log-meta">
+                          <span class="bf-render-log-badge" :class="{ ok: !rl.error, err: !!rl.error }">
+                            {{ rl.error ? '失败' : '完成' }}
+                          </span>
+                          <span class="bf-render-log-id">楼层 #{{ rl.messageId }}</span>
+                          <span class="bf-render-log-time">{{ fmtTime(rl.time) }}</span>
+                        </div>
+                        <div class="bf-render-log-actions">
+                          <button v-if="rl.request" class="bf-btn bf-btn-mini" @click="copyText(rl.request)"><PhCopy :size="11" weight="bold" />请求</button>
+                          <button v-if="rl.response" class="bf-btn bf-btn-mini" @click="copyText(rl.response)"><PhCopy :size="11" weight="bold" />输出</button>
+                        </div>
+                      </div>
+                      <details class="bf-render-log-details" :open="ri === renderLogs.length - 1 && !rl.error">
+                        <summary class="bf-debug-summary">发送给解析 AI · {{ rl.request.length }} 字</summary>
+                        <pre class="bf-debug-pre">{{ rl.request }}</pre>
+                      </details>
+                      <details class="bf-render-log-details">
+                        <summary class="bf-debug-summary">AI 输出 · {{ rl.response.length }} 字</summary>
+                        <pre class="bf-debug-pre">{{ rl.response || '(无)' }}</pre>
+                      </details>
+                      <div v-if="rl.error" class="bf-render-log-error-box">
+                        <PhWarning :size="12" weight="fill" />
+                        <span>{{ rl.error }}</span>
+                      </div>
+                    </div>
+                  </div>
+
                   <!-- 右栏：注入内容 + 控制台 -->
                   <div class="bf-logs-side">
                     <div class="bf-panel-card">
@@ -517,7 +558,9 @@
 
               <!-- 设置 -->
               <div v-else key="settings" class="bf-page">
-                <div class="bf-page-title"><PhGearSix :size="18" weight="duotone" /> 设置</div>
+                <div class="bf-page-title"><PhGearSix :size="18" weight="duotone" /> 设置
+                  <button class="bf-btn bf-btn-mini" @click="openPromptEditor">编辑提示词</button>
+                </div>
 
                 <div class="bf-settings-layout">
                   <!-- 左栏：接口配置 -->
@@ -553,11 +596,15 @@
                           {{ testing ? '测试中…' : '测试连接' }}
                         </button>
                       </div>
-                      <div class="bf-row">
-                        <span class="bf-label">温度</span>
-                        <input v-model.number="settings.接口.温度" class="bf-input bf-input-num" type="number" min="0" max="2" step="0.1" />
-                        <span class="bf-label">最大输出Token</span>
-                        <input v-model.number="settings.接口.最大token" class="bf-input bf-input-num" type="number" min="1" max="131072" step="1024" />
+                      <div class="bf-row-pair">
+                        <div class="bf-pair">
+                          <span class="bf-label">温度</span>
+                          <input v-model.number="settings.接口.温度" class="bf-input bf-input-num" type="number" min="0" max="2" step="0.1" />
+                        </div>
+                        <div class="bf-pair">
+                          <span class="bf-label">最大输出Token</span>
+                          <input v-model.number="settings.接口.最大token" class="bf-input bf-input-num" type="number" min="1" max="131072" step="1024" />
+                        </div>
                       </div>
                       <label class="bf-toggle">
                         <input v-model="settings.接口.关闭思维链" type="checkbox" />
@@ -592,6 +639,12 @@
                   <div class="bf-settings-side">
                     <div class="bf-group">
                       <div class="bf-group-title"><PhGearSix :size="14" weight="duotone" /> 更新设置</div>
+                      <label class="bf-toggle">
+                        <input v-model="settings.启用幕后" type="checkbox" />
+                        <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                        <span class="bf-toggle-text">启用幕后系统</span>
+                      </label>
+                      <div class="bf-hint">关闭后不再调用 AI 更新 NPC 状态/注入(已有状态数据保留, 重开恢复); 正文渲染独立不受影响</div>
                       <label class="bf-toggle">
                         <input v-model="settings.更新.自动更新" type="checkbox" />
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
@@ -639,37 +692,334 @@
                         <span class="bf-label">世界书条数上限</span>
                         <input v-model.number="settings.更新.注入世界书条数" class="bf-input bf-input-num" type="number" min="1" max="200" step="1" />
                       </div>
-                      <div class="bf-row">
-                        <span class="bf-label">更新频率</span>
-                        <input v-model.number="settings.更新.更新频率" class="bf-input bf-input-num" type="number" min="1" />
-                        <span class="bf-label">读取回复数</span>
-                        <input v-model.number="settings.更新.读取最近回复数" class="bf-input bf-input-num" type="number" min="1" max="20" />
+                      <div class="bf-row-pair">
+                        <div class="bf-pair">
+                          <span class="bf-label">更新频率</span>
+                          <input v-model.number="settings.更新.更新频率" class="bf-input bf-input-num" type="number" min="1" />
+                        </div>
+                        <div class="bf-pair">
+                          <span class="bf-label">读取回复数</span>
+                          <input v-model.number="settings.更新.读取最近回复数" class="bf-input bf-input-num" type="number" min="1" max="20" />
+                        </div>
                       </div>
                       <div class="bf-hint">每 N 条回复更新一次 · 更新时读取最近 N 条AI回复</div>
                     </div>
 
                     <div class="bf-group">
                       <div class="bf-group-title"><PhTag :size="14" weight="duotone" /> 标签过滤</div>
-                      <div class="bf-row bf-actions">
-                        <button
-                          class="bf-btn bf-btn-mini"
-                          :class="{ active: settings.标签.模式 === '排除' }"
-                          @click="settings.标签.模式 = '排除'"
-                        >
-                          排除
-                        </button>
-                        <button
-                          class="bf-btn bf-btn-mini"
-                          :class="{ active: settings.标签.模式 === '只读' }"
-                          @click="settings.标签.模式 = '只读'"
-                        >
-                          只读
-                        </button>
+                      <div class="bf-row">
+                        <span class="bf-label">标签模式</span>
+                        <div class="bf-seg">
+                          <button
+                            class="bf-btn"
+                            :class="{ active: settings.标签.模式 === '排除' }"
+                            @click="settings.标签.模式 = '排除'"
+                          >
+                            排除
+                          </button>
+                          <button
+                            class="bf-btn"
+                            :class="{ active: settings.标签.模式 === '只读' }"
+                            @click="settings.标签.模式 = '只读'"
+                          >
+                            只读
+                          </button>
+                        </div>
                       </div>
                       <textarea v-model="tagText" class="bf-textarea bf-textarea-short" placeholder="aftertalk&#10;thinking&#10;branches"></textarea>
                       <div class="bf-hint">
                         <template v-if="settings.标签.模式 === '排除'">排除这些标签内的内容，直接写标签名即可（如 thinking，不用带尖括号）；只出现 &lt;/标签&gt; 没有开头的孤立闭合标签会从楼层开头删到该结尾标签</template>
                         <template v-else>只读取这些标签内的内容；没有这些标签的楼层保留原文</template>
+                      </div>
+                    </div>
+
+                    <!-- 正文渲染 -->
+                    <div class="bf-group">
+                      <div class="bf-group-title"><PhTextAlignLeft :size="14" weight="duotone" /> 正文对白视觉渲染</div>
+                      <label class="bf-toggle">
+                        <input v-model="settings.正文渲染.启用" type="checkbox" @change="onDialogueRenderToggle" />
+                        <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                        <span class="bf-toggle-text">启用正文渲染</span>
+                      </label>
+                      <div class="bf-hint">识别正文中的角色对白并显示为头像+对白块（旁白保持小说样式）；只改前端显示、不改原始正文，关闭后恢复原文</div>
+
+                      <div class="bf-row">
+                        <label class="bf-toggle">
+                          <input v-model="settings.正文渲染.杀八股" type="checkbox" />
+                          <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                          <span class="bf-toggle-text">杀八股清理</span>
+                        </label>
+                        <span class="bf-hint bf-hint-inline">开启时渲染 AI 附带杀八股清理规则；关闭则纯逐字保留解析</span>
+                      </div>
+                      <div v-if="settings.正文渲染.杀八股" class="bf-group-subtitle">杀八股 · 勾选要应用的规则组</div>
+                      <div v-if="settings.正文渲染.杀八股" class="bf-sba-groups">
+                        <label v-for="g in sbaGroups" :key="g.key" class="bf-sba-item">
+                          <input v-model="settings.正文渲染.杀八股规则[g.key]" type="checkbox" />
+                          <span>{{ g.label }}</span>
+                          <span class="bf-hint">{{ g.tip }}</span>
+                        </label>
+                      </div>
+
+                      <div class="bf-group-subtitle">解析</div>
+                      <div class="bf-row">
+                        <span class="bf-label">解析接口</span>
+                        <select v-model="settings.正文渲染.解析接口预设" class="bf-input">
+                          <option value="">复用彼方接口</option>
+                          <option v-for="p in presetNames" :key="p" :value="p">{{ p }}</option>
+                        </select>
+                      </div>
+                      <div class="bf-hint">不选=用彼方当前接口；选了=用该保存配置的接口（不同 API，与更新互不干扰、同时进行）</div>
+                      <div class="bf-row">
+                        <span class="bf-label">正文标签</span>
+                        <div class="bf-seg">
+                          <button class="bf-btn" :class="{ active: settings.正文渲染.标签模式 === '无' }" @click="settings.正文渲染.标签模式 = '无'">无</button>
+                          <button class="bf-btn" :class="{ active: settings.正文渲染.标签模式 === '排除' }" @click="settings.正文渲染.标签模式 = '排除'">排除</button>
+                          <button class="bf-btn" :class="{ active: settings.正文渲染.标签模式 === '只读' }" @click="settings.正文渲染.标签模式 = '只读'">只读</button>
+                        </div>
+                      </div>
+                      <textarea v-model="renderTagText" class="bf-textarea bf-textarea-short" placeholder="标签名（如 content、正文）"></textarea>
+                      <div class="bf-hint">只读=只把标签内的正文渲染为对白(标签外保持原文)；排除=排除标签内的内容不渲染(保持原文)，渲染标签外的正文</div>
+
+                      <div class="bf-group-subtitle">角色</div>
+                      <div class="bf-row">
+                        <span class="bf-label">角色配色</span>
+                        <select v-model="settings.正文渲染.角色配色" class="bf-input">
+                          <option value="自动">自动 · 设计调色板</option>
+                          <option value="固定">固定色</option>
+                          <option value="灰">中性灰</option>
+                        </select>
+                        <input type="color" :value="settings.正文渲染.固定角色色 || '#8b93a7'" @input="settings.正文渲染.固定角色色 = ($event.target as HTMLInputElement).value" class="bf-color-pick" title="固定色" />
+                        <button v-if="settings.正文渲染.角色配色 === '固定'" class="bf-btn bf-btn-mini" @click="settings.正文渲染.固定角色色 = ''">默认</button>
+                      </div>
+                      <div class="bf-row">
+                        <span class="bf-label">头像形状</span>
+                        <select v-model="settings.正文渲染.头像形状" class="bf-input">
+                          <option value="auto">自动 · 按角色分配</option>
+                          <option value="circle">圆形</option>
+                          <option value="rounded">圆角矩形</option>
+                          <option value="portrait">半身肖像</option>
+                          <option value="soft">柔和裁切</option>
+                        </select>
+                        <span class="bf-label">头像</span>
+                        <input v-model.number="settings.正文渲染.头像大小" class="bf-input bf-input-num" type="number" min="32" max="96" step="4" />
+                      </div>
+                      <label class="bf-toggle">
+                        <input v-model="settings.正文渲染.显示角色名" type="checkbox" />
+                        <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                        <span class="bf-toggle-text">显示角色名</span>
+                      </label>
+                      <div class="bf-row">
+                        <span class="bf-label">角色名字号</span>
+                        <input v-model.number="settings.正文渲染.角色名字号" class="bf-input bf-input-num" type="number" min="8" max="24" step="1" />
+                      </div>
+                      <div class="bf-row">
+                        <span class="bf-label">主角名</span>
+                        <input v-model="settings.正文渲染.主角名" class="bf-input" placeholder="留空=用 persona 名 / 你" />
+                      </div>
+                      <div class="bf-hint">主角对白显示用此名字（不必是"你/我"），也用于判定哪些对白是主角</div>
+
+                      <div class="bf-group-subtitle">主角样式</div>
+                      <div class="bf-row">
+                        <span class="bf-label">对白文字色</span>
+                        <input v-model="settings.正文渲染.主角对白文字色" class="bf-input" placeholder="留空=用全局/角色色" />
+                        <input type="color" :value="settings.正文渲染.主角对白文字色 || '#ffffff'" @input="settings.正文渲染.主角对白文字色 = ($event.target as HTMLInputElement).value" class="bf-color-pick" title="主角对白文字色" />
+                        <button class="bf-btn bf-btn-mini" @click="settings.正文渲染.主角对白文字色 = ''">默认</button>
+                      </div>
+                      <div class="bf-row">
+                        <span class="bf-label">名字颜色</span>
+                        <input v-model="settings.正文渲染.主角名字色" class="bf-input" placeholder="留空=用角色色" />
+                        <input type="color" :value="settings.正文渲染.主角名字色 || '#ffffff'" @input="settings.正文渲染.主角名字色 = ($event.target as HTMLInputElement).value" class="bf-color-pick" title="主角名字色" />
+                        <button class="bf-btn bf-btn-mini" @click="settings.正文渲染.主角名字色 = ''">默认</button>
+                      </div>
+                      <div class="bf-row">
+                        <span class="bf-label">竖线颜色</span>
+                        <input v-model="settings.正文渲染.主角细线色" class="bf-input" placeholder="留空=用角色色" />
+                        <input type="color" :value="settings.正文渲染.主角细线色 || '#ffffff'" @input="settings.正文渲染.主角细线色 = ($event.target as HTMLInputElement).value" class="bf-color-pick" title="主角竖线色" />
+                        <button class="bf-btn bf-btn-mini" @click="settings.正文渲染.主角细线色 = ''">默认</button>
+                      </div>
+                      <div class="bf-row">
+                        <span class="bf-label">头像颜色</span>
+                        <input v-model="settings.正文渲染.主角头像色" class="bf-input" placeholder="留空=用角色色" />
+                        <input type="color" :value="settings.正文渲染.主角头像色 || '#ffffff'" @input="settings.正文渲染.主角头像色 = ($event.target as HTMLInputElement).value" class="bf-color-pick" title="主角头像色" />
+                        <button class="bf-btn bf-btn-mini" @click="settings.正文渲染.主角头像色 = ''">默认</button>
+                      </div>
+
+                      <div class="bf-group-subtitle">头像图片库</div>
+                      <div v-for="(img, ii) in settings.正文渲染.图片库" :key="ii" class="bf-char-row">
+                        <input
+                          v-model="keywordDrafts[ii]"
+                          class="bf-input"
+                          placeholder="关键词(用逗号分隔, 中英文都可)"
+                          @change="img.关键词 = splitKeywords(keywordDrafts[ii])"
+                        />
+                        <input type="file" accept="image/*" class="bf-file-input" @change="onUploadImage(ii, $event)" />
+                        <input v-model="img.图片" class="bf-input" placeholder="或粘贴图片链接 URL" />
+                        <img v-if="img.图片" :src="img.图片" class="bfd-lib-thumb" alt="头像预览" />
+                        <input type="color" :value="img.颜色 || '#888888'" @input="img.颜色 = ($event.target as HTMLInputElement).value" class="bf-color-pick" title="角色色" />
+                        <select v-model="img.头像形状" class="bf-input bf-input-shape">
+                          <option value="auto">形状自动</option>
+                          <option value="circle">圆形</option>
+                          <option value="rounded">圆角</option>
+                          <option value="portrait">肖像</option>
+                          <option value="soft">柔和</option>
+                        </select>
+                        <button class="bf-btn bf-btn-mini" @click="settings.正文渲染.图片库.splice(ii, 1)">×</button>
+                      </div>
+                      <div class="bf-row bf-actions">
+                        <button class="bf-btn bf-btn-mini" @click="addImageEntry">+ 添加图片</button>
+                      </div>
+
+                      <div class="bf-group-subtitle">对白外观</div>
+                      <div class="bf-row-pair">
+                        <div class="bf-pair">
+                          <span class="bf-label">细线</span>
+                          <label class="bf-toggle bf-toggle-inline">
+                            <input v-model="settings.正文渲染.对白细线" type="checkbox" />
+                            <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                            <span class="bf-toggle-text">启用</span>
+                          </label>
+                        </div>
+                        <div class="bf-pair">
+                          <span class="bf-label">粗细</span>
+                          <input v-model.number="settings.正文渲染.对白细线粗细" class="bf-input bf-input-num" type="number" min="0" max="8" step="1" />
+                          <input type="color" :value="settings.正文渲染.对白细线颜色 || '#888888'" @input="settings.正文渲染.对白细线颜色 = ($event.target as HTMLInputElement).value" class="bf-color-pick" title="细线色" />
+                          <button class="bf-btn bf-btn-mini" @click="settings.正文渲染.对白细线颜色 = ''">默认</button>
+                        </div>
+                      </div>
+                      <div class="bf-hint">细线是角色色的左侧强调线（主角在右侧），无背景时的细线效果就是默认样式</div>
+                      <div class="bf-row">
+                        <span class="bf-label">背景色</span>
+                        <input type="color" :value="settings.正文渲染.对白背景色 || '#888888'" @input="settings.正文渲染.对白背景色 = ($event.target as HTMLInputElement).value" class="bf-color-pick" title="背景色" />
+                        <button class="bf-btn bf-btn-mini" @click="settings.正文渲染.对白背景色 = ''">无</button>
+                        <span class="bf-label">渐变至</span>
+                        <input type="color" :value="settings.正文渲染.对白背景色2 || '#888888'" @input="settings.正文渲染.对白背景色2 = ($event.target as HTMLInputElement).value" class="bf-color-pick" title="渐变终点色" />
+                        <button class="bf-btn bf-btn-mini" @click="settings.正文渲染.对白背景色2 = ''">无</button>
+                        <span class="bf-label">透明度</span>
+                        <input v-model.number="settings.正文渲染.对白背景透明度" class="bf-input bf-input-num" type="number" min="0" max="100" step="5" />
+                      </div>
+                      <div class="bf-hint">「背景色」是渐变起点，「渐变至」是终点（留空=与起点同色）。主角对白的渐变方向会自动镜像（横向↔反向）</div>
+                      <div class="bf-row">
+                        <span class="bf-label">渐变</span>
+                        <select v-model="settings.正文渲染.对白渐变" class="bf-input">
+                          <option value="无">无</option>
+                          <option value="横向">横向</option>
+                          <option value="纵向">纵向</option>
+                          <option value="对角">对角</option>
+                          <option value="横向到透明">横向→透明</option>
+                          <option value="纵向到透明">纵向→透明</option>
+                          <option value="对角到透明">对角→透明</option>
+                        </select>
+                        <span class="bf-label">圆角</span>
+                        <input v-model.number="settings.正文渲染.对白圆角" class="bf-input bf-input-num" type="number" min="0" max="30" step="2" />
+                      </div>
+                      <div class="bf-row">
+                        <span class="bf-label">文字色</span>
+                        <input type="color" :value="settings.正文渲染.对白文字色 || '#cccccc'" @input="settings.正文渲染.对白文字色 = ($event.target as HTMLInputElement).value" class="bf-color-pick" title="文字色" />
+                        <button class="bf-btn bf-btn-mini" @click="settings.正文渲染.对白文字色 = ''">默认</button>
+                      </div>
+
+                      <div class="bf-group-subtitle">排版</div>
+                      <div class="bf-row">
+                        <span class="bf-label">对白宽度</span>
+                        <input v-model.number="settings.正文渲染.对白最大宽度" class="bf-input bf-input-num" type="number" min="40" max="90" step="5" />
+                        <span class="bf-label">阅读宽度</span>
+                        <input v-model.number="settings.正文渲染.阅读宽度" class="bf-input bf-input-num" type="number" min="480" max="1200" step="20" />
+                      </div>
+                      <div class="bf-row">
+                        <span class="bf-label">对白间距</span>
+                        <input v-model.number="settings.正文渲染.对白间距" class="bf-input bf-input-num" type="number" min="0.5" max="5" step="0.1" />
+                        <span class="bf-label">旁白块距</span>
+                        <input v-model.number="settings.正文渲染.旁白间距" class="bf-input bf-input-num" type="number" min="0" max="6" step="0.1" />
+                        <span class="bf-label">旁白段距</span>
+                        <input v-model.number="settings.正文渲染.旁白段间距" class="bf-input bf-input-num" type="number" min="0" max="4" step="0.1" />
+                      </div>
+                      <label class="bf-toggle">
+                        <input v-model="settings.正文渲染.旁白对齐对白" type="checkbox" />
+                        <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                        <span class="bf-toggle-text">旁白对齐对白</span>
+                      </label>
+                      <div class="bf-hint">开启后旁白缩进到与对白文本同一起始列，形成上下对齐的阅读列；关闭则旁白从最左侧开始</div>
+                      <label class="bf-toggle">
+                        <input v-model="settings.正文渲染.动作并入旁白" type="checkbox" />
+                        <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                        <span class="bf-toggle-text">动作并入旁白</span>
+                      </label>
+                      <div class="bf-hint">开启后角色的动作描写不单独渲染（无斜体弱化），直接按旁白样式显示</div>
+
+                      <div class="bf-group-subtitle">旁白字体</div>
+                      <div class="bf-row">
+                        <span class="bf-label">字体</span>
+                        <select v-model="settings.正文渲染.旁白字体" class="bf-input">
+                          <option v-for="f in fontPresets" :key="f" :value="f">{{ f }}</option>
+                        </select>
+                        <span class="bf-label">字号</span>
+                        <input v-model.number="settings.正文渲染.旁白字号" class="bf-input bf-input-num" type="number" min="13" max="24" />
+                        <label class="bf-toggle bf-toggle-inline">
+                          <input v-model="settings.正文渲染.旁白加粗" type="checkbox" />
+                          <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                          <span class="bf-toggle-text">加粗</span>
+                        </label>
+                        <span class="bf-label">行高</span>
+                        <input v-model.number="settings.正文渲染.旁白行高" class="bf-input bf-input-num" type="number" min="1.4" max="2.6" step="0.1" />
+                      </div>
+                      <div class="bf-row">
+                        <span class="bf-label">旁白文字色</span>
+                        <input type="color" :value="settings.正文渲染.旁白文字色 || '#cccccc'" @input="settings.正文渲染.旁白文字色 = ($event.target as HTMLInputElement).value" class="bf-color-pick" title="旁白文字色" />
+                        <button class="bf-btn bf-btn-mini" @click="settings.正文渲染.旁白文字色 = ''">默认</button>
+                        <span class="bf-label">动作文字色</span>
+                        <input type="color" :value="settings.正文渲染.动作文字色 || '#999999'" @input="settings.正文渲染.动作文字色 = ($event.target as HTMLInputElement).value" class="bf-color-pick" title="动作文字色" />
+                        <button class="bf-btn bf-btn-mini" @click="settings.正文渲染.动作文字色 = ''">默认</button>
+                      </div>
+                      <div class="bf-group-subtitle">对白字体</div>
+                      <div class="bf-row">
+                        <span class="bf-label">字体</span>
+                        <select v-model="settings.正文渲染.对白字体" class="bf-input">
+                          <option v-for="f in fontPresets" :key="f" :value="f">{{ f }}</option>
+                        </select>
+                        <span class="bf-label">字号</span>
+                        <input v-model.number="settings.正文渲染.对白字号" class="bf-input bf-input-num" type="number" min="13" max="24" />
+                        <label class="bf-toggle bf-toggle-inline">
+                          <input v-model="settings.正文渲染.对白加粗" type="checkbox" />
+                          <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                          <span class="bf-toggle-text">加粗</span>
+                        </label>
+                        <span class="bf-label">行高</span>
+                        <input v-model.number="settings.正文渲染.对白行高" class="bf-input bf-input-num" type="number" min="1.3" max="2.4" step="0.1" />
+                      </div>
+
+                      <div class="bf-group-subtitle">导入字体</div>
+                      <div class="bf-hint">每行一条：字体文件 URL（.woff2/.otf/.ttf）、@font-face 样式或 Google Fonts 样式表链接；也可直接选择本地字体文件。导入后可在上方「字体」下拉里选用（字体名=文件名）。</div>
+                      <textarea v-model="settings.正文渲染.导入字体" class="bf-input bf-textarea" rows="3" spellcheck="false" placeholder="https://example.com/font.woff2&#10;@font-face{font-family:'X';src:url('…') format('woff2');}&#10;https://fonts.googleapis.com/css2?family=Noto+Serif+SC"></textarea>
+                      <div class="bf-row">
+                        <button class="bf-btn bf-btn-mini" @click="applyImportedFontsNow">应用字体</button>
+                        <label class="bf-btn bf-btn-mini bf-file-btn">
+                          选择本地字体文件
+                          <input type="file" accept=".ttf,.otf,.woff,.woff2" style="display:none" @change="onFontFileImport" />
+                        </label>
+                      </div>
+                      <div class="bf-hint" v-if="importedFontNames.length">已识别字体：{{ importedFontNames.join('、') }}</div>
+
+                      <div class="bf-group-subtitle">动画</div>
+                      <label class="bf-toggle">
+                        <input v-model="settings.正文渲染.动画" type="checkbox" />
+                        <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                        <span class="bf-toggle-text">启用动画</span>
+                      </label>
+                      <label class="bf-toggle">
+                        <input v-model="settings.正文渲染.历史播放动画" type="checkbox" />
+                        <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                        <span class="bf-toggle-text">历史消息播放动画</span>
+                      </label>
+                      <div class="bf-row">
+                        <span class="bf-label">情绪动画</span>
+                        <button class="bf-btn bf-btn-mini" :class="{ active: settings.正文渲染.情绪动画 === '完整' }" @click="settings.正文渲染.情绪动画 = '完整'">完整</button>
+                        <button class="bf-btn bf-btn-mini" :class="{ active: settings.正文渲染.情绪动画 === '简化' }" @click="settings.正文渲染.情绪动画 = '简化'">简化</button>
+                        <button class="bf-btn bf-btn-mini" :class="{ active: settings.正文渲染.情绪动画 === '关闭' }" @click="settings.正文渲染.情绪动画 = '关闭'">关闭</button>
+                      </div>
+                      <div class="bf-row">
+                        <span class="bf-label">动画触发位置</span>
+                        <input v-model.number="settings.正文渲染.动画触发位置" class="bf-input bf-input-num" type="number" min="5" max="100" step="1" />
+                        <span class="bf-hint">元素顶部滚到屏幕的此百分比处才显示（66=距底1/3，50=屏幕中间，100=一进视口就显示）</span>
                       </div>
                     </div>
                   </div>
@@ -728,6 +1078,54 @@
         </div>
       </div>
     </Transition>
+
+    <!-- 编辑提示词弹层: 幕后更新 / 正文渲染 两套独立提示词, 非空时替换内置 -->
+    <Transition name="bf-fade">
+      <div v-if="showPromptEditor" class="bf-prompt-overlay" @click.self="showPromptEditor = false">
+        <div class="bf-prompt-modal">
+          <div class="bf-prompt-head">
+            <span>编辑提示词</span>
+            <button class="bf-btn bf-btn-mini" @click="showPromptEditor = false">关闭（不保存）</button>
+          </div>
+          <div class="bf-prompt-tabs">
+            <button
+              v-for="t in promptEditorTabs"
+              :key="t.key"
+              class="bf-btn bf-btn-mini"
+              :class="{ active: promptEditorTab === t.key }"
+              @click="promptEditorTab = t.key"
+            >{{ t.label }}</button>
+          </div>
+          <div class="bf-hint">{{ promptEditorTabInfo?.hint }}（留空则使用内置提示词）</div>
+          <div class="bf-hint bf-prompt-ph">占位符：{{ promptEditorTabInfo?.placeholders }}</div>
+          <div class="bf-prompt-list">
+            <div v-for="(seg, i) in currentDraft()" :key="i" class="bf-prompt-seg">
+              <div class="bf-prompt-seg-head">
+                <select v-model="seg.role" class="bf-input bf-input-role">
+                  <option value="system">system</option>
+                  <option value="user">user</option>
+                  <option value="assistant">assistant</option>
+                </select>
+                <span class="bf-hint">第 {{ i + 1 }} 段</span>
+                <div class="bf-prompt-move">
+                  <button class="bf-btn bf-btn-mini" :disabled="i === 0" title="上移" @click="movePromptSegment(i, -1)">↑</button>
+                  <button class="bf-btn bf-btn-mini" :disabled="i === currentDraft().length - 1" title="下移" @click="movePromptSegment(i, 1)">↓</button>
+                </div>
+                <button class="bf-btn bf-btn-mini" @click="removePromptSegment(i)">删除</button>
+              </div>
+              <textarea v-model="seg.content" class="bf-input bf-textarea" rows="4" spellcheck="false" placeholder="提示词内容（可含占位符）…"></textarea>
+            </div>
+            <div v-if="!currentDraft().length" class="bf-empty-hint">未配置自定义提示词，当前使用内置提示词</div>
+          </div>
+          <div class="bf-prompt-actions">
+            <button class="bf-btn bf-btn-mini" @click="addPromptSegment">＋ 添加提示词段</button>
+            <button class="bf-btn bf-btn-mini" @click="clearPromptSegments">清空自定义</button>
+            <span class="bf-prompt-spacer"></span>
+            <button class="bf-btn bf-btn-primary" @click="savePromptDraft">保存</button>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -762,6 +1160,7 @@ import {
   PhSun,
   PhTag,
   PhTerminalWindow,
+  PhTextAlignLeft,
   PhTrash,
   PhUserPlus,
   PhUsers,
@@ -771,10 +1170,12 @@ import {
 } from '@phosphor-icons/vue';
 import { chatCompletion, fetchModelList } from './api';
 import { useSettingsStore } from './settings';
-import { CARD_FIELDS, freshClearData, loadData, useConsoleStore, useDebugStore, useMainPromptStore, useStateStore, useUpdatingStore } from './state';
+import { CARD_FIELDS, freshClearData, loadData, useConsoleStore, useDebugStore, useMainPromptStore, useRenderLogStore, useStateStore, useUpdatingStore } from './state';
 import type { NpcStateCard } from './state';
 import { updateNpcStates } from './update';
 import { syncNpcStatesWorldbook } from './worldbook-inject';
+import { clearDialogueRenders, getImportedFontNames, getRenderPromptSeed, injectDialogueStyles, reapplyAllRenders, reapplyImportedFonts, reapplyLatestRender, reRenderLatestMessage } from './dialogue-render';
+import { getUpdatePromptSeed } from './prompts';
 
 const ORB_KEY = '彼方_悬浮球';
 const THEME_KEY = '彼方_主题';
@@ -808,6 +1209,8 @@ const stateStore = useStateStore();
 const { data } = storeToRefs(stateStore);
 
 const debugStore = useDebugStore();
+const renderLogStore = useRenderLogStore();
+const { logs: renderLogs } = storeToRefs(renderLogStore);
 const { log: debugLog } = storeToRefs(debugStore);
 
 const updatingStore = useUpdatingStore();
@@ -837,6 +1240,30 @@ const isDragging = ref(false);
 const presetName = ref('');
 const selectedPreset = ref('');
 const presetNames = computed(() => Object.keys(settings.value.接口预设 ?? {}));
+/** 字体预设选项(与 dialogue-render 的 FONT_PRESETS 键一致), 附加导入字体名 */
+const importedFontNames = ref<string[]>(getImportedFontNames());
+const fontPresets = computed(() => [...new Set(['衬线宋体', '衬线楷体', '衬线明体', '黑体', '圆体', '仿宋', '默认', ...importedFontNames.value])]);
+function applyImportedFontsNow() {
+  importedFontNames.value = reapplyImportedFonts();
+  reapplyAllRenders().catch(() => {});
+}
+function onFontFileImport(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  const family = file.name.replace(/\.[^.]+$/, '');
+  const ext = (file.name.toLowerCase().match(/\.(woff2?|otf|ttf)$/) || [])[1] || 'ttf';
+  const format = ext === 'woff2' ? 'woff2' : ext === 'woff' ? 'woff' : ext === 'otf' ? 'opentype' : 'truetype';
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = String(reader.result);
+    const line = `@font-face{font-family:'${family}';src:url(${dataUrl}) format('${format}');font-display:swap;}`;
+    settings.value.正文渲染.导入字体 = `${settings.value.正文渲染.导入字体 || ''}\n${line}`.trim();
+    applyImportedFontsNow();
+    toastr.success(`已导入字体「${family}」`, '彼方');
+  };
+  reader.readAsDataURL(file);
+  (e.target as HTMLInputElement).value = '';
+}
 function saveApiPreset() {
   const name = String(presetName.value).trim();
   if (!name) {
@@ -1034,7 +1461,7 @@ function npcStatusText(card: NpcStateCard): string {
 
 /** NPC 详情字段分组：生活动态 / 内心世界 / 生理状态（'可能偶遇'与核心状态字段单独处理） */
 const DETAIL_GROUPS: Record<string, string[]> = {
-  生活: ['接下来想做', '当前目标', '最近变化', '未完成事项'],
+  生活: ['生活状态', '接下来想做', '当前目标', '最近变化', '未完成事项'],
   内心: ['心里惦记', '秘密想法', '隐藏目标'],
   生理: ['生理周期', '是否怀孕', '累计受孕率', '当前防护', '近期性行为', '生理结算', '受孕率记录'],
 };
@@ -1131,6 +1558,174 @@ const tagText = computed({
       .filter(Boolean);
   },
 });
+
+// 正文渲染: 标签预处理列表同步 + 启用/关闭处理
+const renderTagText = computed({
+  get: () => settings.value.正文渲染.标签列表.join('\n'),
+  set: value => {
+    settings.value.正文渲染.标签列表 = value
+      .split(/[\n,，;；、]+/)
+      .map(item => item.trim().replace(/^<|>$/g, ''))
+      .filter(Boolean);
+  },
+});
+function onDialogueRenderToggle() {
+  if (settings.value.正文渲染.启用) {
+    injectDialogueStyles();
+  } else {
+    clearDialogueRenders();
+  }
+}
+
+/** 图片库: 上传图片转 base64 */
+function onUploadImage(index: number, event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const entry = settings.value.正文渲染.图片库[index];
+    if (entry) entry.图片 = String(reader.result ?? '');
+  };
+  reader.readAsDataURL(file);
+  (event.target as HTMLInputElement).value = '';
+}
+/** 图片库关键词编辑草稿: 输入即时更新、失焦/回车才提交拆分——避免受控 :value 在组件重渲染(如面板"当前时间"每秒刷新)时把刚打的字清空 */
+const keywordDrafts = ref<string[]>([]);
+function syncKeywordDrafts(): void {
+  keywordDrafts.value = (settings.value.正文渲染?.图片库 ?? []).map(img => (img.关键词 || []).join(','));
+}
+function addImageEntry() {
+  settings.value.正文渲染.图片库.push({ 关键词: [], 图片: '', 颜色: '' });
+  keywordDrafts.value.push('');
+}
+function splitKeywords(text: string): string[] {
+  return String(text || '')
+    .split(/[\n,，;；、]+/)
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+/** 杀八股规则组选项(与"通用规则集"分组一致); AI 组走提示词, program 组走代码替换 */
+const sbaGroups = [
+  { key: '形副词系', label: '形副词系', tip: '抽象定性/标签化感官/般的套语/过度副词/定性化修饰' },
+  { key: '形副量词', label: '形副量词', tip: '冗余量词/指示词' },
+  { key: '删陈词滥调', label: '删陈词滥调', tip: '近乎/嘴角弧度/发出…声音/声音带着/茧子/手指泛白' },
+  { key: '修剪比喻类', label: '修剪比喻类', tip: '像/仿佛/如同…比喻分句' },
+  { key: '修剪复合句', label: '修剪复合句', tip: '并非…而是 / 不是…不是…' },
+  { key: '人体词汇', label: '人体词汇', tip: '头颅→头、躯体→身体 等替换' },
+  { key: 'R18词汇', label: 'R18词汇', tip: '肠液→爱液、甬道→小穴 等替换' },
+  { key: '词汇替换', label: '词汇替换（可选）', tip: '抠挖→拨弄、薄如蝉翼→轻若无物 等（默认关）' },
+  { key: '处理——及多种增殖', label: '破折号/省略号清理（选开）', tip: '中文间破折号→逗号、重复标点去重（默认关，需重渲染）' },
+  { key: '合并较短段落', label: '合并较短段落（选开）', tip: '短段落与上段合并（默认关，会改变段落节奏）' },
+  { key: '分割较长段落', label: '分割较长段落（选开）', tip: '超长段落按句号断开（默认关）' },
+];
+
+// ---- 编辑提示词: 幕后更新 / 正文渲染 两套独立的自定义提示词段(非空时替换内置) ----
+type PromptSeg = { role: 'system' | 'user' | 'assistant'; content: string };
+const showPromptEditor = ref(false);
+const promptEditorTab = ref<'update' | 'render'>('update');
+// 编辑草稿: 打开时从设置载入(为空则用内置种子), 点"保存"才写回设置; 关闭未保存则丢弃
+const promptDraftUpdate = ref<PromptSeg[]>([]);
+const promptDraftRender = ref<PromptSeg[]>([]);
+const promptEditorTabs = computed(() => [
+  {
+    key: 'update' as const,
+    label: '幕后更新',
+    hint: '自定义幕后NPC状态更新的提示词（与正文渲染互不干扰）',
+    placeholders: '{{正文}} {{上下文}} {{追踪名单}} {{现有状态卡}} {{互动记录}} {{当前剧情时间}} {{主角名}} {{当前时间}}',
+  },
+  {
+    key: 'render' as const,
+    label: '正文渲染',
+    hint: '自定义正文对白解析的提示词（与幕后更新互不干扰）',
+    placeholders: '{{正文}} {{主角名}} {{当前时间}}',
+  },
+]);
+const promptEditorTabInfo = computed(() => promptEditorTabs.value.find(t => t.key === promptEditorTab.value));
+function currentDraft(): PromptSeg[] {
+  return promptEditorTab.value === 'update' ? promptDraftUpdate.value : promptDraftRender.value;
+}
+/** 打开编辑器并载入草稿: 设置里已有自定义则载入; 为空(或仍是旧的自动种子)则用最新内置种子作起点 */
+function openPromptEditor() {
+  const updateSaved = settings.value.更新.自定义提示词;
+  promptDraftUpdate.value = updateSaved.length ? klona(updateSaved) : (getUpdatePromptSeed() as PromptSeg[]);
+  const renderSaved = settings.value.正文渲染.自定义提示词;
+  promptDraftRender.value = renderSaved.length ? klona(renderSaved) : (getRenderPromptSeed() as PromptSeg[]);
+  showPromptEditor.value = true;
+}
+function savePromptDraft() {
+  const target = promptEditorTab.value === 'update' ? settings.value.更新.自定义提示词 : settings.value.正文渲染.自定义提示词;
+  target.splice(0, target.length, ...klona(currentDraft()));
+  toastr.success(`已保存${promptEditorTab.value === 'update' ? '幕后更新' : '正文渲染'}提示词`, '彼方');
+}
+function addPromptSegment() {
+  currentDraft().push({ role: 'system', content: '' });
+}
+function removePromptSegment(i: number) {
+  currentDraft().splice(i, 1);
+}
+function movePromptSegment(i: number, dir: -1 | 1) {
+  const list = currentDraft();
+  const j = i + dir;
+  if (j < 0 || j >= list.length) return;
+  const [seg] = list.splice(i, 1);
+  list.splice(j, 0, seg);
+}
+function clearPromptSegments() {
+  currentDraft().splice(0);
+}
+
+// 视觉样式/图片库设置变化时, 重新应用渲染(走缓存, 不重新解析)
+watch(
+  () => [
+    settings.value.正文渲染?.头像大小,
+    settings.value.正文渲染?.头像形状,
+    settings.value.正文渲染?.角色配色,
+    settings.value.正文渲染?.固定角色色,
+    settings.value.正文渲染?.对白最大宽度,
+    settings.value.正文渲染?.对白间距,
+    settings.value.正文渲染?.显示角色名,
+    settings.value.正文渲染?.角色名字号,
+    settings.value.正文渲染?.主角名,
+    settings.value.正文渲染?.主角对白文字色,
+    settings.value.正文渲染?.主角名字色,
+    settings.value.正文渲染?.主角细线色,
+    settings.value.正文渲染?.主角头像色,
+    settings.value.正文渲染?.旁白字体,
+    settings.value.正文渲染?.旁白字号,
+    settings.value.正文渲染?.旁白加粗,
+    settings.value.正文渲染?.旁白行高,
+    settings.value.正文渲染?.旁白段间距,
+    settings.value.正文渲染?.旁白间距,
+    settings.value.正文渲染?.旁白文字色,
+    settings.value.正文渲染?.动作文字色,
+    settings.value.正文渲染?.旁白对齐对白,
+    settings.value.正文渲染?.动作并入旁白,
+    settings.value.正文渲染?.对白背景色,
+    settings.value.正文渲染?.对白背景色2,
+    settings.value.正文渲染?.对白背景透明度,
+    settings.value.正文渲染?.对白渐变,
+    settings.value.正文渲染?.对白细线,
+    settings.value.正文渲染?.对白细线颜色,
+    settings.value.正文渲染?.对白细线粗细,
+    settings.value.正文渲染?.对白圆角,
+    settings.value.正文渲染?.对白文字色,
+    settings.value.正文渲染?.对白字体,
+    settings.value.正文渲染?.对白字号,
+    settings.value.正文渲染?.对白加粗,
+    settings.value.正文渲染?.对白行高,
+    JSON.stringify(settings.value.正文渲染?.图片库 ?? []),
+  ],
+  () => {
+    if (settings.value.正文渲染?.启用) {
+      reapplyAllRenders().catch(() => {});
+    }
+    syncKeywordDrafts();
+  },
+);
+
+// 初始化关键词草稿(与当前图片库同步)
+syncKeywordDrafts();
 
 const savedOrb = (() => {
   try {
@@ -1414,6 +2009,10 @@ async function testConnection() {
 }
 
 async function manualUpdate() {
+  if (!settings.value.启用幕后) {
+    toastr.warning('幕后系统已关闭(设置→启用幕后), 如需更新请先开启', '彼方');
+    return;
+  }
   updating.value = true;
   try {
     await updateNpcStates(true);
@@ -1422,12 +2021,16 @@ async function manualUpdate() {
   }
 }
 
-async function refillUpdate() {
-  updating.value = true;
+async function reRenderDialogue() {
+  if (!settings.value.正文渲染?.启用) {
+    toastr.warning('请先在设置里启用「正文对白视觉渲染」', '彼方');
+    return;
+  }
   try {
-    await updateNpcStates(true, true);
-  } finally {
-    updating.value = false;
+    await reRenderLatestMessage();
+    toastr.info('已重新渲染最新一条正文', '彼方');
+  } catch (error) {
+    console.error('[彼方] 重新渲染失败:', error);
   }
 }
 
@@ -1838,6 +2441,10 @@ function clearAll() {
 .bf-page-title svg {
   color: var(--bf-accent-text);
 }
+.bf-page-title .bf-btn {
+  margin-left: auto;
+  flex: none;
+}
 
 /* ---------- 仪表盘双栏布局 ---------- */
 .bf-dash-layout {
@@ -1918,13 +2525,18 @@ function clearAll() {
 /* ---------- 设置页双栏布局 ---------- */
 .bf-settings-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px;
   align-items: start;
 }
 .bf-settings-main,
 .bf-settings-side {
   min-width: 0;
+}
+@media (max-width: 880px) {
+  .bf-settings-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ---------- 操作按钮行 ---------- */
@@ -2726,27 +3338,59 @@ function clearAll() {
   background: var(--bf-card);
   border: 1px solid var(--bf-border);
   border-radius: var(--bf-radius);
-  padding: 16px;
-  margin-bottom: 14px;
+  padding: 18px;
+  margin-bottom: 18px;
 }
 .bf-group-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--bf-text);
-  margin-bottom: 12px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--bf-text);
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--bf-border);
 }
 .bf-group-title svg {
   color: var(--bf-accent-text);
 }
-.bf-row {
+.bf-group-subtitle {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 10px;
+  margin: 20px 0 14px;
+  padding-top: 16px;
+  border-top: 1px solid var(--bf-border);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--bf-dim);
+  white-space: nowrap;
+}
+.bf-group-subtitle::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--bf-border);
+}
+.bf-group-subtitle:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+/* 表单行: 标签左固定、控件弹性, 统一 12px 行距 */
+.bf-row {
+  display: flex;
+  align-items: center;
   flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.bf-row > .bf-label:first-child {
+  min-width: 96px;
 }
 .bf-label {
   font-size: 12.5px;
@@ -2754,10 +3398,28 @@ function clearAll() {
   flex: none;
   min-width: 84px;
 }
+/* 一行两个字段(如 温度/最大Token) */
+.bf-row-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 12px;
+}
+.bf-row-pair .bf-pair {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.bf-row-pair .bf-pair .bf-label {
+  min-width: 0;
+  flex: none;
+}
 .bf-input {
   flex: 1;
-  min-width: 120px;
-  padding: 7px 10px;
+  min-width: 130px;
+  height: 34px;
+  padding: 0 11px;
   border-radius: var(--bf-radius-sm);
   border: 1px solid var(--bf-border);
   background: var(--bf-bg2);
@@ -2775,8 +3437,9 @@ function clearAll() {
 }
 .bf-input-num {
   flex: none;
-  width: 90px;
+  width: 92px;
   min-width: 0;
+  text-align: center;
 }
 .bf-actions {
   gap: 8px;
@@ -2805,18 +3468,21 @@ function clearAll() {
 }
 .bf-textarea-short {
   height: 64px;
+  font-family: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+  font-size: 12px;
 }
 .bf-hint {
   font-size: 11.5px;
-  color: var(--bf-dim);
-  line-height: 1.5;
-  margin: 2px 0 10px;
+  color: var(--bf-faint);
+  line-height: 1.55;
+  margin: 0 0 12px;
+  max-width: 54ch;
 }
 .bf-toggle {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
   cursor: pointer;
 }
 .bf-toggle input {
@@ -2853,6 +3519,89 @@ function clearAll() {
 .bf-toggle-text {
   font-size: 13px;
   color: var(--bf-text);
+}
+.bf-toggle-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 8px;
+}
+.bf-toggle-inline .bf-toggle-text {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.bf-input-shape {
+  max-width: 92px;
+}
+/* 分段控件: 互斥按钮组(排除/只读/无 等) */
+.bf-seg {
+  display: inline-flex;
+  border: 1px solid var(--bf-border);
+  border-radius: var(--bf-radius-sm);
+  overflow: hidden;
+  background: var(--bf-bg2);
+}
+.bf-seg .bf-btn {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 6px 14px;
+  font-size: 12px;
+  color: var(--bf-dim);
+}
+.bf-seg .bf-btn:hover:not(:disabled) {
+  background: var(--bf-hover);
+  color: var(--bf-text);
+}
+.bf-seg .bf-btn.active {
+  background: var(--bf-accent-strong);
+  color: #ffffff;
+}
+.bf-seg .bf-btn + .bf-btn {
+  border-left: 1px solid var(--bf-border);
+}
+/* 颜色选择器统一 */
+.bf-color-pick {
+  width: 30px;
+  height: 30px;
+  padding: 2px;
+  border: 1px solid var(--bf-border);
+  border-radius: var(--bf-radius-sm);
+  background: var(--bf-bg2);
+  cursor: pointer;
+  flex: none;
+}
+/* 杀八股规则组勾选 */
+.bf-sba-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.bf-sba-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--bf-border);
+  border-radius: var(--bf-radius-sm);
+  background: var(--bf-bg2);
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--bf-text);
+}
+.bf-sba-item input {
+  accent-color: var(--bf-accent);
+  flex: none;
+}
+.bf-sba-item .bf-hint {
+  margin: 0;
+  font-size: 11px;
+}
+@media (max-width: 620px) {
+  .bf-sba-groups {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ---------- Footer ---------- */
@@ -3111,5 +3860,205 @@ function clearAll() {
   .bf-debug-pre {
     max-height: 300px;
   }
+}
+
+/* 正文渲染: 图片库设置 */
+.bf-char-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.bf-file-input {
+  max-width: 130px;
+  font-size: 12px;
+}
+.bfd-lib-thumb {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex: none;
+  border: 1px solid var(--bf-border);
+}
+
+/* 正文渲染日志 */
+.bf-render-log-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.bf-render-log-count {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--bf-dim);
+  background: var(--bf-bg2);
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+.bf-render-log-item {
+  border-top: 1px solid var(--bf-border);
+  padding: 12px 0;
+}
+.bf-render-log-item:first-of-type {
+  border-top: none;
+}
+.bf-render-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.bf-render-log-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.bf-render-log-badge {
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.bf-render-log-badge.ok {
+  color: var(--bf-success, #46a758);
+  background: color-mix(in srgb, var(--bf-success, #46a758) 14%, transparent);
+}
+.bf-render-log-badge.err {
+  color: #e5484d;
+  background: rgba(229, 72, 77, 0.13);
+}
+.bf-render-log-id {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--bf-text);
+}
+.bf-render-log-time {
+  font-size: 11px;
+  color: var(--bf-dim);
+  white-space: nowrap;
+}
+.bf-render-log-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.bf-render-log-details {
+  margin-top: 6px;
+}
+.bf-render-log-error-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 8px;
+  padding: 8px 11px;
+  border-radius: var(--bf-radius-sm);
+  background: rgba(229, 72, 77, 0.09);
+  border: 1px solid rgba(229, 72, 77, 0.25);
+  color: #e5484d;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+.bf-render-log-error-box svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+/* ---------- 编辑提示词弹层 ---------- */
+.bf-prompt-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+.bf-prompt-modal {
+  width: min(680px, 96vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bf-panel);
+  border: 1px solid var(--bf-border);
+  border-radius: var(--bf-radius);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.bf-prompt-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--bf-border);
+}
+.bf-prompt-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px 0;
+}
+.bf-prompt-ph {
+  margin-top: 4px;
+  color: var(--bf-text-3, #8a8680);
+  font-size: 11.5px;
+  font-family: ui-monospace, Consolas, monospace;
+}
+.bf-prompt-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.bf-prompt-seg {
+  border: 1px solid var(--bf-border);
+  border-radius: var(--bf-radius-sm);
+  background: color-mix(in srgb, var(--bf-panel, #1e1e22) 60%, #000);
+  padding: 10px;
+}
+.bf-prompt-seg-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.bf-prompt-move {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+.bf-prompt-move .bf-btn {
+  padding: 2px 8px;
+  min-width: 26px;
+}
+.bf-input-role {
+  width: 130px;
+  flex: none;
+}
+.bf-prompt-seg textarea {
+  width: 100%;
+  min-height: 84px;
+  resize: vertical;
+}
+.bf-prompt-actions {
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--bf-border);
+}
+.bf-prompt-spacer {
+  flex: 1;
 }
 </style>
