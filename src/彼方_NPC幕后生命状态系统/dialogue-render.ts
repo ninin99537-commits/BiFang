@@ -956,10 +956,10 @@ function renderBlocksHtml(blocks, characters, settings) {
             if (!clean)
                 continue;
             const innerHtml = clean
-                .split(/\n{2,}/)
+                .split(/\n/)
                 .map(p => p.trim())
                 .filter(Boolean)
-                .map(p => `<p>${escapeHtml(p).replace(/\n/g, '<br/>')}</p>`)
+                .map(p => `<p>${escapeHtml(p)}</p>`)
                 .join('');
             const avatarHtml = buildAvatarHtml(displayName, char, settings, resolveShape(block.speaker, char, settings), isPro ? settings.主角头像色 || undefined : undefined);
             const nameHtml = settings.显示角色名 ? `<div class="bfd-name" style="color:${color}">${escapeHtml(displayName)}</div>` : '';
@@ -970,13 +970,14 @@ function renderBlocksHtml(blocks, characters, settings) {
             const clean = normalizeDisplayText(block.text, 'narration');
             if (!clean)
                 continue;
-            // 旁白: 一个块内多个 <p>(每个 p 独立滚动触发动画); 过滤纯言语动作词段落(如 "，说")
+            // 旁白: 按原文行(\n)分 <p>(每句一行对应原文结构), 保持与原文一致的段落边界 ——
+            // st-chatu8 生图按原文句子(regex)定位, 若把多行合并成一长段(<br/>), 图片会全堆到段末
             const paras = clean
-                .split(/\n{2,}/)
+                .split(/\n/)
                 .map(p => p.trim())
                 .filter(Boolean)
                 .filter(p => !SPEECH_VERB_ONLY.test(p))
-                .map(p => `<p>${escapeHtml(p).replace(/\n/g, '<br/>')}</p>`)
+                .map(p => `<p>${escapeHtml(p)}</p>`)
                 .join('');
             if (!paras)
                 continue;
@@ -990,11 +991,12 @@ function renderBlocksHtml(blocks, characters, settings) {
                 continue;
             const actionChar = charMap.get(block.speaker);
             const color = resolveColor(block.speaker, actionChar, settings);
+            // 按原文行分 <p>(与旁白一致): 避免多行合并成一长段导致 st-chatu8 生图定位偏差
             const paras = clean
-                .split(/\n{2,}/)
+                .split(/\n/)
                 .map(p => p.trim())
                 .filter(Boolean)
-                .map(p => `<p>${escapeHtml(p).replace(/\n/g, '<br/>')}</p>`)
+                .map(p => `<p>${escapeHtml(p)}</p>`)
                 .join('');
             if (!paras)
                 continue;
@@ -1026,12 +1028,13 @@ function renderBlocksHtml(blocks, characters, settings) {
         const avatarHtml = buildAvatarHtml(displayName, char, settings, shape, isProtagonist ? settings.主角头像色 || undefined : undefined);
         const nameHtml = settings.显示角色名 ? `<div class="bfd-name" style="color:${nameColor || accent}">${escapeHtml(displayName)}</div>` : '';
         const clean = normalizeDisplayText(block.text, block.type);
-        // 对白: 多句按空行分段成 <p>, 保持阅读节奏; 单换行保留为 <br/>
+        // 对白: 按原文行分 <p>(与旁白一致), 保持与原文一致的句子边界, 避免合并成一长段导致
+        // st-chatu8 生图按原文句子定位偏差(图片堆到段末)
         const innerHtml = clean
-            .split(/\n{2,}/)
+            .split(/\n/)
             .map(p => p.trim())
             .filter(Boolean)
-            .map(p => `<p>${escapeHtml(p).replace(/\n/g, '<br/>')}</p>`)
+            .map(p => `<p>${escapeHtml(p)}</p>`)
             .join('');
         const textHtml = `<div class="bfd-line-text">${innerHtml}</div>`;
         const body = `<div class="bfd-line-body">${nameHtml}${textHtml}</div>`;
