@@ -1781,17 +1781,37 @@ function findReaderInsertTarget(reader, regex, srcText) {
         return null;
     // 归一化每个段落文本
     const paraNorms = paras.map(p => normForMatch(p.textContent ?? ''));
-    // 从最长到最短, 找"出现在某个段落里"的 regex 子串
+    // 1) 整句匹配优先: 找"完整 regex 出现在单个段落里"的段落(regex 是完整句子,
+    //    彼方每句一个 <p>, 完整句应在某段落内出现)。图片插在该段落之前(与 st-chatu8
+    //    在原文里"段落开头插入"一致)。
+    for (let i = paras.length - 1; i >= 0; i--) {
+        if (paraNorms[i].indexOf(regexNorm) >= 0)
+            return { para: paras[i], splitOffset: -1, regexNorm, matchLen: regexNorm.length };
+    }
+    // 2) 跨段落整句匹配: regex 一句可能被 AI 拆到相邻段落, 用合并文本找完整句所在段落
+    let mergedText = '';
+    const paraStartIdx = [];
+    for (let i = 0; i < paras.length; i++) {
+        paraStartIdx.push(mergedText.length);
+        mergedText += paraNorms[i];
+    }
+    const mergedIdx = mergedText.indexOf(regexNorm);
+    if (mergedIdx >= 0) {
+        const endInMerged = mergedIdx + regexNorm.length;
+        for (let i = 0; i < paras.length; i++) {
+            if (paraStartIdx[i] + paraNorms[i].length >= endInMerged)
+                return { para: paras[i], splitOffset: -1, regexNorm, matchLen: regexNorm.length };
+        }
+    }
+    // 3) 最长子串匹配兜底: 整句匹配不上时, 用"最长可匹配子串"所在段落
     const findLongestMatch = () => {
         const minLen = Math.min(12, regexNorm.length);
-        for (let len = regexNorm.length; len >= minLen; len--) {
+        for (let len = regexNorm.length - 1; len >= minLen; len--) {
             for (let start = 0; start + len <= regexNorm.length; start++) {
                 const sub = regexNorm.substr(start, len);
                 for (let i = paras.length - 1; i >= 0; i--) {
-                    const idx = paraNorms[i].indexOf(sub);
-                    if (idx >= 0) {
-                        return { para: paras[i], splitOffset: idx + len, regexNorm, matchLen: len };
-                    }
+                    if (paraNorms[i].indexOf(sub) >= 0)
+                        return { para: paras[i], splitOffset: -1, regexNorm, matchLen: len };
                 }
             }
         }
@@ -2038,26 +2058,36 @@ function observeChatu8Insertions(mesTextEl) {
                     catch {
                         regex = '';
                     }
-                    // 确定 reader 里应插入的位置(用 regex 在 reader 段落中定位)
+                    // 确定 reader 里应插入的位置(用 regex 在 reader 段落中定位, 整句匹配优先)
                     let targetPara = null;
-                    let splitOffset = -1;
-                    let regexNorm = '';
                     if (regex) {
                         const target = findReaderInsertTarget(reader, regex, srcText);
-                        if (target?.para) {
+                        if (target?.para)
                             targetPara = target.para;
-                            splitOffset = target.splitOffset;
-                            regexNorm = target.regexNorm;
-                        }
                     }
                     // 找已有的克隆(按 request-id)
                     const existingClone = reqId
                         ? Array.from(reader.querySelectorAll('.st-chatu8-image-span')).find(c => c.getAttribute('data-request-id') === reqId)
                         : null;
                     if (existingClone) {
-                        // 已有克隆: 同步隐藏层 span 的最新内容(图片注入后更新)
-                        existingClone.replaceWith(span.cloneNode(true));
-                        applyEntryAnimationToImage(existingClone.nextElementSibling || existingClone);
+                        // 已有克隆: 校正位置到"完整 regex 句子所在段落"之前(与原文段落开头一致),
+                        // 并同步内容(图片注入)。不做字符级拆段, 避免插到句子中间。
+                        const correctPara = targetPara;
+                        const isWrongPlace = correctPara
+                            ? !(existingClone.nextElementSibling === correctPara || existingClone.previousElementSibling === correctPara)
+                            : false;
+                        if (isWrongPlace) {
+                            const fresh = span.cloneNode(true);
+                            correctPara.parentElement?.insertBefore(fresh, correctPara);
+                            existingClone.remove();
+                            applyEntryAnimationToImage(fresh);
+                        }
+                        else if (existingClone.innerHTML !== span.innerHTML) {
+                            // 位置已对, 同步内容(图片注入)
+                            const fresh = span.cloneNode(true);
+                            existingClone.replaceWith(fresh);
+                            applyEntryAnimationToImage(fresh);
+                        }
                         continue;
                     }
                     // 没有克隆: 新建克隆并插入 reader 对应位置
@@ -2067,7 +2097,9 @@ function observeChatu8Insertions(mesTextEl) {
                         applyEntryAnimationToImage(clone);
                         continue;
                     }
-                    insertNodeAfterAnchor(reader, clone, splitOffset, targetPara, regexNorm);
+                    // 插到"含完整 regex 句子的段落"之前(与 st-chatu8 在原文里段落开头插入一致);
+                    // 不做字符级拆段(那是之前插到句子中间的根源)
+                    targetPara.parentElement?.insertBefore(clone, targetPara);
                     applyEntryAnimationToImage(clone);
                 }
                 catch (error) {
