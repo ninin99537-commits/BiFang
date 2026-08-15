@@ -37,7 +37,7 @@ NPC 判定:
 - 心里惦记: 近期关注的人或事; 解决/过去后更新为新的惦记
 - 最近变化: 导致当前状态变化的原因, 一句或几句
 - 未完成事项: 答应做而未完成的事; 完成后移除并更新
-- 生活状态: 记录 NPC **最近完成的日常活动及其剧情时间**(如"晚饭(今天18:20已用); 洗澡(今天15:30已洗); 午睡(今天13:00-13:40)")。**作用: 让正文 AI 知道该 NPC 刚做过什么, 避免短时间内重复做同一件事(如刚吃完饭没过几小时又吃)**。正文中 NPC 做新的日常活动(吃饭/洗澡/睡觉/洗漱/外出等)时, 更新到最新并附剧情时间(用本次"剧情时间"时刻); 剧情时间大幅推进(如睡了一觉/过了新的一天)后, 清掉过旧的活动记录, 保留当天的。日常活动记录 1~3 条即可, 不要堆积。
+- 生活状态: 记录 NPC **最近完成的日常活动及其剧情时间(带日期, 格式"YYYY-MM-DD HH:mm")**(如"晚饭(2026-08-15 18:20 已用); 洗澡(2026-08-15 15:30 已洗); 午睡(2026-08-15 13:00-13:40)")。**作用: 让正文 AI 知道该 NPC 刚做过什么, 避免短时间内重复做同一件事(如刚吃完饭没过几小时又吃)**。正文中 NPC 做新的日常活动(吃饭/洗澡/睡觉/洗漱/外出等)时, 更新到最新并附剧情时间(用本次"剧情时间"时刻, **必须写具体日期, 不要用"今天/昨天"这类相对说法**); 剧情时间大幅推进(如睡了一觉/过了新的一天)后, 清掉过旧的活动记录, 保留当天的。日常活动记录 1~3 条即可, 不要堆积。
 - 秘密想法: (扩展) 不会轻易透露的真实想法
 - 隐藏目标: (扩展) 藏在心底、不会明说的目标
 - 可能偶遇: (扩展, true/false) 玩家近期是否有可能遇到; **仅不在场 NPC 填写(在场 NPC 直接填 false, 它已在场不需要偶遇标记)**
@@ -178,13 +178,33 @@ ${input.interactions.length > 0 ? JSON.stringify(input.interactions) : '(无)'}$
         { role: 'user', content: userContent },
     ];
 }
+/**
+ * 生活状态里的相对时间("今天18:20"/"今天18点45"/"昨天15:30"等)补全为具体日期,
+ * 避免注入给正文 AI 时出现"今天"这种需要结合当前上下文才能确定的相对说法。
+ */
+function formatLifeStatusWithDate(text) {
+    if (!text)
+        return '';
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const y = new Date(now);
+    y.setDate(y.getDate() - 1);
+    const yesterday = `${y.getFullYear()}-${pad(y.getMonth() + 1)}-${pad(y.getDate())}`;
+    // 兼容 "今天18:20" / "今天18点45" / "今天 18:20" 等写法
+    return String(text)
+        .replace(/今天\s*(\d{1,2})\s*[:：]\s*(\d{2})/g, `${today} $1:$2`)
+        .replace(/今天\s*(\d{1,2})\s*点\s*(\d{0,2})/g, (_, h, m) => `${today} ${h}:${m ? m.padStart(2, '0') : '00'}`)
+        .replace(/昨天\s*(\d{1,2})\s*[:：]\s*(\d{2})/g, `${yesterday} $1:$2`)
+        .replace(/昨天\s*(\d{1,2})\s*点\s*(\d{0,2})/g, (_, h, m) => `${yesterday} ${h}:${m ? m.padStart(2, '0') : '00'}`);
+}
 function buildInjectionPrompt(npcEntries, inSceneNames = []) {
     const formatCard = ([name, card], isInScene) => {
         const parts = [];
         if (card['当前在做'])
             parts.push(`正在: ${card['当前在做']}`);
         if (card['生活状态'])
-            parts.push(`生活状态: ${card['生活状态']}`);
+            parts.push(`生活状态: ${formatLifeStatusWithDate(card['生活状态'])}`);
         if (card['接下来想做'])
             parts.push(`将要做: ${card['接下来想做']}`);
         if (card['当前状态'])
