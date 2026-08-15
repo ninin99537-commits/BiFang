@@ -267,8 +267,6 @@ function simpleHash(text) {
  * 这些标签不改变正文内容, 但会改变 message.message → 若直接参与 hash 计算,
  * 彼方会误判"内容变了"而重新调用 AI 解析 → 慢且可能失败(渲染失效)。
  * 这里把这些"非正文尾部标签"从消息文本中剔除后再算 hash 和分段, 正文不变则缓存命中。
- * 注意: 流式输出中 aftertalk 等标签可能**尚未闭合**(内容仍在增长), 也要一并剔除,
- * 否则每次流式 token 变化都会导致 hash 变化 → 反复重新调 AI 解析(浪费请求)。
  */
 function normalizeMessageForCache(text) {
     let s = String(text ?? '');
@@ -277,12 +275,6 @@ function normalizeMessageForCache(text) {
     s = s.replace(/<[a-zA-Z][^>]*\/>/g, '');
     // 剔除成对的非正文尾部标签块(aftertalk/UpdateVariable/JSONPatch/Analyze/LimZhuangTaiLan/后话等)
     s = s.replace(/<(aftertalk|UpdateVariable|JSONPatch|Analyze|StatusPlaceHolderImpl|LimZhuangTaiLan|后话|aftertalk_block)[^>]*>[\s\S]*?<\/\1>/gi, '');
-    // 剔除**未闭合**的非正文尾部标签块(流式输出中标签还没闭合, 从 <aftertalk 到消息末尾):
-    // 找最后一次出现 <aftertalk/<UpdateVariable/... 的位置, 其后的内容全部剔除(这些标签总是在正文之后)
-    const tailTagMatch = s.match(/<(?:\/)?(?:aftertalk|UpdateVariable|JSONPatch|Analyze|StatusPlaceHolderImpl|LimZhuangTaiLan|后话|aftertalk_block)\b[^>]*>[\s\S]*$/i);
-    if (tailTagMatch && tailTagMatch.index > 0) {
-        s = s.slice(0, tailTagMatch.index);
-    }
     return s.trim();
 }
 /** 只读/排除模式外的正文判定: 消息是否"只有插件标签没有正文"(避免对纯标签消息调 AI) */
@@ -1236,7 +1228,7 @@ function observeEntryAnimations(root) {
         ensureAnimationPoller();
 }
 /** 正文渲染版本: 渲染结构/样式变更时 +1, 强制已渲染楼层重建(否则旧的 reader 因"跳过重建"永不更新) */
-const READER_VERSION = 10;
+const READER_VERSION = 6;
 /** 渲染指定楼层的正文显示(只改显示, 不改 message.mes 原始内容) */
 async function renderMessageById(messageId) {
     const settings = _settings__WEBPACK_IMPORTED_MODULE_1__.getSettings().正文渲染;
@@ -1364,18 +1356,28 @@ async function renderMessageById(messageId) {
         console.warn(`[彼方渲染] #${messageId} 未找到楼层 DOM(3秒等待后仍无), 放弃渲染`);
         return;
     }
-    // 方案2: reader 是 .mes_text 的兄弟节点(el.nextElementSibling)。
-    // 重建 reader 不影响酒馆的 .mes_text(酒馆重写 .mes_text 碰不到它) → 不会闪烁。
-    // 因此 MESSAGE_UPDATED(含流式插入 aftertalk 等尾部内容)时**应重建 reader**, 让新内容显示;
-    // 正文 hash 未变时用缓存(segmentBlocks 复用), 不重新调 AI。
-    const existingReader = el.nextElementSibling?.matches?.('.bfd-reader') ? el.nextElementSibling : null;
-    console.info(`[彼方渲染] #${messageId} 渲染: 已有Reader=${!!existingReader} hash=${hash} cachedHash=${cached?.hash} 缓存命中=${!!(cached && cached.hash === hash)}`);
-    // 清理失效状态: 若 .mes_text 已隐藏但无 reader 兄弟(渲染中途失败/被打断), 先恢复原文再重新渲染
-    if (el.classList.contains('bfd-original-hidden') && !existingReader) {
-        console.info(`[彼方渲染] #${messageId} 清理失效状态(隐藏但无reader)`);
-        el.classList.remove('bfd-original-hidden', 'bfd-rendered');
+    // 关键: 若楼层已渲染(有 bfd-reader)且正文 hash 命中缓存(正文内容未变, 只是其他插件在末尾
+    // 加了 UpdateVariable/StatusPlaceHolderImpl 等标签), 则完全跳过重建——重建 reader 会让
+    // st-chatu8 已插入的图片失效、且有解析/渲染失败风险, 导致渲染掉落。
+    // 只有正文真正变化(hash 变化)、未渲染过、或渲染版本不同(结构/样式升级)时才重建。
+    const existingReader = el.querySelector('.bfd-reader');
+    if (existingReader && existingReader.getAttribute('data-version') === String(READER_VERSION)
+        && cached && cached.hash === hash && cached.mode === mode && JSON.stringify(cached.tags) === JSON.stringify(tags)) {
+        console.info(`[彼方渲染] #${messageId} 已有 reader 且正文未变(hash=${hash}), 跳过重建`);
+        return;
     }
-    // 用酒馆正则渲染原始正文(与酒馆显示一致), 不依赖酒馆在 DOM 里渲染好的 HTML
+    console.info(`[彼方渲染] #${messageId} 开始重建: 已有Reader=${!!el.querySelector('.bfd-reader')} hash=${hash} cachedHash=${cached?.hash}`);
+    // 清理失效状态: 若楼层有 bfd-rendered 类但没有 bfd-reader(此前渲染中途失败/被插件打断),
+    // 先清除标记, 本次渲染成功后再重新添加, 避免留下"标记了却无渲染"的脏状态
+    if (el.classList.contains('bfd-rendered') && !el.querySelector('.bfd-reader')) {
+        console.info(`[彼方渲染] #${messageId} 清理失效状态(有类无reader)`);
+        el.classList.remove('bfd-rendered');
+        el.removeAttribute('data-bfd-original');
+        el.querySelectorAll('.bfd-chatu8-src').forEach(src => src.remove());
+    }
+    if (el.getAttribute('data-bfd-original') === null)
+        el.setAttribute('data-bfd-original', el.innerHTML);
+    // 新方案: 用酒馆正则自己渲染原始正文(与酒馆显示一致), 不依赖酒馆在 DOM 里渲染好的 HTML
     // formatAsTavernRegexedString 会按酒馆正则把 time_format 等标签美化成样式, content 标签完整包裹正文
     // 可能把 branches 等渲染成完整 HTML 文档片段, 用 iframe srcdoc 包裹(与酒馆原生显示一致, 不泄漏样式)
     let originalHtml = '';
@@ -1383,10 +1385,10 @@ async function renderMessageById(messageId) {
         originalHtml = wrapFullDocuments(formatAsTavernRegexedString(String(message.message || ''), 'ai_output', 'display', { depth: 0 }));
     }
     catch {
-        originalHtml = '';
+        originalHtml = el.getAttribute('data-bfd-original') ?? '';
     }
     if (!originalHtml)
-        originalHtml = el.innerHTML || '';
+        originalHtml = el.getAttribute('data-bfd-original') ?? '';
     // 头像去重: 先给所有有头像的角色分配 CSS 变量名(renderBlocksHtml 里 buildAvatarHtml 会引用),
     // 再在 reader style 里注入这些变量(避免每个对白块内联整份 base64 导致 reader 膨胀几十 MB)
     const avatarVars = [];
@@ -1502,10 +1504,7 @@ async function renderMessageById(messageId) {
         `--bfd-dial-color:${settings.对白文字色 || ''}`,
         `--bfd-name-size:${settings.角色名字号 ?? 12}px`,
     ].join(';');
-    // 方案2: 不覆盖 .mes_text 原文(酒馆重渲染楼层时会重写它, 覆盖会导致"闪回原文又闪回渲染").
-    // 改为: 隐藏 .mes_text(display:none), 在它后面插入 .bfd-reader 兄弟节点渲染正文。
-    // 酒馆重写 .mes_text 不影响 .bfd-reader → 无闪烁; 隐藏的 .mes_text 仍作为
-    // st-chatu8 的文本匹配层(它遍历 .mes_text 的文本节点, display:none 不影响 TreeWalker)。
+    // 整个楼层包进阅读器容器: 让旁白/对白成为连续的"正文流"; data-emotion-mode 供注入样式的情绪动画分级(完整/简化/关闭)
     const emotionMode = String(settings.情绪动画 ?? '完整');
     // 头像 base64 用 <style> 块注入(而非 style 属性): 超大 base64 放 style 属性会被 innerHTML 解析截断;
     // 放 <style> 里只出现一次, 对白块用 var(--bfd-avatar-N) 引用
@@ -1513,53 +1512,38 @@ async function renderMessageById(messageId) {
         ? `<style>${avatarVars.map(v => `.bfd-reader[data-version="${READER_VERSION}"]{${v}}`).join('')}</style>`
         : '';
     try {
-        // 移除旧 reader(重渲染时重建; 方案2 下 reader 是 .mes_text 的兄弟)
-        const oldReader = el.nextElementSibling?.matches?.('.bfd-reader') ? el.nextElementSibling : null;
-        if (oldReader)
-            oldReader.remove();
-        // 清理旧版残留: 旧版把 reader/.bfd-chatu8-src 嵌在 .mes_text 内部, 一并移除(否则内容叠加/重复)
-        el.querySelectorAll(':scope > .bfd-reader, :scope > .bfd-chatu8-src').forEach(r => r.remove());
-        const readerEl = (window.parent?.document ?? document).createElement('div');
-        readerEl.className = 'bfd-reader';
-        readerEl.setAttribute('style', vars);
-        readerEl.setAttribute('data-emotion-mode', emotionMode);
-        readerEl.setAttribute('data-version', String(READER_VERSION));
-        readerEl.innerHTML = avatarStyleBlock + finalHtml;
-        el.after(readerEl);
-        // 隐藏原文, 只显示渲染层
-        el.classList.add('bfd-original-hidden');
+        el.innerHTML = `<div class="bfd-reader" style="${vars}" data-emotion-mode="${emotionMode}" data-version="${READER_VERSION}">${avatarStyleBlock}${finalHtml}</div>`;
         console.info(`[彼方渲染] #${messageId} 渲染成功: reader长度=${(finalHtml || '').length} 段数=${segmentBlocks.length}`);
     }
     catch (error) {
-        console.error(`[彼方渲染] #${messageId} 渲染失败:`, error);
+        console.error(`[彼方渲染] #${messageId} 设置 innerHTML 失败:`, error);
         // 渲染失败回滚状态, 避免留下"有 bfd-rendered 类但无 reader"的脏状态
-        el.classList.remove('bfd-rendered', 'bfd-original-hidden');
+        el.classList.remove('bfd-rendered');
+        const original = el.getAttribute('data-bfd-original');
+        if (original !== null)
+            el.innerHTML = original;
+        el.removeAttribute('data-bfd-original');
         return;
     }
-    // st-chatu8 生图兼容: 监听 .mes_text(隐藏的原文层即匹配层), 搬运 st-chatu8 插入的图片到渲染层
+    // st-chatu8 生图兼容: 追加隐藏原文层并监听搬运 st-chatu8 插入的图片到渲染层
     attachChatu8CompatLayer(el, originalHtml);
-    // 滚动到屏幕底部 1/3 处触发入场/情绪动画(逐旁白/逐对白行) — 作用在 reader 兄弟上
-    if (animateOn) {
-        const readerEl = el.nextElementSibling?.matches?.('.bfd-reader') ? el.nextElementSibling : null;
-        if (readerEl)
-            observeEntryAnimations(readerEl);
-    }
+    // 滚动到屏幕底部 1/3 处触发入场/情绪动画(逐旁白/逐对白行)
+    if (animateOn)
+        observeEntryAnimations(el);
 }
 /** 关闭正文渲染时, 恢复所有已渲染楼层为原始正文 */
 function clearDialogueRenders() {
     const doc = window.parent?.document;
     if (!doc)
         return;
-    doc.querySelectorAll('.bfd-rendered, .bfd-original-hidden').forEach((el) => {
+    doc.querySelectorAll('.bfd-rendered').forEach((el) => {
         disconnectChatu8Observer(el);
-        // 移除 reader 兄弟节点(方案2: reader 在 .mes_text 后)
-        const sib = el.nextElementSibling;
-        if (sib && sib.matches?.('.bfd-reader'))
-            sib.remove();
-        // 移除旧版残留的隐藏原文层与 reader(兼容旧数据)
-        el.querySelectorAll('.bfd-chatu8-src, .bfd-reader').forEach(r => r.remove());
-        el.classList.remove('bfd-rendered', 'bfd-original-hidden', 'bfd-animate');
+        el.querySelectorAll('.bfd-chatu8-src').forEach(src => src.remove());
+        const original = el.getAttribute('data-bfd-original');
+        if (original !== null)
+            el.innerHTML = original;
         el.removeAttribute('data-bfd-original');
+        el.classList.remove('bfd-rendered', 'bfd-animate');
     });
 }
 
@@ -1912,18 +1896,25 @@ function disconnectChatu8Observer(mesTextEl) {
     }
 }
 
-/** 追加 st-chatu8 兼容层: 方案2 下 .mes_text 已隐藏(bfd-original-hidden), 它本身就是
- * st-chatu8 的文本匹配层(display:none 不影响其 TreeWalker 文本遍历);
- * 这里只需挂 observer, 把 st-chatu8 插到 .mes_text 里的图片按钮/容器搬运到 .bfd-reader。
- */
+/** 追加 st-chatu8 兼容层: 隐藏原文层 + 楼层 DOM 监听搬运 */
 function attachChatu8CompatLayer(mesTextEl, originalHtml) {
     const doc = window.parent?.document;
     if (!doc)
         return;
     // 重渲染时先断开旧 observer, 避免重复监听
     disconnectChatu8Observer(mesTextEl);
-    // 移除旧兼容层残留(旧版代码创建的隐藏原文层, 方案2 不再需要)
+    // 移除旧的兼容层(重渲染时先清理, 避免重复)
     mesTextEl.querySelectorAll('.bfd-chatu8-src').forEach(el => el.remove());
+    const src = doc.createElement('div');
+    src.className = 'bfd-chatu8-src';
+    src.setAttribute('aria-hidden', 'true');
+    // 隐藏: 不参与 st-chatu8 的可见性判断, 但仍保留在 DOM 里供 TreeWalker 匹配
+    src.style.cssText = 'display:none;visibility:hidden;height:0;overflow:hidden;';
+    // 内容 = tavern 正则渲染后的原文(与 st-chatu8 的 LLM 看到的一致)
+    const holder = doc.createElement('div');
+    holder.innerHTML = originalHtml;
+    src.textContent = holder.textContent || '';
+    mesTextEl.appendChild(src);
     observeChatu8Insertions(mesTextEl);
 }
 
@@ -1939,9 +1930,8 @@ function observeChatu8Insertions(mesTextEl) {
     const relocate = () => {
         if (relocating)
             return;
-        const reader = mesTextEl.nextElementSibling?.matches?.('.bfd-reader') ? mesTextEl.nextElementSibling : mesTextEl.querySelector('.bfd-reader');
-        // 方案2: 隐藏的 .mes_text 本身即 st-chatu8 匹配层(含原文文本与它插入的图片)
-        const src = mesTextEl;
+        const reader = mesTextEl.querySelector('.bfd-reader');
+        const src = mesTextEl.querySelector('.bfd-chatu8-src');
         if (!reader || !src)
             return;
         // 只在楼层可见时处理: 酒馆会虚拟化楼层(只渲染最近的若干层), 对不可见楼层执行
@@ -1989,7 +1979,6 @@ function observeChatu8Insertions(mesTextEl) {
                 return;
             // 只处理"图片主体"元素: span/button/container 会重复计数, 取最外层 span 为准
             const seen = new Set();
-            const seenReqIds = new Set();
             const items = [];
             for (const node of targets) {
                 // 若该元素在另一个已处理的图片元素内部, 跳过(以最外层为准)
@@ -1998,19 +1987,6 @@ function observeChatu8Insertions(mesTextEl) {
                 if (seen.has(node))
                     continue;
                 seen.add(node);
-                // 按 request-id 去重: st-chatu8 流式插入时同一张图可能在 .mes_text 和 reader 各有一份,
-                // 只搬 src(.mes_text) 里的那份, 避免重复堆叠
-                const reqId = node.getAttribute?.('data-request-id') || '';
-                if (reqId) {
-                    if (seenReqIds.has(reqId))
-                        continue;
-                    // 若该 request-id 的图已存在于 reader(src 不在), 不再处理
-                    const inSrc = src.contains(node);
-                    const existingInReader = reqId && reader.querySelector(`.st-chatu8-image-span[data-request-id="${reqId}"]`);
-                    if (!inSrc && existingInReader)
-                        continue;
-                    seenReqIds.add(reqId);
-                }
                 let regex = '';
                 try {
                     const info = findAnchorInfo(srcText, node);
@@ -2029,14 +2005,6 @@ function observeChatu8Insertions(mesTextEl) {
             });
             for (const { node, regex } of items) {
                 try {
-                    // 搬运前移除 reader 中同 request-id 的旧 span: st-chatu8 流式重新插入同图时,
-                    // 用 src 里的新节点替换 reader 里旧的, 避免重复堆叠
-                    const reqId = node.getAttribute?.('data-request-id') || '';
-                    if (reqId && src.contains(node)) {
-                        const dup = reader.querySelector(`.st-chatu8-image-span[data-request-id="${reqId}"]`);
-                        if (dup && dup !== node)
-                            dup.remove();
-                    }
                     if (!regex) {
                         // 无法关联 regex: 若已在 reader 且不在末尾则不动, 否则放 reader 末尾
                         if (!reader.contains(node))
@@ -2084,15 +2052,12 @@ function observeChatu8Insertions(mesTextEl) {
         // 自身搬运引发的变化直接忽略
         if (relocating)
             return;
-        // 自动恢复: 方案2 下 reader 是 .mes_text 的兄弟; 若 .mes_text 被隐藏(bfd-original-hidden)
-        // 但没有 reader 兄弟(被意外移除/重渲染丢失), 延迟重渲染恢复
-        const readerEl = mesTextEl.nextElementSibling?.matches?.('.bfd-reader') ? mesTextEl.nextElementSibling : null;
-        if (mesTextEl.classList.contains('bfd-original-hidden') && !readerEl) {
+        // 自动恢复: 楼层有 bfd-rendered 类但 .bfd-reader 被外部(酒馆重渲染/MVU更新)清掉 → 延迟重渲染恢复
+        if (mesTextEl.classList.contains('bfd-rendered') && !mesTextEl.querySelector('.bfd-reader')) {
             const mid = Number(mesTextEl.closest?.('.mes')?.getAttribute('mesid'));
             if (Number.isFinite(mid) && mid > 0) {
                 window.setTimeout(() => {
-                    const r2 = mesTextEl.nextElementSibling?.matches?.('.bfd-reader') ? mesTextEl.nextElementSibling : null;
-                    if (mesTextEl.classList.contains('bfd-original-hidden') && !r2) {
+                    if (mesTextEl.classList.contains('bfd-rendered') && !mesTextEl.querySelector('.bfd-reader')) {
                         renderMessageById(mid).catch(error => console.warn('[彼方] 自动恢复渲染失败:', error));
                     }
                 }, 800);
@@ -2230,10 +2195,6 @@ function injectDialogueStyles() {
    彼方 · 小说阅读器
    模式: Read —— 排版是主角, 装饰退让
    ============================================================ */
-/* 方案2: 彼方不覆盖 .mes_text, 而是把原文隐藏(display:none), 在 .mes_text 后插入
-   .bfd-reader 兄弟节点渲染。酒馆重渲染楼层时只会重写 .mes_text 原文,
-   不会碰到 .bfd-reader → 不再出现"闪回原文又闪回渲染"的现象。 */
-.bfd-original-hidden { display: none !important; }
 .bfd-reader {
   --bfd-serif: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', 'SimSun', serif;
   --bfd-sans: -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
@@ -2615,8 +2576,4 @@ function injectDialogueStyles() {
 }
 
 export { applyImportedFonts, clearDialogueRenders, clearMessageCache, findMessageTextElement, getImportedFontNames, getRenderPromptSeed, injectDialogueStyles, loadParseCache, preParseStreamingContent, reRenderLatestMessage, reapplyAllRenders, reapplyImportedFonts, reapplyLatestRender, renderCachedMessagesInChat, renderMessageById };
-
-
-
-
 
