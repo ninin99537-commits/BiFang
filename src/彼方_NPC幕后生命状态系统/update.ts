@@ -333,34 +333,10 @@ function extractJsonSnippet(content) {
 const PHYSIO_FIELDS = ['生理周期', '是否怀孕', '累计受孕率', '当前防护', '近期性行为', '生理结算', '受孕率记录'];
 /** 每张被返回的状态卡都必须包含的普通字符串字段(全部字段, 缺一即判定不完整并自动重试) */
 const REQUIRED_CARD_FIELDS = _state__WEBPACK_IMPORTED_MODULE_6__.CARD_FIELDS.filter(field => !PHYSIO_FIELDS.includes(field));
-/** 校验 AI 输出的 JSON 结构是否符合预期; 结构错误、"新增 NPC 字段不全"、"女性 NPC 生理字段不全"、"剧情时间与正文标注不符"抛错重试, 已有 NPC 缺普通字段只警告(保留旧值) */
-function validateParsedFormat(parsed, existingNpcNames = new Set(), existingCards = {}, physioEnabled = false, storyTimeHint = '') {
+/** 校验 AI 输出的 JSON 结构是否符合预期; 结构错误、"新增 NPC 字段不全"、"女性 NPC 生理字段不全"抛错重试, 已有 NPC 缺普通字段只警告(保留旧值) */
+function validateParsedFormat(parsed, existingNpcNames = new Set(), existingCards = {}, physioEnabled = false) {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
         throw Error('AI 返回的 JSON 结构不符合预期(顶层不是对象)');
-    }
-    // 剧情时间校验: 若从正文/时间表提取到了明确时间, AI 的"结束"必须与之相符(±30分钟), 否则判定时间错误并重试
-    if (storyTimeHint) {
-        const storyTime = parsed['剧情时间'];
-        const endText = storyTime && typeof storyTime === 'object' ? String(storyTime['结束'] ?? '') : '';
-        if (/^\d{1,2}:\d{1,2}$/.test(storyTimeHint)) {
-            // 只有时分(特殊纪年/无标准日期): 只校验 AI "结束"的时分部分
-            const endMatch = endText.match(/(\d{1,2}):(\d{1,2})/);
-            if (endMatch) {
-                const [hintH, hintM] = storyTimeHint.split(':').map(Number);
-                const endTs = +endMatch[1] * 60 + +endMatch[2];
-                const hintTs = hintH * 60 + hintM;
-                if (Math.abs(endTs - hintTs) > 30) {
-                    throw Error(`剧情时间错误: 正文标注的当前时刻是 ${storyTimeHint}, 但"剧情时间.结束"写成了 ${endText}, 时分必须与正文标注相符(不许超前或改动)`);
-                }
-            }
-        }
-        else {
-            const hintTs = parseStoryTime(storyTimeHint);
-            const endTs = endText ? parseStoryTime(endText) : null;
-            if (hintTs !== null && endTs !== null && Math.abs(endTs - hintTs) > 30 * 60 * 1000) {
-                throw Error(`剧情时间错误: 正文/时间表标注的当前时间是 ${storyTimeHint}, 但"剧情时间.结束"写成了 ${endText}, 请修正为正文标注的时间(不许超前或改动)`);
-            }
-        }
     }
     const raw = parsed['在场NPC'];
     if (typeof raw !== 'undefined' && raw !== null) {
@@ -910,7 +886,7 @@ async function updateNpcStates(force = false, fresh = false) {
             debugStore.record({ time: Date.now(), response: content });
             try {
                 parsed = parseModelResponse(content);
-                validateParsedFormat(parsed, new Set(Object.keys(data.NPC ?? {})), data.NPC ?? {}, settings.更新.生理监测, storyTimeHint);
+                validateParsedFormat(parsed, new Set(Object.keys(data.NPC ?? {})), data.NPC ?? {}, settings.更新.生理监测);
                 break;
             }
             catch (error) {
