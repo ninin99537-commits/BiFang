@@ -833,6 +833,33 @@ function resolveColor(name, char, settings) {
         return '#8b93a7';
     return derivePalette(name)[0];
 }
+/** 头像 base64 → 父页面 Blob URL 缓存(reader HTML 里只存短 URL, 避免每层内联几 MB base64 导致渲染卡顿)。
+ * 彼方 iframe 是 about:blank(origin: null), 自身创建的 blob URL 父页面无法加载,
+ * 必须用父页面的 URL.createObjectURL(父 origin, 父页面 CSS 可引用) */
+const avatarBlobCache = new Map();
+function toBlobUrl(src) {
+    const s = String(src ?? '');
+    if (!s.startsWith('data:'))
+        return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const cached = avatarBlobCache.get(s);
+    if (cached)
+        return cached;
+    try {
+        const comma = s.indexOf(',');
+        const mime = (s.slice(0, comma).match(/data:([^;]+)/) || [])[1] || 'image/png';
+        const bin = atob(s.slice(comma + 1));
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++)
+            bytes[i] = bin.charCodeAt(i);
+        const blob = new Blob([bytes], { type: mime });
+        const url = (window.parent?.URL ?? URL).createObjectURL(blob);
+        avatarBlobCache.set(s, url);
+        return url;
+    }
+    catch {
+        return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    }
+}
 function buildAvatarHtml(name, char, settings, shape, colorOverride) {
     // 头像尺寸由 CSS 控制(桌面用 --pg-avatar-size, 手机端响应式覆盖), 不在内联写死, 便于移动端缩小
     // colorOverride: 主角可单独指定头像色(主角样式), 否则用图片库色/派生色
@@ -1481,7 +1508,7 @@ async function renderMessageById(messageId, options = {}) {
         for (const c of characters) {
             if (c?.头像) {
                 c.__avatarVar = `--bfd-avatar-${avatarIdx++}`;
-                const cssUrl = String(c.头像).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+                const cssUrl = toBlobUrl(c.头像);
                 avatarVars.push(`${c.__avatarVar}:url("${cssUrl}")`);
             }
         }
