@@ -1902,14 +1902,20 @@ function disconnectChatu8Observer(mesTextEl) {
     }
 }
 
-/** 追加 st-chatu8 兼容层: 隐藏原文层 + 楼层 DOM 监听搬运 */
+/** 追加 st-chatu8 兼容层(克隆显示方案):
+ * - 创建隐藏原文层 .bfd-chatu8-src(内容 = 原文文本): st-chatu8 的 findAndReplaceInElement
+ *   遍历 .mes_text 时, firstDirectDiv 规则排除 .bfd-reader(第一个直接 div), 去匹配这个隐藏层
+ *   → 它在**原文**上匹配插入(位置与原文一致), span 建在隐藏层里
+ * - st-chatu8 生成图片后, 用 request-id 查询 span 并注入 → 注入的是隐藏层的 span(未被移动) → 不破坏
+ * - 彼方把隐藏层的 span **克隆**到 reader 对应位置显示; 隐藏层 span 更新(注入图片)时同步克隆
+ */
 function attachChatu8CompatLayer(mesTextEl, originalHtml) {
     const doc = window.parent?.document;
     if (!doc)
         return;
     // 重渲染时先断开旧 observer, 避免重复监听
     disconnectChatu8Observer(mesTextEl);
-    // 移除旧的兼容层(重渲染时先清理, 避免重复)
+    // 移除旧兼容层残留, 再重建
     mesTextEl.querySelectorAll('.bfd-chatu8-src').forEach(el => el.remove());
     const src = doc.createElement('div');
     src.className = 'bfd-chatu8-src';
@@ -1924,16 +1930,18 @@ function attachChatu8CompatLayer(mesTextEl, originalHtml) {
     observeChatu8Insertions(mesTextEl);
 }
 
-/** 检测楼层是否正在被酒馆编辑(编辑正文时会临时把 .mes_text 换成 textarea/contenteditable) */
+/** 检测楼层是否正在被酒馆编辑(编辑正文时会临时把 .mes_text 换成 textarea/contenteditable)。
+ * 只检测目标楼层自身的编辑状态, 避免全局 textarea(输入框/设置面板)误判导致渲染被跳过 */
 function isMesTextBeingEdited(mesTextEl) {
     try {
         const mes = mesTextEl.closest?.('.mes');
-        // 编辑弹窗/编辑区(酒馆用 .mes_edit 按钮打开, 编辑内容在 .mes_text 内替换为 textarea 或 contenteditable)
-        if (mes?.querySelector('textarea, [contenteditable="true"]'))
+        if (!mes)
+            return false;
+        // 编辑区在 .mes_text 内(酒馆编辑正文时把内容换成 textarea 或 contenteditable)
+        if (mesTextEl.querySelector('textarea, [contenteditable="true"]'))
             return true;
-        // 编辑弹窗打开(全局)
-        const doc = window.parent?.document;
-        if (doc?.querySelector?.('.mes_edit_area:not([style*="display: none"]), .mes_edit_popup.open, [data-editing="true"]'))
+        // 该楼层有编辑标记(酒馆编辑时给 .mes 加类或内部有编辑容器)
+        if (mes.classList.contains('editing') || mes.querySelector(':scope > .mes_edit_area'))
             return true;
     }
     catch {
@@ -1954,6 +1962,8 @@ function observeChatu8Insertions(mesTextEl) {
         if (relocating)
             return;
         const reader = mesTextEl.querySelector('.bfd-reader');
+        // 克隆显示方案: 隐藏层 .bfd-chatu8-src 是 st-chatu8 工作区(位置与原文一致),
+        // 彼方把它的 span 克隆到 reader 对应位置显示
         const src = mesTextEl.querySelector('.bfd-chatu8-src');
         if (!reader || !src)
             return;
@@ -1974,7 +1984,19 @@ function observeChatu8Insertions(mesTextEl) {
         }
         relocating = true;
         try {
-            const srcText = src.textContent || '';
+            // 用原始消息文本作 regex 定位基准(渲染文本可能被清理, 原文更可靠)
+            let srcText = '';
+            try {
+                const mesEl = mesTextEl.closest?.('.mes');
+                const mid = Number(mesEl?.getAttribute('mesid'));
+                const ctx = typeof SillyTavern?.getContext === 'function' ? SillyTavern.getContext() : undefined;
+                srcText = String(ctx?.chat?.[mid]?.mes ?? '');
+            }
+            catch {
+                srcText = '';
+            }
+            if (!srcText)
+                srcText = src.textContent || '';
             // 修正"游离 container": 彼方重渲染后 st-chatu8 会把已生成的图片 container 堆到 reader 末尾,
             // 而对应的 span(带 request-id) 在正文正确位置。container 与 span 数量一致时, 按顺序移回。
             try {
@@ -1995,68 +2017,66 @@ function observeChatu8Insertions(mesTextEl) {
             catch {
                 // 忽略修正失败
             }
-            // 处理所有图片主体: src 层(隐藏层待搬) + reader 里已插入的(彼方重渲染后 st-chatu8 可能把图片堆到末尾, 需修正)
-            const targets = Array.from(src.querySelectorAll(CHATU8_IMAGE_SELECTOR))
-                .concat(Array.from(reader.querySelectorAll(CHATU8_IMAGE_SELECTOR)));
-            if (targets.length === 0)
+            // 克隆显示方案: 只处理隐藏层 src 里的 span(st-chatu8 工作区, 位置与原文一致),
+            // 克隆到 reader 对应位置显示; 隐藏层 span 更新(图片注入)时同步替换克隆内容
+            const spans = Array.from(src.querySelectorAll('.st-chatu8-image-span'));
+            if (spans.length === 0)
                 return;
-            // 只处理"图片主体"元素: span/button/container 会重复计数, 取最外层 span 为准
-            const seen = new Set();
-            const items = [];
-            for (const node of targets) {
-                // 若该元素在另一个已处理的图片元素内部, 跳过(以最外层为准)
-                if (node.closest && node.closest(CHATU8_IMAGE_SELECTOR) !== node)
-                    continue;
-                if (seen.has(node))
-                    continue;
-                seen.add(node);
-                let regex = '';
+            for (const span of spans) {
                 try {
-                    const info = findAnchorInfo(srcText, node);
-                    regex = info ? info.regex : '';
-                }
-                catch {
-                    regex = '';
-                }
-                items.push({ node, regex });
-            }
-            // 按 regex 在原文中的位置排序(用 endIndex 排序), 保证顺序与正文一致
-            items.sort((a, b) => {
-                const ai = a.regex ? srcText.indexOf(a.regex) : -1;
-                const bi = b.regex ? srcText.indexOf(b.regex) : -1;
-                return (ai < 0 ? Number.MAX_SAFE_INTEGER : ai) - (bi < 0 ? Number.MAX_SAFE_INTEGER : bi);
-            });
-            for (const { node, regex } of items) {
-                try {
-                    if (!regex) {
-                        // 无法关联 regex: 若已在 reader 且不在末尾则不动, 否则放 reader 末尾
-                        if (!reader.contains(node))
-                            reader.appendChild(node);
+                    // 用 request-id 关联: 同一张图隐藏层一份, reader 克隆一份
+                    const reqId = span.getAttribute('data-request-id') || '';
+                    let regex = '';
+                    try {
+                        const info = findAnchorInfo(srcText, span);
+                        regex = info ? info.regex : '';
+                    }
+                    catch {
+                        regex = '';
+                    }
+                    // 确定 reader 里应插入的位置(用 regex 在 reader 段落中定位)
+                    let targetPara = null;
+                    let splitOffset = -1;
+                    let regexNorm = '';
+                    if (regex) {
+                        const target = findReaderInsertTarget(reader, regex, srcText);
+                        if (target?.para) {
+                            targetPara = target.para;
+                            splitOffset = target.splitOffset;
+                            regexNorm = target.regexNorm;
+                        }
+                    }
+                    // 找已有的克隆(按 request-id)
+                    const existingClone = reqId
+                        ? Array.from(reader.querySelectorAll('.st-chatu8-image-span')).find(c => c.getAttribute('data-request-id') === reqId)
+                        : null;
+                    if (existingClone) {
+                        // 已有克隆: 同步隐藏层 span 的最新内容(图片注入后更新)
+                        existingClone.replaceWith(span.cloneNode(true));
+                        applyEntryAnimationToImage(existingClone.nextElementSibling || existingClone);
                         continue;
                     }
-                    const target = findReaderInsertTarget(reader, regex, srcText);
-                    if (!target || !target.para) {
-                        if (!reader.contains(node))
-                            reader.appendChild(node);
+                    // 没有克隆: 新建克隆并插入 reader 对应位置
+                    const clone = span.cloneNode(true);
+                    if (!targetPara) {
+                        reader.appendChild(clone);
+                        applyEntryAnimationToImage(clone);
                         continue;
                     }
-                    // 已在正确位置则跳过: 图片已位于目标段落内部(拆段插入过), 或紧邻目标段落之后
-                    const targetPara = target.para;
-                    if (targetPara.contains(node))
-                        continue;
-                    let prev = node.previousElementSibling;
-                    while (prev && prev.matches?.(CHATU8_IMAGE_SELECTOR))
-                        prev = prev.previousElementSibling;
-                    if (prev === targetPara)
-                        continue;
-                    insertNodeAfterAnchor(reader, node, target.splitOffset, targetPara, target.regexNorm);
-                    // 图片归位后标记入场动画, 与正文段落一致
-                    applyEntryAnimationToImage(node);
+                    insertNodeAfterAnchor(reader, clone, splitOffset, targetPara, regexNorm);
+                    applyEntryAnimationToImage(clone);
                 }
                 catch (error) {
-                    console.warn('[彼方] 搬运 st-chatu8 图片失败:', error);
+                    console.warn('[彼方] 克隆 st-chatu8 图片失败:', error);
                 }
             }
+            // 清理 reader 中"隐藏层已不存在"的克隆(被 st-chatu8 移除/重渲染的旧图)
+            const liveReqIds = new Set(Array.from(src.querySelectorAll('.st-chatu8-image-span')).map(s => s.getAttribute('data-request-id')));
+            Array.from(reader.querySelectorAll('.st-chatu8-image-span')).forEach(clone => {
+                const reqId = clone.getAttribute('data-request-id');
+                if (reqId && !liveReqIds.has(reqId))
+                    clone.remove();
+            });
         }
         finally {
             relocating = false;
@@ -2091,11 +2111,14 @@ function observeChatu8Insertions(mesTextEl) {
             }
         }
         const relevant = mutations.some(m => {
-            // 只关心新增的图片元素(按钮/容器等); 文本变化不关心, 避免 st-chatu8 处理时频繁触发
+            // 只关心: 新增的图片元素(按钮/容器/span), 或图片 span 内部的子节点变化(图片注入)
             return Array.from(m.addedNodes).some(node => {
                 if (node.nodeType === Node.ELEMENT_NODE && node.matches?.(CHATU8_IMAGE_SELECTOR))
                     return true;
                 if (node.nodeType === Node.ELEMENT_NODE && node.querySelector?.(CHATU8_IMAGE_SELECTOR))
+                    return true;
+                // 图片注入: 隐藏层 span 内新增 img/video(生成完成) → 需要同步克隆
+                if (node.nodeType === Node.ELEMENT_NODE && node.closest?.('.st-chatu8-image-span'))
                     return true;
                 return false;
             });
