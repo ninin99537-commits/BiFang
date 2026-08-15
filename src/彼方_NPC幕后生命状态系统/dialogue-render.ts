@@ -1082,6 +1082,57 @@ function findRangeForText(root, text) {
     return { startNode, startOffset, endNode, endOffset };
 }
 /**
+ * 批量定位多个文本的 Range(一次全文规范化 + 一次文本节点遍历):
+ * 避免对每个段落单独调 findRangeForText 时的 O(n²) 全文扫描(大消息渲染卡顿)。
+ */
+function locateRanges(root, texts) {
+    const fullRaw = root.textContent || '';
+    const { norm: fullNorm, origIndex: fullMap } = normalizeWhitespace(fullRaw);
+    const items = texts.map(text => {
+        const { norm: targetNorm } = normalizeWhitespace(text);
+        if (!targetNorm)
+            return null;
+        const idx = fullNorm.indexOf(targetNorm);
+        if (idx < 0)
+            return null;
+        return { startPos: fullMap[idx], endPos: fullMap[idx + targetNorm.length - 1] + 1 };
+    });
+    const nodes = [];
+    {
+        const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        let acc = 0;
+        let node;
+        while ((node = walker.nextNode()) !== null) {
+            nodes.push({ node, start: acc, end: acc + node.data.length });
+            acc += node.data.length;
+        }
+    }
+    return items.map(item => {
+        if (!item)
+            return null;
+        const { startPos, endPos } = item;
+        let startNode = null;
+        let startOffset = 0;
+        let endNode = null;
+        let endOffset = 0;
+        for (const n of nodes) {
+            if (!startNode && n.end > startPos) {
+                startNode = n.node;
+                startOffset = startPos - n.start;
+            }
+            if (n.start < endPos) {
+                endNode = n.node;
+                endOffset = Math.min(n.node.data.length, endPos - n.start);
+            }
+            if (endNode && n.end >= endPos)
+                break;
+        }
+        if (!startNode || !endNode)
+            return null;
+        return { startNode, startOffset, endNode, endOffset };
+    });
+}
+/**
  * 只读模式替换: 在"用酒馆正则自己渲染的 HTML"中, 按标签名定位 <content> 标签块并替换为对白渲染结果。
  * 由于我们用 formatAsTavernRegexedString 自己渲染, content 标签完整包裹正文(不会像酒馆 DOM 渲染那样只包首段),
  * 因此按标签名替换是可靠且不重复、不倒序的; 其他标签(time_format 等)用酒馆正则渲染的样式原样保留。
@@ -1132,6 +1183,17 @@ function findMessageTextElement(messageId) {
         return null;
     const textEl = mes.querySelector('.mes_text, .mes_content, .text_prompt');
     return textEl;
+}
+/** 楼层是否在视口附近(上下各放宽 2 屏): 批量恢复渲染时只处理可见楼层, 避免全量重排卡顿 */
+function isNearViewport(el) {
+    try {
+        const rect = el.getBoundingClientRect();
+        const vh = window.parent?.innerHeight ?? window.innerHeight ?? 0;
+        return rect.top < vh * 2 && rect.bottom > -vh;
+    }
+    catch {
+        return true; // 判断失败不跳过
+    }
 }
 /** 从原始 innerHTML(正则渲染后)中提取某段文本对应的 HTML 片段, 用于保留其他标签的正则样式; 匹配不到返回 null */
 function extractHtmlForText(originalHtml, text) {
@@ -1513,11 +1575,12 @@ async function renderMessageById(messageId, options = {}) {
         // 整段连续匹配会失败 → 按空行拆成子段逐段定位, 取第一个子段的起点与最后一个子段的终点合并替换。
         // 子段间若混入外部插入的占位文本(如"加载中…")会被一并替换掉(渲染块取代正文位置), 可接受。
         const paras = bodyText.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
+        // 批量定位: 一次全文规范化 + 一次文本节点遍历, 避免逐段 findRangeForText 的 O(n²) 扫描
+        const ranges = locateRanges(el, paras);
         let firstRange = null;
         let lastRange = null;
         let located = 0;
-        for (const para of paras) {
-            const r = findRangeForText(el, para);
+        for (const r of ranges) {
             if (!r)
                 continue;
             located++;
@@ -1752,7 +1815,8 @@ async function renderCachedMessagesInChat() {
         const msgs = getChatMessages(`0-${lastId}`, { role: 'assistant' }).filter(m => !m.is_hidden);
         for (const m of msgs) {
             // 只渲染已在 DOM 的楼层: 避免对虚拟化未渲染的消息逐个空等 3 秒(renderMessageById 内部会等元素), 导致恢复极慢
-            if (parseCache.has(m.message_id) && findMessageTextElement(m.message_id)) {
+            const textEl = findMessageTextElement(m.message_id);
+            if (parseCache.has(m.message_id) && textEl && isNearViewport(textEl)) {
                 try {
                     await renderMessageById(m.message_id);
                 }
