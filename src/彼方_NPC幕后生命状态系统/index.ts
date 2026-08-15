@@ -18,9 +18,10 @@ function handleChatChanged() {
     if (_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().启用幕后)
         maybeInjectNpcStates();
 }
-/** 渲染指定楼层, 若 3 秒后仍未真正渲染成对话界面(消息 DOM 未就绪/仍为原文)则自动重试一次, 避免偶发"AI输出了但没自动渲染" */
+/** 渲染指定楼层, 若 3 秒后仍未真正渲染成对话界面(消息 DOM 未就绪/仍为原文)则自动重试一次, 避免偶发"AI输出了但没自动渲染"。
+ * 这是"正文产生"路径(新消息/重roll): 允许调 AI 解析(缓存未命中时); 维护/恢复场景不走这里 */
 function renderMessageWithRetry(messageId, label) {
-    const render = () => _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderMessageById(messageId).catch(error => console.warn(`[彼方] ${label}失败:`, error));
+    const render = () => _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderMessageById(messageId, { allowParse: true }).catch(error => console.warn(`[彼方] ${label}失败:`, error));
     render();
     window.setTimeout(() => {
         try {
@@ -280,7 +281,7 @@ $(() => {
         const id = Number(message_id);
         if (Number.isFinite(id) && id > 0) {
             _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.clearMessageCache(id);
-            _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderMessageById(id).catch(error => console.warn('[彼方] 重roll后渲染失败:', error));
+            _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderMessageById(id, { allowParse: true }).catch(error => console.warn('[彼方] 重roll后渲染失败:', error));
         }
         else {
             _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.reRenderLatestMessage().catch(error => console.warn('[彼方] 重roll后渲染失败:', error));

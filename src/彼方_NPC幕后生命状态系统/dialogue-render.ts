@@ -1,4 +1,24 @@
 ﻿// 已从酒馆导出的打包产物恢复 (webpack 编译形态还原)
+// 彼方·正文渲染(完全重构 · 正则式)
+//
+// 核心思想(像酒馆正则那样): 在酒馆渲染好的消息 DOM 中, 只把"正文标签块"(content 等)替换成对白渲染,
+// 标签外内容(time_format/外部插件插入的标签与内容)DOM 原样保留——不覆盖整个楼层、不做隐藏层、不做观察器。
+// 外部插件/MVU 更新正文时, 酒馆重渲染楼层 → 渲染块被清、content 文本回来 → 事件(MESSAGE_UPDATED/
+// GENERATION_ENDED)触发重新应用(正文 hash 未变则走缓存, 零 AI)。
+//
+// 架构:
+//   一、字体/样式工具
+//   二、缓存层(parseCache 解析结果[内存+localStorage])
+//   三、分段与正文 hash: 消息按标签模式切分为"正文段(标签块内)"与"原文段(标签外)"
+//       —— 正文 hash 只算正文段文本, 外部插件插入标签外内容不改变 hash → 缓存命中 → 零 AI 重建
+//   四、解析(AI 提示词/parseDialogueContent/流式预解析[只读模式标签闭合时])
+//   五、视觉渲染(renderBlocksHtml: 对白/旁白/心声/动作 + 头像/配色/杀八股)
+//   六、正则式渲染: 定位正文段文本的 DOM Range → 替换为对白渲染块(像正则那样)
+//   七、调 AI 解析的时机(allowParse, 收敛到"正文产生"处): 只读=标签闭合时预解析; 非只读=正文输出完
+//       (MESSAGE_RECEIVED); 其余一律 allowParse=false: 外部更新/编辑/切聊天都不自动请求, 缓存命中则零 AI
+//       重新替换, 缓存未命中则保留原文, 只能手动重新请求(重roll/渲染按钮)
+//   八、入场/情绪动画
+//   九、CSS 样式
 import * as _api__WEBPACK_IMPORTED_MODULE_0__ from './api';
 import * as _settings__WEBPACK_IMPORTED_MODULE_1__ from './settings';
 import * as _state__WEBPACK_IMPORTED_MODULE_2__ from './state';
@@ -678,6 +698,9 @@ async function parseDialogueContent(content, settings, messageId, signal) {
  * 只对"单个 parse 段"预解析: 预解析是把全部 parse 段拼接后一次解析, 多段时无法逐段拆分复用, 只会浪费调用。
  */
 const streamingParsePromises = new Map();
+/** 流式预解析状态: 当前流式会话是否已完成"标签闭合检测+预解析"; 避免每个 token 都全文分段(流式卡顿) */
+let preparseClosedDone = false;
+let preparseLastLen = 0;
 async function preParseStreamingContent(fullText) {
     const settings = _settings__WEBPACK_IMPORTED_MODULE_1__.getSettings().正文渲染;
     if (!settings.启用)
@@ -687,11 +710,23 @@ async function preParseStreamingContent(fullText) {
     const tags = settings.标签列表 ?? [];
     if (tags.length === 0)
         return;
-    const segments = splitByTags(String(fullText || ''), settings.标签模式, settings.标签列表 ?? []);
+    const text = String(fullText || '');
+    // 新楼层流式开始(文本比上次短)重置"已完成"标记
+    if (preparseLastLen > text.length)
+        preparseClosedDone = false;
+    preparseLastLen = text.length;
+    // 标签已闭合且预解析已处理: 正文固定, 后续 token 直接跳过, 避免每个 token 都全文分段(流式卡顿)
+    if (preparseClosedDone)
+        return;
+    // 快速短路: 标签未闭合时不全文分段(未闭合时 parse 段不完整, 分段纯属浪费)
+    if (!tags.some(tag => text.includes(`</${tag}>`)))
+        return;
+    const segments = splitByTags(text, settings.标签模式, tags);
     const parseSegments = segments.filter(s => s.kind === 'parse' && s.text.trim());
     // 标签闭合后才会有 parse 段; 单段内容稳定, 直接提前解析
     if (parseSegments.length !== 1)
         return;
+    preparseClosedDone = true; // 闭合确认, 正文固定, 后续跳过
     const content = parseSegments[0].text.trim();
     if (content.length < 20)
         return;
@@ -1147,8 +1182,6 @@ function getBandTopPx() {
  * 按需启动: 存在 .bfd-animate-pending 元素时才轮询, 全部显示完即停止(避免永久空转拖累页面)。
  */
 let animationPollerTimer = null;
-/** 注册的所有楼层图片重定位函数(供轮询器在滚动时对可见楼层重定位) */
-const chatu8Relocators = new Set();
 function startAnimationPoller() {
     if (animationPollerTimer !== null)
         return;
@@ -1158,17 +1191,6 @@ function startAnimationPoller() {
             if (!doc)
                 return;
             const pending = doc.querySelectorAll('.bfd-animate-pending');
-            // 轮询在跑(说明用户在滚动/查看) → 顺带对可见楼层的图片做一次重定位(不可见楼层被 relocate 内部跳过)
-            if (chatu8Relocators.size > 0) {
-                for (const fn of Array.from(chatu8Relocators)) {
-                    try {
-                        fn();
-                    }
-                    catch {
-                        // 忽略单个楼层失败
-                    }
-                }
-            }
             if (pending.length === 0) {
                 // 没有待触发动画的元素, 停止轮询
                 window.clearInterval(animationPollerTimer);
@@ -1229,8 +1251,14 @@ function observeEntryAnimations(root) {
 }
 /** 正文渲染版本: 渲染结构/样式变更时 +1, 强制已渲染楼层重建(否则旧的 reader 因"跳过重建"永不更新) */
 const READER_VERSION = 6;
-/** 渲染指定楼层的正文显示(只改显示, 不改 message.mes 原始内容) */
-async function renderMessageById(messageId) {
+/**
+ * 渲染指定楼层的正文显示(只改显示, 不改 message.mes 原始内容)。
+ * 调 AI 解析的时机只有"正文产生"处: 只读模式=标签闭合(流式预解析)、非只读=正文输出完(MESSAGE_RECEIVED)、
+ * 以及用户主动操作(重roll/手动重新渲染)。其余维护/恢复场景(观察器/MVU更新/插件插入/切聊天/编辑)一律
+ * allowParse=false: 缓存命中则零 AI 重建, 缓存未命中则保留原文, 绝不自动请求, 避免浪费。
+ */
+async function renderMessageById(messageId, options = {}) {
+    const allowParse = !!options?.allowParse;
     const settings = _settings__WEBPACK_IMPORTED_MODULE_1__.getSettings().正文渲染;
     if (!settings.启用)
         return;
@@ -1278,7 +1306,7 @@ async function renderMessageById(messageId) {
         const segBlocks = segments.map(seg => (seg.kind === 'parse' ? pending : null));
         cacheSet(messageId, { hash: simpleHash(cacheText), mode, tags, segments: segBlocks });
     }
-    const hash = simpleHash(cacheText);
+    const hash = simpleHash(pendingParseSegments.map(s => s.text.trim()).join('\n') || cacheText);
     const mode = String(settings.标签模式 ?? '');
     const tags = [...(settings.标签列表 ?? [])];
     const cached = parseCache.get(messageId);
@@ -1289,6 +1317,12 @@ async function renderMessageById(messageId) {
         console.info(`[彼方渲染] #${messageId} 缓存命中(hash=${hash} 一致), 复用解析结果, 不重新调 AI`);
     }
     else {
+        // 允许解析的时机只有"正文产生"处(MESSAGE_RECEIVED/重roll/手动按钮/只读流式预解析);
+        // 维护/恢复场景(观察器/MVU更新/插件插入/切聊天/编辑)不自动解析, 缓存未命中则保留原文, 避免浪费 AI 请求
+        if (!allowParse) {
+            console.info(`[彼方渲染] #${messageId} 缓存未命中且不允许自动解析(恢复/维护场景), 跳过, 保留原文`);
+            return;
+        }
         // 需要实际调用 AI 解析: 显示"正在渲染"弹窗(可中断), 完成/失败/中断分别提示
         console.info(`[彼方渲染] #${messageId} 缓存未命中: cached=${!!cached} cachedHash=${cached?.hash} newHash=${hash} mode=${mode} tags=[${tags.join(',')}], 重新调 AI 解析`);
         const updatingStore = _state__WEBPACK_IMPORTED_MODULE_2__.useUpdatingStore();
@@ -1362,41 +1396,20 @@ async function renderMessageById(messageId) {
         console.info(`[彼方渲染] #${messageId} 楼层正在编辑中, 跳过渲染(避免覆盖编辑框)`);
         return;
     }
-    // 关键: 若楼层已渲染(有 bfd-reader)且正文 hash 命中缓存(正文内容未变, 只是其他插件在末尾
-    // 加了 UpdateVariable/StatusPlaceHolderImpl 等标签), 则完全跳过重建——重建 reader 会让
-    // st-chatu8 已插入的图片失效、且有解析/渲染失败风险, 导致渲染掉落。
-    // 只有正文真正变化(hash 变化)、未渲染过、或渲染版本不同(结构/样式升级)时才重建。
-    const existingReader = el.querySelector('.bfd-reader');
-    if (existingReader && existingReader.getAttribute('data-version') === String(READER_VERSION)
+    // 幂等跳过: 已有渲染块(data-bfd-rendered)且正文 hash 一致 → 什么都不用做。
+    // 外部插件/酒馆重渲染把渲染块清掉后, content 块文本会回来, 这里不命中, 走下方重新替换(像正则那样每次渲染应用)
+    const rendered = el.querySelector('[data-bfd-rendered]');
+    if (rendered && rendered.getAttribute('data-version') === String(READER_VERSION)
         && cached && cached.hash === hash && cached.mode === mode && JSON.stringify(cached.tags) === JSON.stringify(tags)) {
-        console.info(`[彼方渲染] #${messageId} 已有 reader 且正文未变(hash=${hash}), 跳过重建`);
+        console.info(`[彼方渲染] #${messageId} 已有渲染块且正文未变(hash=${hash}), 跳过`);
         return;
     }
-    console.info(`[彼方渲染] #${messageId} 开始重建: 已有Reader=${!!el.querySelector('.bfd-reader')} hash=${hash} cachedHash=${cached?.hash}`);
-    // 清理失效状态: 若楼层有 bfd-rendered 类但没有 bfd-reader(此前渲染中途失败/被插件打断),
-    // 先清除标记, 本次渲染成功后再重新添加, 避免留下"标记了却无渲染"的脏状态
-    if (el.classList.contains('bfd-rendered') && !el.querySelector('.bfd-reader')) {
-        console.info(`[彼方渲染] #${messageId} 清理失效状态(有类无reader)`);
-        el.classList.remove('bfd-rendered');
-        el.removeAttribute('data-bfd-original');
-        el.querySelectorAll('.bfd-chatu8-src').forEach(src => src.remove());
-    }
+    console.info(`[彼方渲染] #${messageId} 开始正则式替换: 已有渲染块=${!!rendered} hash=${hash} cachedHash=${cached?.hash}`);
+    // 备份原始楼层内容: 关闭渲染/清理时用 data-bfd-original 恢复原文(渲染块不含原文文本)
     if (el.getAttribute('data-bfd-original') === null)
         el.setAttribute('data-bfd-original', el.innerHTML);
-    // 新方案: 用酒馆正则自己渲染原始正文(与酒馆显示一致), 不依赖酒馆在 DOM 里渲染好的 HTML
-    // formatAsTavernRegexedString 会按酒馆正则把 time_format 等标签美化成样式, content 标签完整包裹正文
-    // 可能把 branches 等渲染成完整 HTML 文档片段, 用 iframe srcdoc 包裹(与酒馆原生显示一致, 不泄漏样式)
-    let originalHtml = '';
-    try {
-        originalHtml = wrapFullDocuments(formatAsTavernRegexedString(String(message.message || ''), 'ai_output', 'display', { depth: 0 }));
-    }
-    catch {
-        originalHtml = el.getAttribute('data-bfd-original') ?? '';
-    }
-    if (!originalHtml)
-        originalHtml = el.getAttribute('data-bfd-original') ?? '';
     // 头像去重: 先给所有有头像的角色分配 CSS 变量名(renderBlocksHtml 里 buildAvatarHtml 会引用),
-    // 再在 reader style 里注入这些变量(避免每个对白块内联整份 base64 导致 reader 膨胀几十 MB)
+    // 再在渲染块 style 里注入这些变量(避免每个对白块内联整份 base64 导致渲染块膨胀几十 MB)
     const avatarVars = [];
     {
         let avatarIdx = 0;
@@ -1408,45 +1421,7 @@ async function renderMessageById(messageId) {
             }
         }
     }
-    // 只读模式: 优先"按标签块替换"——把 <content> 等正文标签块换成对白渲染, 其他标签(time_format/后话等)原样保留其正则样式
-    let finalHtml = null;
-    const parseSegments = segments.filter(s => s.kind === 'parse');
-    const renderHtmls = [];
-    segmentBlocks.forEach((blocks, i) => {
-        if (segments[i].kind === 'parse' && blocks)
-            renderHtmls.push(renderBlocksHtml(blocks, characters, settings));
-    });
-    if (settings.标签模式 === '只读' && (settings.标签列表 ?? []).length > 0 && renderHtmls.length === parseSegments.length) {
-        finalHtml = replaceRenderedTagBlocks(originalHtml, String(message.message || ''), settings.标签列表 ?? [], renderHtmls);
-    }
-    if (finalHtml === null || finalHtml === originalHtml) {
-        // fallback: 按段拼接
-        // - parse 段: 渲染成对白/旁白
-        // - original 段: 只读模式下尽量保留彼方正则样式; 排除模式下 original 段(标签内)应被排除不显示
-        const holder = document.createElement('div');
-        holder.innerHTML = originalHtml;
-        const html = [];
-        let anyParse = false;
-        segmentBlocks.forEach((blocks, i) => {
-            const seg = segments[i];
-            if (seg.kind === 'parse' && blocks) {
-                html.push(renderBlocksHtml(blocks, characters, settings));
-                anyParse = true;
-            }
-            else if (settings.标签模式 === '只读') {
-                // 只读: original 段(标签外, 如 time_format)保留彼方正则渲染样式
-                const inner = seg.text.replace(/<\/?[a-zA-Z][^>]*>/g, '').replace(/^\s+|\s+$/g, '');
-                const frag = inner ? extractHtmlForText(originalHtml, inner) : null;
-                if (frag)
-                    html.push(frag);
-            }
-            // 排除模式: original 段(标签内)直接跳过 → 不显示被排除的内容
-        });
-        // 只要有 parse 输出就用拼接结果; 否则整个保留 originalHtml 避免掉样式
-        finalHtml = anyParse ? html.join('\n') : originalHtml;
-    }
     const isHistory = messageId < getLastMessageId();
-    el.classList.add('bfd-rendered');
     // 入场/情绪动画: 不在渲染时直接播放, 由观察器在元素滚到屏幕底部 1/3 处时触发(避免还没看到就先播完)
     const animateOn = settings.动画 && (settings.历史播放动画 || !isHistory);
     // 用户字体/排版设置 → CSS 变量, 由注入样式读取(用户设置驱动对白外观)
@@ -1510,41 +1485,97 @@ async function renderMessageById(messageId) {
         `--bfd-dial-color:${settings.对白文字色 || ''}`,
         `--bfd-name-size:${settings.角色名字号 ?? 12}px`,
     ].join(';');
-    // 整个楼层包进阅读器容器: 让旁白/对白成为连续的"正文流"; data-emotion-mode 供注入样式的情绪动画分级(完整/简化/关闭)
+    // 整个楼层不再被整体接管: data-emotion-mode 供注入样式的情绪动画分级(完整/简化/关闭)
     const emotionMode = String(settings.情绪动画 ?? '完整');
     // 头像 base64 用 <style> 块注入(而非 style 属性): 超大 base64 放 style 属性会被 innerHTML 解析截断;
     // 放 <style> 里只出现一次, 对白块用 var(--bfd-avatar-N) 引用
     const avatarStyleBlock = avatarVars.length > 0
         ? `<style>${avatarVars.map(v => `.bfd-reader[data-version="${READER_VERSION}"]{${v}}`).join('')}</style>`
         : '';
-    try {
-        el.innerHTML = `<div class="bfd-reader" style="${vars}" data-emotion-mode="${emotionMode}" data-version="${READER_VERSION}">${avatarStyleBlock}${finalHtml}</div>`;
-        console.info(`[彼方渲染] #${messageId} 渲染成功: reader长度=${(finalHtml || '').length} 段数=${segmentBlocks.length}`);
+    // 像正则那样: 在酒馆渲染好的消息 DOM 中, 把每个正文(parse)段文本替换成对白渲染块,
+    // 标签外内容(time_format/外部插件插入的标签与内容)DOM 原样保留——不覆盖整个楼层、不做隐藏层。
+    // 从后往前替换, 避免前面替换后文本偏移影响后续段定位。
+    const parseIndices = [];
+    segments.forEach((seg, i) => {
+        if (seg.kind === 'parse' && segmentBlocks[i])
+            parseIndices.push(i);
+    });
+    let replaced = 0;
+    for (let k = parseIndices.length - 1; k >= 0; k--) {
+        const i = parseIndices[k];
+        const bodyText = String(segments[i].text || '').replace(/^\s+|\s+$/g, '');
+        if (!bodyText)
+            continue;
+        // 正文在酒馆 DOM 中会被拆成多个独立段落(<p>), 且段落内可能混入"加载中…"等插件占位文本,
+        // 整段连续匹配会失败 → 按空行拆成子段逐段定位, 取第一个子段的起点与最后一个子段的终点合并替换。
+        // 子段间若混入外部插入的占位文本(如"加载中…")会被一并替换掉(渲染块取代正文位置), 可接受。
+        const paras = bodyText.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
+        let firstRange = null;
+        let lastRange = null;
+        let located = 0;
+        for (const para of paras) {
+            const r = findRangeForText(el, para);
+            if (!r)
+                continue;
+            located++;
+            if (!firstRange)
+                firstRange = r;
+            lastRange = r;
+        }
+        if (!firstRange || !lastRange || located === 0) {
+            console.warn(`[彼方渲染] #${messageId} 正文段定位失败(文本已被替换或外部改动), 该段保留原文`);
+            continue;
+        }
+        const renderHtml = renderBlocksHtml(segmentBlocks[i], characters, settings);
+        if (!renderHtml)
+            continue;
+        const blockHtml = `<div class="bfd-reader" style="${vars}" data-emotion-mode="${emotionMode}" data-version="${READER_VERSION}" data-bfd-rendered="1">${avatarStyleBlock}${renderHtml}</div>`;
+        const doc = el.ownerDocument;
+        const holder = doc.createElement('div');
+        holder.innerHTML = blockHtml;
+        const blockNode = holder.firstChild;
+        const r = doc.createRange();
+        r.setStart(firstRange.startNode, firstRange.startOffset);
+        r.setEnd(lastRange.endNode, lastRange.endOffset);
+        // 抢救正文范围内的 st-chatu8 生图按钮/占位(DOM 元素, 不在消息数据里):
+        // 直接 deleteContents 会把它们一起删掉(编辑/重渲染后按钮消失) → 用 extractContents 提取,
+        // 图片元素保留并放进渲染块, 之后由图片定位观察器按句子重新定位。
+        const savedImages = [];
+        try {
+            const frag = r.extractContents();
+            if (frag) {
+                frag.querySelectorAll(CHATU8_IMAGE_SELECTOR).forEach(img => {
+                    img.removeAttribute('data-bfd-placed');
+                    savedImages.push(img);
+                });
+            }
+        }
+        catch {
+            r.deleteContents();
+        }
+        r.insertNode(blockNode);
+        if (savedImages.length > 0)
+            savedImages.forEach(img => blockNode.appendChild(img));
+        replaced++;
     }
-    catch (error) {
-        console.error(`[彼方渲染] #${messageId} 设置 innerHTML 失败:`, error);
-        // 渲染失败回滚状态, 避免留下"有 bfd-rendered 类但无 reader"的脏状态
-        el.classList.remove('bfd-rendered');
-        const original = el.getAttribute('data-bfd-original');
-        if (original !== null)
-            el.innerHTML = original;
-        el.removeAttribute('data-bfd-original');
+    if (replaced === 0) {
+        console.warn(`[彼方渲染] #${messageId} 所有正文段均未替换, 楼层保持原文`);
         return;
     }
-    // st-chatu8 生图兼容: 追加隐藏原文层并监听搬运 st-chatu8 插入的图片到渲染层
-    attachChatu8CompatLayer(el, originalHtml);
+    el.classList.add('bfd-rendered');
+    console.info(`[彼方渲染] #${messageId} 正则式替换完成: 替换段数=${replaced} hash=${hash}`);
+    // 监听 st-chatu8 生图插入, 把图片按句子重新定位到渲染块内正确位置(只操作图片, 不动渲染层)
+    observeChatu8ImagePlacement(el);
     // 滚动到屏幕底部 1/3 处触发入场/情绪动画(逐旁白/逐对白行)
     if (animateOn)
         observeEntryAnimations(el);
 }
-/** 关闭正文渲染时, 恢复所有已渲染楼层为原始正文 */
+/** 关闭正文渲染时, 恢复所有已渲染楼层为原始正文(渲染块不含原文文本, 用渲染前备份 data-bfd-original 恢复) */
 function clearDialogueRenders() {
     const doc = window.parent?.document;
     if (!doc)
         return;
     doc.querySelectorAll('.bfd-rendered').forEach((el) => {
-        disconnectChatu8Observer(el);
-        el.querySelectorAll('.bfd-chatu8-src').forEach(src => src.remove());
         const original = el.getAttribute('data-bfd-original');
         if (original !== null)
             el.innerHTML = original;
@@ -1554,46 +1585,25 @@ function clearDialogueRenders() {
 }
 
 /* ============================================================
-   st-chatu8 生图兼容层
+   st-chatu8 图片定位修正(正则式方案)
    ------------------------------------------------------------
-   st-chatu8 的正文生图流程: 双击楼层→LLM 根据"原始消息文本"生成
-   {regex 定位 + image### 标签}, 然后 insertImagesIntoElement /
-   findAndReplaceInElement 遍历**当前显示的 .mes_text DOM 文本**做
-   fuzzyMatchLine 定位, 并把图片按钮插入到匹配位置。
-
-   彼方渲染后 .mes_text 被替换成 .bfd-reader, 导致 st-chatu8:
-   1. 匹配不到 LLM 的 regex(渲染文本≠原文)
-   2. firstDirectDiv 排除规则把 .bfd-reader(第一个直接子 div)整个排除 → 匹配池为空
-   3. 即使匹配成功, 按钮也会插到隐藏原文层里不可见
-
-   兼容方案(不停止渲染):
-   - 渲染后追加一个隐藏原文层 div(内容= tavern 正则渲染后的原文),
-     放在 .bfd-reader 之后(第 2 个直接子 div, 不被 st-chatu8 排除)。
-     这样 st-chatu8 的 LLM regex 能在隐藏原文层命中(定位不受影响),
-     同时 st-chatu8 的按钮插入仍按其自身的匹配逻辑工作:
-     - 若 st-chatu8 在 .bfd-reader 文本中能匹配到正文句子 → 按钮直接插到 reader 正确位置
-     - 若匹配到隐藏原文层 → 按钮插在隐藏层, 由下方 observer 搬运到 reader 对应位置
+   st-chatu8 生图在 .mes_text 中插入图片按钮/容器, 定位基于原文句子(regex)。
+   彼方渲染后正文在 .bfd-reader 渲染块中(文本被清理/合并), st-chatu8 按原文 regex 匹配
+   会失败或偏移(图片堆在标签后)。修正: 只监听图片插入, 按"句子"在渲染块中重新定位 ——
+   匹配到的句子若在合并对白中, 把该句拆出来, 图片插在句后, 其他对白保持合并。
+   只操作图片元素, 不干预渲染层、不改消息数据。
    ============================================================ */
 
 /** st-chatu8 图片元素选择器(它插入的按钮/图片容器/折叠包装等) */
-const CHATU8_IMAGE_SELECTOR = [
-    '.image-tag-button',
-    '.st-chatu8-image-button',
-    '.st-chatu8-image-span',
-    '.st-chatu8-image-container',
-    '.st-chatu8-collapse-wrapper',
-].join(',');
-
-/** st-chatu8 图片标签起始标记(默认 image###), 用于识别它插入的标签文本 */
-function isChatu8TagText(text) {
-    return /image###|\[image\b|<image>|<\s*image\s/i.test(String(text ?? ''));
-}
+const CHATU8_IMAGE_SELECTOR = '.image-tag-button,.st-chatu8-image-button,.st-chatu8-image-span,.st-chatu8-image-container,.st-chatu8-collapse-wrapper';
+/** 楼层 DOM 上挂载的图片定位 observer(避免重复监听) */
+const chatu8PlacementStore = new WeakMap();
+/** st-chatu8 图片定位数据缓存: messageId -> { time, data } */
+const chatu8ImageCache = new Map();
 
 /** 读取该楼层 st-chatu8 保存的图片定位数据: [{regex, tag, ...}], 读取失败返回空数组 */
-const chatu8ImageCache = new Map(); // messageId -> { time, data }
 function getChatu8ImageMatches(messageId) {
     try {
-        // 缓存 2 秒: relocate 在同一批次内会多次读取同一楼层, 避免反复访问 SillyTavern.getContext()
         const cached = chatu8ImageCache.get(messageId);
         const now = Date.now();
         if (cached && now - cached.time < 2000)
@@ -1606,7 +1616,6 @@ function getChatu8ImageMatches(messageId) {
             const list = msg.extra.images[swipe] || msg.extra.images[0] || [];
             data = Array.isArray(list) ? list : [];
         }
-        // 简单清理防内存膨胀(最多保留 50 个楼层)
         if (chatu8ImageCache.size > 50)
             chatu8ImageCache.clear();
         chatu8ImageCache.set(messageId, { time: now, data });
@@ -1617,27 +1626,31 @@ function getChatu8ImageMatches(messageId) {
     }
 }
 
+/** 宽松归一化: 去所有标点/空白/符号, 只留中文与字母数字, 用于跨"原文↔渲染文本"匹配 */
+function normForMatch(text) {
+    return String(text ?? '')
+        .replace(/[\s\p{P}\p{S}]/gu, '')
+        .toLowerCase();
+}
+
+/** 压缩空白(含换行) 便于模糊匹配 */
+function compactText(text) {
+    return String(text ?? '').replace(/\s+/g, '').trim();
+}
+
+/** 压缩空白 + 去掉常用标点/引号(锚点来自原文, 块文本是清理后的, 忽略这些差异再匹配) */
+function looseText(text) {
+    return compactText(text)
+        .replace(/[，。！？；：、""''「」『』（）《》…—~·,.;:!?()\[\]{}<>"']/g, '');
+}
+
 /** 规范化 st-chatu8 的 tag: 去掉 image### 标签前缀, 忽略标点空白差异 */
 function normalizeChatu8Tag(value) {
     return looseText(String(value ?? '').replace(/^image###|^\[image\]|^<image>/i, ''));
 }
 
-/**
- * 从 extra.images 中找到图片元素对应的精确定位数据(endIndex)。
- * - 按钮(button)有 data-link: 与 extra.images 的 tag 做最长公共前缀匹配
- * - 图片占位 span 只有 data-request-id: 先找同 request-id 的按钮, 再用其 data-link 匹配
- */
-function findAnchorInfo(srcText, node) {
-    const mesTextEl = node.closest?.('.mes_text') || node.closest?.('.bfd-rendered');
-    const mes = mesTextEl?.closest?.('.mes');
-    const messageId = mes ? Number(mes.getAttribute('mesid')) : NaN;
-    if (!(Number.isFinite(messageId) && messageId > 0))
-        return null;
-    const matches = getChatu8ImageMatches(messageId);
-    if (matches.length === 0)
-        return null;
-
-    // 1. 取按钮的 data-link: span 无 data-link 时, 用 request-id 在 reader 里找同 id 的按钮
+/** 从图片元素找定位数据(regex): 按钮有 data-link, span 用 request-id 找同 id 按钮, 再与 extra.images 的 tag 最长公共前缀匹配 */
+function findAnchorInfo(srcText, node, matches) {
     let link = (node?.getAttribute && (node.getAttribute('data-link') || node.getAttribute('data-image-tag') || node.getAttribute('data-change'))) || '';
     if (!link && node?.closest) {
         const reqId = node.getAttribute('data-request-id');
@@ -1651,7 +1664,6 @@ function findAnchorInfo(srcText, node) {
     if (!link)
         return null;
     const linkNorm = normalizeChatu8Tag(link);
-    // 2. 最长公共前缀匹配 tag
     let best = null;
     let bestLen = 0;
     for (const m of matches) {
@@ -1667,128 +1679,50 @@ function findAnchorInfo(srcText, node) {
             best = m;
         }
     }
-    if (best?.regex) {
-        const idx = srcText.indexOf(best.regex);
-        if (idx >= 0)
-            return { endIndex: idx + best.regex.length, regex: best.regex };
-        // regex 首尾可能被清理, 用尾部再试
-        const tail = looseText(best.regex).slice(-25);
-        const tailIdx = looseText(srcText).lastIndexOf(tail);
-        if (tailIdx >= 0)
-            return { endIndex: tailIdx + tail.length, regex: best.regex };
+    return best?.regex ? { regex: best.regex } : null;
+}
+
+/** 找到某段文本中, normForMatch 归一化偏移对应的真实文本节点(供 splitText 拆段) */
+function findTextNodeAtNormOffset(container, normOffset) {
+    try {
+        const walker = container.ownerDocument.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+        let acc = 0;
+        let node;
+        while ((node = walker.nextNode())) {
+            const textNorm = normForMatch(node.textContent ?? '');
+            if (acc + textNorm.length >= normOffset)
+                return { node, offset: normOffset - acc };
+            acc += textNorm.length;
+        }
+    }
+    catch {
+        // 忽略
     }
     return null;
 }
 
-/** 从原文中取插入点之前的文本片段(定位锚点):
- * 克隆 Range 内容后剔除 st-chatu8 插入的元素(按钮/图片容器等), 避免它们自身的文本污染锚点 */
-function textBeforeNode(container, node) {
-    try {
-        const doc = container.ownerDocument || document;
-        const range = doc.createRange();
-        range.selectNodeContents(container);
-        range.setEndBefore(node);
-        const fragment = range.cloneContents();
-        fragment.querySelectorAll(CHATU8_IMAGE_SELECTOR).forEach(el => el.remove());
-        return fragment.textContent || '';
-    }
-    catch {
-        return '';
-    }
-}
-
-/** 压缩空白(含换行) 便于模糊匹配 */
-function compactText(text) {
-    return String(text ?? '').replace(/\s+/g, '').trim();
-}
-
-/** 压缩空白 + 去掉常用标点/引号(锚点来自原文, 块文本是清理后的, 忽略这些差异再匹配) */
-function looseText(text) {
-    return compactText(text)
-        .replace(/[，。！？；：、""''「」『』（）《》…—~·,.;:!?()\[\]{}<>"']/g, '');
-}
-
 /**
- * 备用方案: 无法从 extra.images 精确定位时, 用"按钮前文最后一句"做文本锚点匹配。
- * 返回 { para, sentLoose, splitOffset }, 语义与 findReaderInsertTarget 一致。
+ * 根据 st-chatu8 的 regex(原文中的句子), 在渲染块中定位目标句子位置。
+ * 返回 { para, splitOffset }: para 是包含句子的段落(对白 .bfd-line / 旁白 <p>),
+ * splitOffset 是句子在段落文本(norm)中的结束偏移(图片插在这个位置之后);
+ * 句子位于段落末尾或定位失败时为 -1(直接插段后)。
+ * 策略: 整句匹配 → 最长可匹配子串(渲染文本被清理过, regex 那句可能部分变化)。
  */
-function findReaderInsertTargetByText(reader, anchorText, srcText) {
-    const paras = Array.from(reader.querySelectorAll('.bfd-narration p, .bfd-line, .bfd-line-inner, .bfd-scene-break'));
-    if (paras.length === 0)
-        return { para: null, sentLoose: '', splitOffset: -1 };
-    const anchorLoose = looseText(anchorText);
-    if (!anchorLoose)
-        return { para: paras[paras.length - 1], sentLoose: '', splitOffset: -1 };
-    const sentenceMatch = anchorLoose.match(/[^。！？!?]*[。！？!?][^。！？!?]*$/);
-    const sentLoose = sentenceMatch ? sentenceMatch[0] : anchorLoose.slice(-25);
-    if (!sentLoose)
-        return { para: paras[paras.length - 1], sentLoose: '', splitOffset: -1 };
-    let bestPara = null;
-    let bestEnd = -1;
-    for (let i = paras.length - 1; i >= 0; i--) {
-        const paraLoose = looseText(paras[i].textContent ?? '');
-        if (!paraLoose)
-            continue;
-        const idx = paraLoose.lastIndexOf(sentLoose);
-        if (idx >= 0 && idx + sentLoose.length > bestEnd) {
-            bestEnd = idx + sentLoose.length;
-            bestPara = paras[i];
-        }
-    }
-    if (bestPara)
-        return { para: bestPara, sentLoose, splitOffset: bestEnd };
-    const tail = sentLoose.slice(-15);
-    for (let i = paras.length - 1; i >= 0; i--) {
-        const paraLoose = looseText(paras[i].textContent ?? '');
-        if (!paraLoose)
-            continue;
-        const idx = paraLoose.lastIndexOf(tail);
-        if (idx >= 0 && idx + tail.length > bestEnd) {
-            bestEnd = idx + tail.length;
-            bestPara = paras[i];
-        }
-    }
-    if (bestPara)
-        return { para: bestPara, sentLoose: tail, splitOffset: bestEnd };
-    if (srcText) {
-        const fraction = anchorLoose.length / Math.max(1, looseText(srcText).length);
-        const index = Math.min(paras.length - 1, Math.floor(fraction * paras.length));
-        return { para: paras[index], sentLoose: '', splitOffset: -1 };
-    }
-    return { para: paras[paras.length - 1], sentLoose: '', splitOffset: -1 };
-}
-
-/** 宽松归一化: 去所有标点/空白/符号, 只留中文与字母数字, 用于跨"原文↔渲染文本"匹配 */
-function normForMatch(text) {
-    return String(text ?? '')
-        .replace(/[\s\p{P}\p{S}]/gu, '')
-        .toLowerCase();
-}
-
-/**
- * 根据 st-chatu8 的 regex(原文中的句子), 在 reader 渲染文本中精确定位目标段落。
- *
- * 渲染文本被清理过(去引号/说·道/标点规整), regex 那句可能部分变化或被截断。
- * 策略: 把 regex 归一化后, 从最长到最短逐步在 reader 段落文本里找**最长可匹配子串**,
- * 找到的段落即为图片应插的位置(图片插在匹配子串结束处)。
- */
-function findReaderInsertTarget(reader, regex, srcText) {
-    const paras = Array.from(reader.querySelectorAll('.bfd-narration p, .bfd-line, .bfd-line-inner, .bfd-scene-break'));
+function findSentenceTarget(reader, regex, srcText) {
+    const paras = Array.from(reader.querySelectorAll('.bfd-line, .bfd-line-inner, .bfd-narration p, .bfd-scene-break'));
     if (paras.length === 0)
         return null;
     const regexNorm = normForMatch(regex);
     if (!regexNorm)
         return null;
-    // 归一化每个段落文本
     const paraNorms = paras.map(p => normForMatch(p.textContent ?? ''));
-    // 1) 整句匹配优先: 找"完整 regex 出现在单个段落里"的段落(regex 是完整句子,
-    //    彼方每句一个 <p>, 完整句应在某段落内出现)。图片插在该段落之前(与 st-chatu8
-    //    在原文里"段落开头插入"一致)。
+    // 1) 整句匹配: 句子在某段落内, 记录其结束偏移
     for (let i = paras.length - 1; i >= 0; i--) {
-        if (paraNorms[i].indexOf(regexNorm) >= 0)
-            return { para: paras[i], splitOffset: -1, regexNorm, matchLen: regexNorm.length };
+        const idx = paraNorms[i].indexOf(regexNorm);
+        if (idx >= 0)
+            return { para: paras[i], splitOffset: idx + regexNorm.length, matchLen: regexNorm.length };
     }
-    // 2) 跨段落整句匹配: regex 一句可能被 AI 拆到相邻段落, 用合并文本找完整句所在段落
+    // 2) 跨段落整句匹配: 句子被拆到相邻段落, 用合并文本找
     let mergedText = '';
     const paraStartIdx = [];
     for (let i = 0; i < paras.length; i++) {
@@ -1800,155 +1734,185 @@ function findReaderInsertTarget(reader, regex, srcText) {
         const endInMerged = mergedIdx + regexNorm.length;
         for (let i = 0; i < paras.length; i++) {
             if (paraStartIdx[i] + paraNorms[i].length >= endInMerged)
-                return { para: paras[i], splitOffset: -1, regexNorm, matchLen: regexNorm.length };
+                return { para: paras[i], splitOffset: -1, matchLen: regexNorm.length };
         }
     }
-    // 3) 最长子串匹配兜底: 整句匹配不上时, 用"最长可匹配子串"所在段落
-    const findLongestMatch = () => {
-        const minLen = Math.min(12, regexNorm.length);
-        for (let len = regexNorm.length - 1; len >= minLen; len--) {
-            for (let start = 0; start + len <= regexNorm.length; start++) {
-                const sub = regexNorm.substr(start, len);
-                for (let i = paras.length - 1; i >= 0; i--) {
-                    if (paraNorms[i].indexOf(sub) >= 0)
-                        return { para: paras[i], splitOffset: -1, regexNorm, matchLen: len };
-                }
+    // 3) 最长子串匹配兜底
+    const minLen = Math.min(12, regexNorm.length);
+    for (let len = regexNorm.length - 1; len >= minLen; len--) {
+        for (let start = 0; start + len <= regexNorm.length; start++) {
+            const sub = regexNorm.substr(start, len);
+            for (let i = paras.length - 1; i >= 0; i--) {
+                const idx = paraNorms[i].indexOf(sub);
+                if (idx >= 0)
+                    return { para: paras[i], splitOffset: idx + len, matchLen: len };
             }
         }
-        return null;
-    };
-    const result = findLongestMatch();
-    if (result)
-        return result;
-    // 兜底: 比例映射(极少走到)
+    }
+    // 4) 比例映射兜底
     if (srcText) {
         const srcNorm = normForMatch(srcText);
         const regexIdx = srcNorm.indexOf(regexNorm.slice(0, 20));
         const beforeLen = regexIdx >= 0 ? regexIdx : Math.floor(srcNorm.length / 2);
         const fraction = beforeLen / Math.max(1, srcNorm.length);
         const index = Math.min(paras.length - 1, Math.floor(fraction * paras.length));
-        return { para: paras[index], splitOffset: -1, regexNorm };
+        return { para: paras[index], splitOffset: -1, matchLen: 0 };
     }
-    return { para: paras[paras.length - 1], splitOffset: -1, regexNorm };
+    return { para: paras[paras.length - 1], splitOffset: -1, matchLen: 0 };
 }
 
 /**
- * 把图片节点插入到目标位置:
- * - 若目标段落内包含锚点句子且有后续文字 → 拆段, 图片插到句子之间
- * - 否则直接插到段落之后
+ * 把图片节点插到目标句子之后:
+ * - 对白(.bfd-line): 若匹配句 <p> 后还有其他句子, 把后续句子拆到新对白块(保持合并), 图片插在匹配句 <p> 之后
+ * - 旁白(<p>): 若句子在段中有后续文字, splitText 拆段, 图片插在句后
+ * - 否则: 直接插到段落之后
  */
-function insertNodeAfterAnchor(reader, node, splitOffset, target, regexNorm) {
-    if (!target || !node)
+function insertImageAfterSentence(node, target) {
+    if (!target?.para || !node)
         return;
-    const para = target.para || target;
-    // 旁白段落且锚点句子在段中 → 拆段
-    if (regexNorm && splitOffset >= 0 && (para.tagName === 'P' || para.closest?.('.bfd-narration'))) {
-        const paraNorm = normForMatch(para.textContent ?? '');
-        if (splitOffset > 0 && splitOffset < paraNorm.length) {
-            const targetNode = findTextNodeAtNormOffset(para, splitOffset);
-            if (targetNode) {
-                const after = targetNode.node.splitText(targetNode.offset);
-                const second = para.cloneNode(false);
-                second.append(after);
-                para.after(second);
-                para.after(node);
-                if (para.classList) {
-                    para.classList.forEach(cls => second.classList.add(cls));
-                    second.classList.remove('bfd-animate');
+    const para = target.para;
+    // 对白块: 按 <p> 拆分
+    if (para.classList?.contains('bfd-line')) {
+        const textEl = para.querySelector('.bfd-line-text');
+        const paras = textEl ? Array.from(textEl.querySelectorAll('p')) : [];
+        if (paras.length > 0) {
+            // 按 norm 累计偏移定位匹配句所在的 <p>
+            let acc = 0;
+            let targetP = null;
+            for (const p of paras) {
+                const pn = normForMatch(p.textContent ?? '');
+                if (target.splitOffset > 0 && acc + pn.length >= target.splitOffset) {
+                    targetP = p;
+                    break;
                 }
+                if (target.splitOffset <= 0) {
+                    targetP = p;
+                    break;
+                }
+                acc += pn.length + 1;
+            }
+            if (!targetP)
+                targetP = paras[paras.length - 1];
+            const following = [];
+            let sib = targetP.nextElementSibling;
+            while (sib && sib.matches?.('p')) {
+                following.push(sib);
+                sib = sib.nextElementSibling;
+            }
+            if (following.length > 0) {
+                // 后续句子拆到新对白块, 图片插在匹配句后(顺序: 匹配句 | 图片 | 新对白块)
+                const newLine = para.cloneNode(true);
+                const newText = newLine.querySelector('.bfd-line-text');
+                if (newText) {
+                    newText.innerHTML = '';
+                    following.forEach(p => newText.appendChild(p.cloneNode(true)));
+                    newText.querySelectorAll('.bfd-animate').forEach(e => e.classList.remove('bfd-animate'));
+                }
+                newLine.classList.remove('bfd-animate');
+                following.forEach(p => p.remove());
+                para.after(newLine);
+                para.after(node);
                 return;
             }
+            para.after(node);
+            return;
         }
     }
-    // 默认: 插到目标之后
-    if (para.insertAdjacentElement)
-        para.insertAdjacentElement('afterend', node);
-    else
-        para.after(node);
-}
-
-/** 找到某段文本中, normForMatch 归一化偏移对应的真实文本节点(供 splitText 拆段) */
-function findTextNodeAtNormOffset(container, normOffset) {
-    const walker = container.ownerDocument.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-    let acc = 0;
-    let node;
-    while ((node = walker.nextNode())) {
-        const textNorm = normForMatch(node.textContent ?? '');
-        if (acc + textNorm.length >= normOffset) {
-            return { node, offset: normOffset - acc };
+    // 旁白段落: 句子在段中有后续文字 → 拆段
+    const paraNorm = normForMatch(para.textContent ?? '');
+    if (target.splitOffset > 0 && target.splitOffset < paraNorm.length) {
+        const targetNode = findTextNodeAtNormOffset(para, target.splitOffset);
+        if (targetNode) {
+            const after = targetNode.node.splitText(targetNode.offset);
+            const second = para.cloneNode(false);
+            second.append(after);
+            para.after(second);
+            para.after(node);
+            if (para.classList) {
+                para.classList.forEach(cls => second.classList.add(cls));
+                second.classList.remove('bfd-animate');
+            }
+            return;
         }
-        acc += textNorm.length;
     }
-    return null;
+    para.after(node);
 }
 
-/**
- * 给 st-chatu8 插入的图片元素标记入场动画, 与正文段落保持一致:
- * - 顶部已在触发线以上 → 直接加 bfd-animate(显示)
- * - 顶部在触发线以下 → 挂 bfd-animate-pending(opacity:0), 由轮询在滚到触发线时播放
- */
-function applyEntryAnimationToImage(node) {
-    if (!node || node.nodeType !== Node.ELEMENT_NODE)
+/** 防抖重定位该楼层所有不在正确位置的 st-chatu8 图片。
+ * 只处理"未被标记(data-bfd-placed)"的最外层图片元素(container/独立 button/span), 移动后打标记,
+ * 避免 relocate 自身产生的 DOM 变化触发观察器后反复移动同一张图(闪烁)。 */
+function relocateChatu8Images(mesTextEl) {
+    const reader = mesTextEl.querySelector('.bfd-reader');
+    if (!reader)
         return;
-    // 动画载体: 图片 span(内含 container)或图片容器本身; 若 node 是 button, 找相邻 span
-    let target = node.matches?.('.st-chatu8-image-span') ? node
-        : node.matches?.('.st-chatu8-image-container') ? node.parentElement
-            : null;
-    if (!target)
+    const mes = mesTextEl.closest?.('.mes');
+    const mid = mes ? Number(mes.getAttribute('mesid')) : NaN;
+    if (!(Number.isFinite(mid) && mid > 0))
         return;
-    if (target.classList.contains('bfd-animate') || target.classList.contains('bfd-animate-pending'))
+    const matches = getChatu8ImageMatches(mid);
+    if (matches.length === 0)
         return;
-    const topLine = getBandTopPx();
-    const rect = target.getBoundingClientRect();
-    if (rect.top < topLine) {
-        target.classList.add('bfd-animate');
+    let srcText;
+    try {
+        const ctx = typeof SillyTavern?.getContext === 'function' ? SillyTavern.getContext() : undefined;
+        srcText = String(ctx?.chat?.[mid]?.mes ?? '');
     }
-    else {
-        target.classList.add('bfd-animate-pending');
-        ensureAnimationPoller();
+    catch {
+        srcText = '';
+    }
+    const all = Array.from(mesTextEl.querySelectorAll(CHATU8_IMAGE_SELECTOR));
+    // 只取"最外层"图片元素(不被其他 st-chatu8 图片元素包裹的), 避免 button/span/container 被分别移动拆散
+    const images = all.filter(el => !el.closest(CHATU8_IMAGE_SELECTOR) || el.closest(CHATU8_IMAGE_SELECTOR) === el);
+    for (const img of images) {
+        if (!img.isConnected || img.hasAttribute('data-bfd-placed'))
+            continue;
+        const anchor = findAnchorInfo(srcText, img, matches);
+        if (!anchor?.regex)
+            continue;
+        const target = findSentenceTarget(reader, anchor.regex, srcText);
+        if (!target?.para)
+            continue;
+        insertImageAfterSentence(img, target);
+        img.setAttribute('data-bfd-placed', '1');
     }
 }
 
-/** 楼层 DOM 上挂载的 st-chatu8 图片搬运 observer(避免重复监听) */
-const chatu8ObserverStore = new WeakMap();
-
-function disconnectChatu8Observer(mesTextEl) {
-    const entry = chatu8ObserverStore.get(mesTextEl);
-    if (entry) {
-        entry.mo.disconnect();
-        if (entry.relocate)
-            chatu8Relocators.delete(entry.relocate);
-        chatu8ObserverStore.delete(mesTextEl);
-    }
-}
-
-/** 追加 st-chatu8 兼容层(克隆显示方案):
- * - 创建隐藏原文层 .bfd-chatu8-src(内容 = 原文文本): st-chatu8 的 findAndReplaceInElement
- *   遍历 .mes_text 时, firstDirectDiv 规则排除 .bfd-reader(第一个直接 div), 去匹配这个隐藏层
- *   → 它在**原文**上匹配插入(位置与原文一致), span 建在隐藏层里
- * - st-chatu8 生成图片后, 用 request-id 查询 span 并注入 → 注入的是隐藏层的 span(未被移动) → 不破坏
- * - 彼方把隐藏层的 span **克隆**到 reader 对应位置显示; 隐藏层 span 更新(注入图片)时同步克隆
- */
-function attachChatu8CompatLayer(mesTextEl, originalHtml) {
+/** 监听楼层 DOM: st-chatu8 插入图片后防抖重定位(只处理未标记的图片, 不干预渲染层) */
+function observeChatu8ImagePlacement(mesTextEl) {
+    if (chatu8PlacementStore.has(mesTextEl))
+        return;
     const doc = window.parent?.document;
     if (!doc)
         return;
-    // 重渲染时先断开旧 observer, 避免重复监听
-    disconnectChatu8Observer(mesTextEl);
-    // 移除旧兼容层残留, 再重建
-    mesTextEl.querySelectorAll('.bfd-chatu8-src').forEach(el => el.remove());
-    const src = doc.createElement('div');
-    src.className = 'bfd-chatu8-src';
-    src.setAttribute('aria-hidden', 'true');
-    // 隐藏: 不参与 st-chatu8 的可见性判断, 但仍保留在 DOM 里供 TreeWalker 匹配
-    src.style.cssText = 'display:none;visibility:hidden;height:0;overflow:hidden;';
-    // 内容 = tavern 正则渲染后的原文(与 st-chatu8 的 LLM 看到的一致)
-    const holder = doc.createElement('div');
-    holder.innerHTML = originalHtml;
-    src.textContent = holder.textContent || '';
-    mesTextEl.appendChild(src);
-    observeChatu8Insertions(mesTextEl);
+    let timer = undefined;
+    const mo = new MutationObserver(mutations => {
+        // 只关心"未被标记的最外层 st-chatu8 图片"加入: relocate 移动的图片带 data-bfd-placed, 不会再次触发
+        const relevant = mutations.some(m => Array.from(m.addedNodes).some(node => {
+            if (node.nodeType !== Node.ELEMENT_NODE)
+                return false;
+            const img = node.matches?.(CHATU8_IMAGE_SELECTOR) ? node : (node.querySelector?.(CHATU8_IMAGE_SELECTOR) ?? null);
+            if (!img || img.hasAttribute('data-bfd-placed'))
+                return false;
+            return !img.closest(CHATU8_IMAGE_SELECTOR) || img.closest(CHATU8_IMAGE_SELECTOR) === img;
+        }));
+        if (!relevant)
+            return;
+        if (timer !== undefined)
+            window.clearTimeout(timer);
+        timer = window.setTimeout(() => {
+            timer = undefined;
+            try {
+                relocateChatu8Images(mesTextEl);
+            }
+            catch {
+                // 忽略
+            }
+        }, 600);
+    });
+    mo.observe(mesTextEl, { childList: true, subtree: true });
+    chatu8PlacementStore.set(mesTextEl, mo);
 }
+
 
 /** 检测楼层是否正在被酒馆编辑(编辑正文时会临时把 .mes_text 换成编辑框)。
  * 只检测"真正的编辑框"(酒馆 .mes_edit 打开时的标记), 排除楼层内其他 textarea
@@ -1973,227 +1937,6 @@ function isMesTextBeingEdited(mesTextEl) {
     }
     return false;
 }
-/** 监听楼层 DOM: 检测 st-chatu8 插入的图片元素, 把不在正确位置的移到 .bfd-reader 对应位置 */
-function observeChatu8Insertions(mesTextEl) {
-    if (chatu8ObserverStore.has(mesTextEl))
-        return;
-    const doc = window.parent?.document;
-    if (!doc)
-        return;
-    // 防重入: 搬运过程中忽略自身触发的 mutation, 避免循环
-    let relocating = false;
-    const relocate = () => {
-        if (relocating)
-            return;
-        const reader = mesTextEl.querySelector('.bfd-reader');
-        // 克隆显示方案: 隐藏层 .bfd-chatu8-src 是 st-chatu8 工作区(位置与原文一致),
-        // 彼方把它的 span 克隆到 reader 对应位置显示
-        const src = mesTextEl.querySelector('.bfd-chatu8-src');
-        if (!reader || !src)
-            return;
-        // 只在楼层可见时处理: 酒馆会虚拟化楼层(只渲染最近的若干层), 对不可见楼层执行
-        // findAnchorInfo(读 SillyTavern.getContext)纯属浪费性能
-        try {
-            const mesEl = mesTextEl.closest?.('.mes');
-            if (mesEl) {
-                const rect = mesEl.getBoundingClientRect();
-                const vh = window.parent?.innerHeight ?? window.innerHeight ?? 0;
-                // 视口上下各放宽 3 屏: 超出则视为不可见, 跳过(等滚到附近由滚动重新触发)
-                if (rect.top > vh * 4 || rect.bottom < -vh * 3)
-                    return;
-            }
-        }
-        catch {
-            // 判断失败则不跳过, 保守处理
-        }
-        relocating = true;
-        try {
-            // 用原始消息文本作 regex 定位基准(渲染文本可能被清理, 原文更可靠)
-            let srcText = '';
-            try {
-                const mesEl = mesTextEl.closest?.('.mes');
-                const mid = Number(mesEl?.getAttribute('mesid'));
-                const ctx = typeof SillyTavern?.getContext === 'function' ? SillyTavern.getContext() : undefined;
-                srcText = String(ctx?.chat?.[mid]?.mes ?? '');
-            }
-            catch {
-                srcText = '';
-            }
-            if (!srcText)
-                srcText = src.textContent || '';
-            // 修正"游离 container": 彼方重渲染后 st-chatu8 会把已生成的图片 container 堆到 reader 末尾,
-            // 而对应的 span(带 request-id) 在正文正确位置。container 与 span 数量一致时, 按顺序移回。
-            try {
-                const readerSpans = Array.from(reader.querySelectorAll('.st-chatu8-image-span'));
-                const freeContainers = Array.from(reader.children).filter(c => c.matches?.('.st-chatu8-image-container') && !c.closest('.st-chatu8-image-span'));
-                if (freeContainers.length > 0 && readerSpans.length >= freeContainers.length) {
-                    const targetSpans = readerSpans.slice(-freeContainers.length);
-                    freeContainers.forEach((container, idx) => {
-                        const span = targetSpans[idx];
-                        if (span && !span.contains(container)) {
-                            span.appendChild(container);
-                        }
-                    });
-                    // 归位后给图片 span 标记入场动画
-                    targetSpans.forEach(span => applyEntryAnimationToImage(span));
-                }
-            }
-            catch {
-                // 忽略修正失败
-            }
-            // 克隆显示方案: 只处理隐藏层 src 里的 span(st-chatu8 工作区, 位置与原文一致),
-            // 克隆到 reader 对应位置显示; 隐藏层 span 更新(图片注入)时同步替换克隆内容
-            const spans = Array.from(src.querySelectorAll('.st-chatu8-image-span'));
-            if (spans.length === 0)
-                return;
-            // 跟踪"上一张图插入位置": 异常图(拿不到 regex)跟随前一张图, 避免掉到末尾
-            let lastInserted = null;
-            for (const span of spans) {
-                try {
-                    // 用 request-id 关联: 同一张图隐藏层一份, reader 克隆一份
-                    const reqId = span.getAttribute('data-request-id') || '';
-                    let regex = '';
-                    try {
-                        const info = findAnchorInfo(srcText, span);
-                        regex = info ? info.regex : '';
-                    }
-                    catch {
-                        regex = '';
-                    }
-                    // 孤儿图: 拿不到有效 regex(=原文里没有对应挂载点, st-chatu8 生成异常),
-                    // 彼方不显示它——移除 reader 里已有的该图克隆, 且不新建克隆
-                    if (!regex) {
-                        const orphanClone = reqId
-                            ? Array.from(reader.querySelectorAll('.st-chatu8-image-span')).find(c => c.getAttribute('data-request-id') === reqId)
-                            : null;
-                        if (orphanClone)
-                            orphanClone.remove();
-                        continue;
-                    }
-                    // 确定 reader 里应插入的位置(用 regex 在 reader 段落中定位, 整句匹配优先)
-                    let targetPara = null;
-                    if (regex) {
-                        const target = findReaderInsertTarget(reader, regex, srcText);
-                        if (target?.para)
-                            targetPara = target.para;
-                    }
-                    // 找已有的克隆(按 request-id)
-                    const existingClone = reqId
-                        ? Array.from(reader.querySelectorAll('.st-chatu8-image-span')).find(c => c.getAttribute('data-request-id') === reqId)
-                        : null;
-                    if (existingClone) {
-                        // 已有克隆: 校正位置(到句段后)并同步内容
-                        if (targetPara) {
-                            const isWrongPlace = existingClone.previousElementSibling !== targetPara;
-                            if (isWrongPlace) {
-                                const fresh = span.cloneNode(true);
-                                targetPara.parentElement?.insertBefore(fresh, targetPara.nextSibling);
-                                existingClone.remove();
-                                applyEntryAnimationToImage(fresh);
-                                lastInserted = fresh;
-                            }
-                            else {
-                                if (existingClone.innerHTML !== span.innerHTML) {
-                                    const fresh = span.cloneNode(true);
-                                    existingClone.replaceWith(fresh);
-                                    applyEntryAnimationToImage(fresh);
-                                }
-                                lastInserted = existingClone;
-                            }
-                        }
-                        else {
-                            // 有 regex 但定位失败: 保持原位, 同步内容
-                            if (existingClone.innerHTML !== span.innerHTML) {
-                                const fresh = span.cloneNode(true);
-                                existingClone.replaceWith(fresh);
-                                applyEntryAnimationToImage(fresh);
-                            }
-                            lastInserted = existingClone;
-                        }
-                        continue;
-                    }
-                    // 没有克隆: 新建克隆并插入 reader 对应位置
-                    const clone = span.cloneNode(true);
-                    if (!targetPara) {
-                        if (lastInserted) {
-                            // 无 regex: 跟随上一张图
-                            lastInserted.parentElement?.insertBefore(clone, lastInserted.nextSibling);
-                        }
-                        else {
-                            reader.appendChild(clone);
-                        }
-                        applyEntryAnimationToImage(clone);
-                        lastInserted = clone;
-                        continue;
-                    }
-                    // 插到"含完整 regex 句子的段落"之后; 不做字符级拆段(那是之前插到句子中间的根源)
-                    targetPara.parentElement?.insertBefore(clone, targetPara.nextSibling);
-                    applyEntryAnimationToImage(clone);
-                    lastInserted = clone;
-                }
-                catch (error) {
-                    console.warn('[彼方] 克隆 st-chatu8 图片失败:', error);
-                }
-            }
-            // 清理 reader 中"隐藏层已不存在"的克隆(被 st-chatu8 移除/重渲染的旧图)
-            const liveReqIds = new Set(Array.from(src.querySelectorAll('.st-chatu8-image-span')).map(s => s.getAttribute('data-request-id')));
-            Array.from(reader.querySelectorAll('.st-chatu8-image-span')).forEach(clone => {
-                const reqId = clone.getAttribute('data-request-id');
-                if (reqId && !liveReqIds.has(reqId))
-                    clone.remove();
-            });
-        }
-        finally {
-            relocating = false;
-        }
-    };
-    // 注册到全局重定位集合: 滚动时由动画轮询器对可见楼层重新调用
-    chatu8Relocators.add(relocate);
-    let timer;
-    const debouncedRelocate = () => {
-        if (timer !== undefined)
-            window.clearTimeout(timer);
-        // 防抖 800ms: 等 st-chatu8 完成全部图片插入后, 再一次性修正错位图片
-        timer = window.setTimeout(relocate, 800);
-    };
-    const mo = new MutationObserver(mutations => {
-        // 自身搬运引发的变化直接忽略
-        if (relocating)
-            return;
-        // 自动恢复: 楼层有 bfd-rendered 类但 .bfd-reader 被外部(酒馆重渲染/MVU更新)清掉 → 延迟重渲染恢复
-        // 注意: 酒馆"编辑正文"时会临时把 .mes_text 换成编辑框(textarea/contenteditable),
-        // 若此时自动恢复会覆盖编辑框 → 编辑期间跳过恢复
-        if (mesTextEl.classList.contains('bfd-rendered') && !mesTextEl.querySelector('.bfd-reader')
-            && !isMesTextBeingEdited(mesTextEl)) {
-            const mid = Number(mesTextEl.closest?.('.mes')?.getAttribute('mesid'));
-            if (Number.isFinite(mid) && mid > 0) {
-                window.setTimeout(() => {
-                    if (mesTextEl.classList.contains('bfd-rendered') && !mesTextEl.querySelector('.bfd-reader')
-                        && !isMesTextBeingEdited(mesTextEl)) {
-                        renderMessageById(mid).catch(error => console.warn('[彼方] 自动恢复渲染失败:', error));
-                    }
-                }, 800);
-            }
-        }
-        const relevant = mutations.some(m => {
-            // 只关心: 新增的图片元素(按钮/容器/span), 或图片 span 内部的子节点变化(图片注入)
-            return Array.from(m.addedNodes).some(node => {
-                if (node.nodeType === Node.ELEMENT_NODE && node.matches?.(CHATU8_IMAGE_SELECTOR))
-                    return true;
-                if (node.nodeType === Node.ELEMENT_NODE && node.querySelector?.(CHATU8_IMAGE_SELECTOR))
-                    return true;
-                // 图片注入: 隐藏层 span 内新增 img/video(生成完成) → 需要同步克隆
-                if (node.nodeType === Node.ELEMENT_NODE && node.closest?.('.st-chatu8-image-span'))
-                    return true;
-                return false;
-            });
-        });
-        if (relevant)
-            debouncedRelocate();
-    });
-    mo.observe(mesTextEl, { childList: true, subtree: true });
-    chatu8ObserverStore.set(mesTextEl, { mo, relocate });
-}
 /** 重新解析并渲染最新一条 AI 正文(清缓存, 不动幕后数据) */
 async function reRenderLatestMessage() {
     const settings = _settings__WEBPACK_IMPORTED_MODULE_1__.getSettings().正文渲染;
@@ -2209,7 +1952,7 @@ async function reRenderLatestMessage() {
         if (!latest)
             return;
         parseCache.delete(latest.message_id);
-        await renderMessageById(latest.message_id);
+        await renderMessageById(latest.message_id, { allowParse: true });
     }
     catch (error) {
         console.warn('[彼方] 重新渲染失败:', error);
@@ -2325,7 +2068,8 @@ function injectDialogueStyles() {
   --pg-dialogue-bg: transparent;
   --pg-dialogue-line: 2px;
   width: 100%;
-  padding: 16px 2px 56px;
+  /* 正则式替换块: 渲染块嵌在正文流中(content 块位置), 用紧凑 padding, 不撑大楼层 */
+  padding: 4px 0 8px;
   color: var(--pg-text);
   font-family: var(--bfd-nar-font, var(--bfd-serif));
   letter-spacing: 0.02em;
@@ -2576,7 +2320,7 @@ function injectDialogueStyles() {
 /* ---- 响应式 · 手机端专用 UI(头像与对白同行, 正文占满) ---- */
 @media (max-width: 700px) {
   .bfd-reader {
-    padding: 12px 0 48px;        /* 对白本体占满酒馆文本宽度 */
+    padding: 4px 0 8px;        /* 正则式替换块: 紧凑 padding, 嵌在正文流中 */
     width: 100%;
     max-width: 100%;
     box-sizing: border-box;
