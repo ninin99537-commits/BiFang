@@ -1356,6 +1356,12 @@ async function renderMessageById(messageId) {
         console.warn(`[彼方渲染] #${messageId} 未找到楼层 DOM(3秒等待后仍无), 放弃渲染`);
         return;
     }
+    // 编辑中不渲染: 酒馆"编辑正文"会临时把 .mes_text 换成编辑框(textarea/contenteditable),
+    // 此时渲染会覆盖编辑框 → 跳过, 等编辑完成(MESSAGE_UPDATED)再渲染
+    if (isMesTextBeingEdited(el)) {
+        console.info(`[彼方渲染] #${messageId} 楼层正在编辑中, 跳过渲染(避免覆盖编辑框)`);
+        return;
+    }
     // 关键: 若楼层已渲染(有 bfd-reader)且正文 hash 命中缓存(正文内容未变, 只是其他插件在末尾
     // 加了 UpdateVariable/StatusPlaceHolderImpl 等标签), 则完全跳过重建——重建 reader 会让
     // st-chatu8 已插入的图片失效、且有解析/渲染失败风险, 导致渲染掉落。
@@ -1918,6 +1924,23 @@ function attachChatu8CompatLayer(mesTextEl, originalHtml) {
     observeChatu8Insertions(mesTextEl);
 }
 
+/** 检测楼层是否正在被酒馆编辑(编辑正文时会临时把 .mes_text 换成 textarea/contenteditable) */
+function isMesTextBeingEdited(mesTextEl) {
+    try {
+        const mes = mesTextEl.closest?.('.mes');
+        // 编辑弹窗/编辑区(酒馆用 .mes_edit 按钮打开, 编辑内容在 .mes_text 内替换为 textarea 或 contenteditable)
+        if (mes?.querySelector('textarea, [contenteditable="true"]'))
+            return true;
+        // 编辑弹窗打开(全局)
+        const doc = window.parent?.document;
+        if (doc?.querySelector?.('.mes_edit_area:not([style*="display: none"]), .mes_edit_popup.open, [data-editing="true"]'))
+            return true;
+    }
+    catch {
+        // 检测失败则不视为编辑中, 保守处理
+    }
+    return false;
+}
 /** 监听楼层 DOM: 检测 st-chatu8 插入的图片元素, 把不在正确位置的移到 .bfd-reader 对应位置 */
 function observeChatu8Insertions(mesTextEl) {
     if (chatu8ObserverStore.has(mesTextEl))
@@ -2053,11 +2076,15 @@ function observeChatu8Insertions(mesTextEl) {
         if (relocating)
             return;
         // 自动恢复: 楼层有 bfd-rendered 类但 .bfd-reader 被外部(酒馆重渲染/MVU更新)清掉 → 延迟重渲染恢复
-        if (mesTextEl.classList.contains('bfd-rendered') && !mesTextEl.querySelector('.bfd-reader')) {
+        // 注意: 酒馆"编辑正文"时会临时把 .mes_text 换成编辑框(textarea/contenteditable),
+        // 若此时自动恢复会覆盖编辑框 → 编辑期间跳过恢复
+        if (mesTextEl.classList.contains('bfd-rendered') && !mesTextEl.querySelector('.bfd-reader')
+            && !isMesTextBeingEdited(mesTextEl)) {
             const mid = Number(mesTextEl.closest?.('.mes')?.getAttribute('mesid'));
             if (Number.isFinite(mid) && mid > 0) {
                 window.setTimeout(() => {
-                    if (mesTextEl.classList.contains('bfd-rendered') && !mesTextEl.querySelector('.bfd-reader')) {
+                    if (mesTextEl.classList.contains('bfd-rendered') && !mesTextEl.querySelector('.bfd-reader')
+                        && !isMesTextBeingEdited(mesTextEl)) {
                         renderMessageById(mid).catch(error => console.warn('[彼方] 自动恢复渲染失败:', error));
                     }
                 }, 800);
