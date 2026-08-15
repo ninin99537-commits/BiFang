@@ -178,33 +178,13 @@ ${input.interactions.length > 0 ? JSON.stringify(input.interactions) : '(无)'}$
         { role: 'user', content: userContent },
     ];
 }
-/**
- * 生活状态里的相对时间("今天18:20"/"今天18点45"/"昨天15:30"等)补全为具体日期,
- * 避免注入给正文 AI 时出现"今天"这种需要结合当前上下文才能确定的相对说法。
- */
-function formatLifeStatusWithDate(text) {
-    if (!text)
-        return '';
-    const now = new Date();
-    const pad = (n) => String(n).padStart(2, '0');
-    const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-    const y = new Date(now);
-    y.setDate(y.getDate() - 1);
-    const yesterday = `${y.getFullYear()}-${pad(y.getMonth() + 1)}-${pad(y.getDate())}`;
-    // 兼容 "今天18:20" / "今天18点45" / "今天 18:20" 等写法
-    return String(text)
-        .replace(/今天\s*(\d{1,2})\s*[:：]\s*(\d{2})/g, `${today} $1:$2`)
-        .replace(/今天\s*(\d{1,2})\s*点\s*(\d{0,2})/g, (_, h, m) => `${today} ${h}:${m ? m.padStart(2, '0') : '00'}`)
-        .replace(/昨天\s*(\d{1,2})\s*[:：]\s*(\d{2})/g, `${yesterday} $1:$2`)
-        .replace(/昨天\s*(\d{1,2})\s*点\s*(\d{0,2})/g, (_, h, m) => `${yesterday} ${h}:${m ? m.padStart(2, '0') : '00'}`);
-}
 function buildInjectionPrompt(npcEntries, inSceneNames = []) {
     const formatCard = ([name, card], isInScene) => {
         const parts = [];
         if (card['当前在做'])
             parts.push(`正在: ${card['当前在做']}`);
         if (card['生活状态'])
-            parts.push(`生活状态: ${formatLifeStatusWithDate(card['生活状态'])}`);
+            parts.push(`生活状态: ${card['生活状态']}`);
         if (card['接下来想做'])
             parts.push(`将要做: ${card['接下来想做']}`);
         if (card['当前状态'])
