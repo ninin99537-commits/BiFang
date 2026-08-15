@@ -2046,6 +2046,8 @@ function observeChatu8Insertions(mesTextEl) {
             const spans = Array.from(src.querySelectorAll('.st-chatu8-image-span'));
             if (spans.length === 0)
                 return;
+            // 跟踪"上一张图插入位置": 异常图(拿不到 regex)跟随前一张图, 避免掉到末尾
+            let lastInserted = null;
             for (const span of spans) {
                 try {
                     // 用 request-id 关联: 同一张图隐藏层一份, reader 克隆一份
@@ -2057,6 +2059,16 @@ function observeChatu8Insertions(mesTextEl) {
                     }
                     catch {
                         regex = '';
+                    }
+                    // 孤儿图: 拿不到有效 regex(=原文里没有对应挂载点, st-chatu8 生成异常),
+                    // 彼方不显示它——移除 reader 里已有的该图克隆, 且不新建克隆
+                    if (!regex) {
+                        const orphanClone = reqId
+                            ? Array.from(reader.querySelectorAll('.st-chatu8-image-span')).find(c => c.getAttribute('data-request-id') === reqId)
+                            : null;
+                        if (orphanClone)
+                            orphanClone.remove();
+                        continue;
                     }
                     // 确定 reader 里应插入的位置(用 regex 在 reader 段落中定位, 整句匹配优先)
                     let targetPara = null;
@@ -2070,35 +2082,54 @@ function observeChatu8Insertions(mesTextEl) {
                         ? Array.from(reader.querySelectorAll('.st-chatu8-image-span')).find(c => c.getAttribute('data-request-id') === reqId)
                         : null;
                     if (existingClone) {
-                        // 已有克隆: 校正位置到"完整 regex 句子所在段落"之后, 并同步内容(图片注入)
-                        const correctPara = targetPara;
-                        const isWrongPlace = correctPara
-                            ? existingClone.previousElementSibling !== correctPara
-                            : false;
-                        if (isWrongPlace) {
-                            const fresh = span.cloneNode(true);
-                            correctPara.parentElement?.insertBefore(fresh, correctPara.nextSibling);
-                            existingClone.remove();
-                            applyEntryAnimationToImage(fresh);
+                        // 已有克隆: 校正位置(到句段后)并同步内容
+                        if (targetPara) {
+                            const isWrongPlace = existingClone.previousElementSibling !== targetPara;
+                            if (isWrongPlace) {
+                                const fresh = span.cloneNode(true);
+                                targetPara.parentElement?.insertBefore(fresh, targetPara.nextSibling);
+                                existingClone.remove();
+                                applyEntryAnimationToImage(fresh);
+                                lastInserted = fresh;
+                            }
+                            else {
+                                if (existingClone.innerHTML !== span.innerHTML) {
+                                    const fresh = span.cloneNode(true);
+                                    existingClone.replaceWith(fresh);
+                                    applyEntryAnimationToImage(fresh);
+                                }
+                                lastInserted = existingClone;
+                            }
                         }
-                        else if (existingClone.innerHTML !== span.innerHTML) {
-                            // 位置已对, 同步内容(图片注入)
-                            const fresh = span.cloneNode(true);
-                            existingClone.replaceWith(fresh);
-                            applyEntryAnimationToImage(fresh);
+                        else {
+                            // 有 regex 但定位失败: 保持原位, 同步内容
+                            if (existingClone.innerHTML !== span.innerHTML) {
+                                const fresh = span.cloneNode(true);
+                                existingClone.replaceWith(fresh);
+                                applyEntryAnimationToImage(fresh);
+                            }
+                            lastInserted = existingClone;
                         }
                         continue;
                     }
                     // 没有克隆: 新建克隆并插入 reader 对应位置
                     const clone = span.cloneNode(true);
                     if (!targetPara) {
-                        reader.appendChild(clone);
+                        if (lastInserted) {
+                            // 无 regex: 跟随上一张图
+                            lastInserted.parentElement?.insertBefore(clone, lastInserted.nextSibling);
+                        }
+                        else {
+                            reader.appendChild(clone);
+                        }
                         applyEntryAnimationToImage(clone);
+                        lastInserted = clone;
                         continue;
                     }
                     // 插到"含完整 regex 句子的段落"之后; 不做字符级拆段(那是之前插到句子中间的根源)
                     targetPara.parentElement?.insertBefore(clone, targetPara.nextSibling);
                     applyEntryAnimationToImage(clone);
+                    lastInserted = clone;
                 }
                 catch (error) {
                     console.warn('[彼方] 克隆 st-chatu8 图片失败:', error);
