@@ -1610,70 +1610,58 @@ function findReaderInsertTargetByText(reader, anchorText, srcText) {
     return { para: paras[paras.length - 1], sentLoose: '', splitOffset: -1 };
 }
 
+/** 宽松归一化: 去所有标点/空白/符号, 只留中文与字母数字, 用于跨"原文↔渲染文本"匹配 */
+function normForMatch(text) {
+    return String(text ?? '')
+        .replace(/[\s\p{P}\p{S}]/gu, '')
+        .toLowerCase();
+}
+
 /**
- * 根据原文精确结束位置(endIndex), 在 reader 中定位目标段落。
+ * 根据 st-chatu8 的 regex(原文中的句子), 在 reader 渲染文本中精确定位目标段落。
  *
- * 双锚点: 同时用"结束位置前一句"和"结束位置后一句"匹配, 极大减少歧义。
- * - 前一句(endIndex 前最后一句): 图片插在该句之后
- * - 后一句(endIndex 后第一句): 图片插在该句之前
- * 两句话都能在 reader 的连续段落里找到时, 目标段落必然唯一。
+ * 渲染文本被清理过(去引号/说·道/标点规整), regex 那句可能部分变化或被截断。
+ * 策略: 把 regex 归一化后, 从最长到最短逐步在 reader 段落文本里找**最长可匹配子串**,
+ * 找到的段落即为图片应插的位置(图片插在匹配子串结束处)。
  */
-function findReaderInsertTarget(reader, endIndex, srcText) {
+function findReaderInsertTarget(reader, regex, srcText) {
     const paras = Array.from(reader.querySelectorAll('.bfd-narration p, .bfd-line, .bfd-line-inner, .bfd-scene-break'));
     if (paras.length === 0)
         return null;
-    const srcLoose = looseText(srcText);
-    const beforeText = srcText.slice(0, endIndex);
-    const afterText = srcText.slice(endIndex);
-    const beforeLoose = looseText(beforeText);
-    const afterLoose = looseText(afterText);
-    if (!beforeLoose)
-        return paras[paras.length - 1];
-    // 前一句(结束前最后一句)
-    const beforeSent = (beforeLoose.match(/[^。！？!?]*[。！？!?][^。！？!?]*$/) || [beforeLoose.slice(-25)])[0];
-    const beforeSentLoose = looseText(beforeSent);
-    // 后一句(结束后第一句)
-    const afterSent = (afterLoose.match(/^[^。！？!?]*[。！？!?]/) || [afterLoose.slice(0, 25)])[0];
-    const afterSentLoose = looseText(afterSent);
-
-    // 双锚点匹配: 找同时满足"含前句尾"且"含后句头"的段落序列
-    // 先找含前句的段, 再确认其后一段含后句
-    for (let i = paras.length - 1; i >= 0; i--) {
-        const paraLoose = looseText(paras[i].textContent ?? '');
-        if (!paraLoose)
-            continue;
-        if (beforeSentLoose && paraLoose.includes(beforeSentLoose)) {
-            // 该段含前句 → 图片插在该句结束处; 若段内该句后还有文字, 拆段
-            const sentIdx = paraLoose.lastIndexOf(beforeSentLoose);
-            if (sentIdx + beforeSentLoose.length < paraLoose.length)
-                return { para: paras[i], sentLoose: beforeSentLoose, splitOffset: sentIdx + beforeSentLoose.length };
-            // 该句在段尾 → 检查下一段是否含后句
-            const next = paras[i + 1];
-            if (afterSentLoose && next) {
-                const nextLoose = looseText(next.textContent ?? '');
-                if (nextLoose && nextLoose.includes(afterSentLoose))
-                    return { para: paras[i], sentLoose: beforeSentLoose, splitOffset: sentIdx + beforeSentLoose.length };
+    const regexNorm = normForMatch(regex);
+    if (!regexNorm)
+        return null;
+    // 归一化每个段落文本
+    const paraNorms = paras.map(p => normForMatch(p.textContent ?? ''));
+    // 从最长到最短, 找"出现在某个段落里"的 regex 子串
+    const findLongestMatch = () => {
+        const minLen = Math.min(12, regexNorm.length);
+        for (let len = regexNorm.length; len >= minLen; len--) {
+            for (let start = 0; start + len <= regexNorm.length; start++) {
+                const sub = regexNorm.substr(start, len);
+                for (let i = paras.length - 1; i >= 0; i--) {
+                    const idx = paraNorms[i].indexOf(sub);
+                    if (idx >= 0) {
+                        return { para: paras[i], splitOffset: idx + len, regexNorm, matchLen: len };
+                    }
+                }
             }
-            return { para: paras[i], sentLoose: '', splitOffset: -1 };
         }
-    }
-    // 单锚点回退: 只匹配前句尾部
-    const tail = beforeSentLoose.slice(-15);
-    for (let i = paras.length - 1; i >= 0; i--) {
-        const paraLoose = looseText(paras[i].textContent ?? '');
-        if (!paraLoose)
-            continue;
-        const idx = paraLoose.lastIndexOf(tail);
-        if (idx >= 0)
-            return { para: paras[i], sentLoose: tail, splitOffset: idx + tail.length };
-    }
-    // 比例兜底
-    if (srcLoose && beforeLoose) {
-        const fraction = beforeLoose.length / Math.max(1, srcLoose.length);
+        return null;
+    };
+    const result = findLongestMatch();
+    if (result)
+        return result;
+    // 兜底: 比例映射(极少走到)
+    if (srcText) {
+        const srcNorm = normForMatch(srcText);
+        const regexIdx = srcNorm.indexOf(regexNorm.slice(0, 20));
+        const beforeLen = regexIdx >= 0 ? regexIdx : Math.floor(srcNorm.length / 2);
+        const fraction = beforeLen / Math.max(1, srcNorm.length);
         const index = Math.min(paras.length - 1, Math.floor(fraction * paras.length));
-        return { para: paras[index], sentLoose: '', splitOffset: -1 };
+        return { para: paras[index], splitOffset: -1, regexNorm };
     }
-    return { para: paras[paras.length - 1], sentLoose: '', splitOffset: -1 };
+    return { para: paras[paras.length - 1], splitOffset: -1, regexNorm };
 }
 
 /**
@@ -1681,15 +1669,15 @@ function findReaderInsertTarget(reader, endIndex, srcText) {
  * - 若目标段落内包含锚点句子且有后续文字 → 拆段, 图片插到句子之间
  * - 否则直接插到段落之后
  */
-function insertNodeAfterAnchor(reader, node, sentLoose, splitOffset, target) {
+function insertNodeAfterAnchor(reader, node, splitOffset, target, regexNorm) {
     if (!target || !node)
         return;
     const para = target.para || target;
     // 旁白段落且锚点句子在段中 → 拆段
-    if (sentLoose && splitOffset >= 0 && (para.tagName === 'P' || para.closest?.('.bfd-narration'))) {
-        const paraLoose = looseText(para.textContent ?? '');
-        if (splitOffset > 0 && splitOffset < paraLoose.length) {
-            const targetNode = findTextNodeAtLooseOffset(para, splitOffset);
+    if (regexNorm && splitOffset >= 0 && (para.tagName === 'P' || para.closest?.('.bfd-narration'))) {
+        const paraNorm = normForMatch(para.textContent ?? '');
+        if (splitOffset > 0 && splitOffset < paraNorm.length) {
+            const targetNode = findTextNodeAtNormOffset(para, splitOffset);
             if (targetNode) {
                 const after = targetNode.node.splitText(targetNode.offset);
                 const second = para.cloneNode(false);
@@ -1711,18 +1699,17 @@ function insertNodeAfterAnchor(reader, node, sentLoose, splitOffset, target) {
         para.after(node);
 }
 
-/** 找到某段文本中, loose 偏移对应的真实文本节点(供 splitText 拆段) */
-function findTextNodeAtLooseOffset(container, looseOffset) {
+/** 找到某段文本中, normForMatch 归一化偏移对应的真实文本节点(供 splitText 拆段) */
+function findTextNodeAtNormOffset(container, normOffset) {
     const walker = container.ownerDocument.createTreeWalker(container, NodeFilter.SHOW_TEXT);
     let acc = 0;
     let node;
     while ((node = walker.nextNode())) {
-        const text = (node.textContent ?? '').replace(/\s+/g, '');
-        const textLoose = text.replace(/[，。！？；：、""''「」『』（）《》…—~·,.;:!?()\[\]{}<>"']/g, '');
-        if (acc + textLoose.length >= looseOffset) {
-            return { node, offset: looseOffset - acc };
+        const textNorm = normForMatch(node.textContent ?? '');
+        if (acc + textNorm.length >= normOffset) {
+            return { node, offset: normOffset - acc };
         }
-        acc += textLoose.length;
+        acc += textNorm.length;
     }
     return null;
 }
@@ -1779,9 +1766,27 @@ function observeChatu8Insertions(mesTextEl) {
         relocating = true;
         try {
             const srcText = src.textContent || '';
-            // 只处理 src 层(隐藏原文层)的图片: 这些是 st-chatu8 匹配到隐藏层后插入的, 必须搬到 reader;
-            // reader 里已有的图片是 st-chatu8 直接插的(位置正确), 不碰它们, 避免搬错/死循环
-            const targets = Array.from(src.querySelectorAll(CHATU8_IMAGE_SELECTOR));
+            // 修正"游离 container": 彼方重渲染后 st-chatu8 会把已生成的图片 container 堆到 reader 末尾,
+            // 而对应的 span(带 request-id) 在正文正确位置。container 与 span 数量一致时, 按顺序移回。
+            try {
+                const readerSpans = Array.from(reader.querySelectorAll('.st-chatu8-image-span'));
+                const freeContainers = Array.from(reader.children).filter(c => c.matches?.('.st-chatu8-image-container') && !c.closest('.st-chatu8-image-span'));
+                if (freeContainers.length > 0 && readerSpans.length >= freeContainers.length) {
+                    const targetSpans = readerSpans.slice(-freeContainers.length);
+                    freeContainers.forEach((container, idx) => {
+                        const span = targetSpans[idx];
+                        if (span && !span.contains(container)) {
+                            span.appendChild(container);
+                        }
+                    });
+                }
+            }
+            catch {
+                // 忽略修正失败
+            }
+            // 处理所有图片主体: src 层(隐藏层待搬) + reader 里已插入的(彼方重渲染后 st-chatu8 可能把图片堆到末尾, 需修正)
+            const targets = Array.from(src.querySelectorAll(CHATU8_IMAGE_SELECTOR))
+                .concat(Array.from(reader.querySelectorAll(CHATU8_IMAGE_SELECTOR)));
             if (targets.length === 0)
                 return;
             // 只处理"图片主体"元素: span/button/container 会重复计数, 取最外层 span 为准
@@ -1794,30 +1799,47 @@ function observeChatu8Insertions(mesTextEl) {
                 if (seen.has(node))
                     continue;
                 seen.add(node);
-                let endIndex = -1;
+                let regex = '';
                 try {
                     const info = findAnchorInfo(srcText, node);
-                    endIndex = info ? info.endIndex : -1;
+                    regex = info ? info.regex : '';
                 }
                 catch {
-                    endIndex = -1;
+                    regex = '';
                 }
-                items.push({ node, endIndex });
+                items.push({ node, regex });
             }
-            // 按 endIndex(=原文位置)升序排序, 保证顺序与正文一致
-            items.sort((a, b) => (a.endIndex < 0 ? Number.MAX_SAFE_INTEGER : a.endIndex) - (b.endIndex < 0 ? Number.MAX_SAFE_INTEGER : b.endIndex));
-            for (const { node, endIndex } of items) {
+            // 按 regex 在原文中的位置排序(用 endIndex 排序), 保证顺序与正文一致
+            items.sort((a, b) => {
+                const ai = a.regex ? srcText.indexOf(a.regex) : -1;
+                const bi = b.regex ? srcText.indexOf(b.regex) : -1;
+                return (ai < 0 ? Number.MAX_SAFE_INTEGER : ai) - (bi < 0 ? Number.MAX_SAFE_INTEGER : bi);
+            });
+            for (const { node, regex } of items) {
                 try {
-                    if (endIndex < 0) {
-                        reader.appendChild(node);
+                    if (!regex) {
+                        // 无法关联 regex: 若已在 reader 且不在末尾则不动, 否则放 reader 末尾
+                        if (!reader.contains(node))
+                            reader.appendChild(node);
                         continue;
                     }
-                    const target = findReaderInsertTarget(reader, endIndex, srcText);
+                    const target = findReaderInsertTarget(reader, regex, srcText);
                     if (!target || !target.para) {
-                        reader.appendChild(node);
+                        if (!reader.contains(node))
+                            reader.appendChild(node);
                         continue;
                     }
-                    insertNodeAfterAnchor(reader, node, target.sentLoose, target.splitOffset, target.para);
+                    // 已在正确位置则跳过: 图片前一个非图片兄弟位于目标段落内且已含 regex 尾部
+                    const targetPara = target.para;
+                    let prev = node.previousElementSibling;
+                    while (prev && prev.matches?.(CHATU8_IMAGE_SELECTOR))
+                        prev = prev.previousElementSibling;
+                    if (prev && (prev === targetPara || targetPara.contains(prev))) {
+                        const prevNorm = normForMatch(prev.textContent ?? '');
+                        if (!target.regexNorm || prevNorm.includes(target.regexNorm.slice(-15)) || prevNorm.endsWith(target.regexNorm))
+                            continue;
+                    }
+                    insertNodeAfterAnchor(reader, node, target.splitOffset, targetPara, target.regexNorm);
                 }
                 catch (error) {
                     console.warn('[彼方] 搬运 st-chatu8 图片失败:', error);
