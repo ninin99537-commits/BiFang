@@ -1930,18 +1930,22 @@ function attachChatu8CompatLayer(mesTextEl, originalHtml) {
     observeChatu8Insertions(mesTextEl);
 }
 
-/** 检测楼层是否正在被酒馆编辑(编辑正文时会临时把 .mes_text 换成 textarea/contenteditable)。
- * 只检测目标楼层自身的编辑状态, 避免全局 textarea(输入框/设置面板)误判导致渲染被跳过 */
+/** 检测楼层是否正在被酒馆编辑(编辑正文时会临时把 .mes_text 换成编辑框)。
+ * 只检测"真正的编辑框"(酒馆 .mes_edit 打开时的标记), 排除楼层内其他 textarea
+ * (如 st-chatu8/札记系统的 .custom-jdg-raw 原始文本预览)避免误判导致渲染被跳过 */
 function isMesTextBeingEdited(mesTextEl) {
     try {
         const mes = mesTextEl.closest?.('.mes');
         if (!mes)
             return false;
-        // 编辑区在 .mes_text 内(酒馆编辑正文时把内容换成 textarea 或 contenteditable)
-        if (mesTextEl.querySelector('textarea, [contenteditable="true"]'))
+        // 酒馆编辑时 .mes_text 的内容被替换为编辑区(直接子级 textarea 或 .mes_edit_area)
+        const directEdit = Array.from(mesTextEl.children).some(c =>
+            c.matches?.('.mes_edit_area, textarea.mes_edit, .mes_edit_textarea')
+            || (c.matches?.('textarea') && !c.classList.contains('custom-jdg-raw')));
+        if (directEdit)
             return true;
-        // 该楼层有编辑标记(酒馆编辑时给 .mes 加类或内部有编辑容器)
-        if (mes.classList.contains('editing') || mes.querySelector(':scope > .mes_edit_area'))
+        // 编辑弹窗/编辑态标记
+        if (mes.querySelector('.mes_edit_area, textarea.mes_edit') || mes.classList.contains('editing'))
             return true;
     }
     catch {
