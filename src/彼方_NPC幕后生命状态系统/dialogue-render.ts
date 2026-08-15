@@ -267,6 +267,8 @@ function simpleHash(text) {
  * 这些标签不改变正文内容, 但会改变 message.message → 若直接参与 hash 计算,
  * 彼方会误判"内容变了"而重新调用 AI 解析 → 慢且可能失败(渲染失效)。
  * 这里把这些"非正文尾部标签"从消息文本中剔除后再算 hash 和分段, 正文不变则缓存命中。
+ * 注意: 流式输出中 aftertalk 等标签可能**尚未闭合**(内容仍在增长), 也要一并剔除,
+ * 否则每次流式 token 变化都会导致 hash 变化 → 反复重新调 AI 解析(浪费请求)。
  */
 function normalizeMessageForCache(text) {
     let s = String(text ?? '');
@@ -275,6 +277,12 @@ function normalizeMessageForCache(text) {
     s = s.replace(/<[a-zA-Z][^>]*\/>/g, '');
     // 剔除成对的非正文尾部标签块(aftertalk/UpdateVariable/JSONPatch/Analyze/LimZhuangTaiLan/后话等)
     s = s.replace(/<(aftertalk|UpdateVariable|JSONPatch|Analyze|StatusPlaceHolderImpl|LimZhuangTaiLan|后话|aftertalk_block)[^>]*>[\s\S]*?<\/\1>/gi, '');
+    // 剔除**未闭合**的非正文尾部标签块(流式输出中标签还没闭合, 从 <aftertalk 到消息末尾):
+    // 找最后一次出现 <aftertalk/<UpdateVariable/... 的位置, 其后的内容全部剔除(这些标签总是在正文之后)
+    const tailTagMatch = s.match(/<(?:\/)?(?:aftertalk|UpdateVariable|JSONPatch|Analyze|StatusPlaceHolderImpl|LimZhuangTaiLan|后话|aftertalk_block)\b[^>]*>[\s\S]*$/i);
+    if (tailTagMatch && tailTagMatch.index > 0) {
+        s = s.slice(0, tailTagMatch.index);
+    }
     return s.trim();
 }
 /** 只读/排除模式外的正文判定: 消息是否"只有插件标签没有正文"(避免对纯标签消息调 AI) */

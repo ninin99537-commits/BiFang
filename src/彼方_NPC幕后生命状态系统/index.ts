@@ -236,26 +236,40 @@ $(() => {
     // ——避免直接跳过导致"渲染被酒馆清掉后无人恢复"
     {
         let pendingRenderIds = new Set();
+        let updatedTimer = undefined;
+        // 防抖: 流式 aftertalk/变量标签逐 token 触发 MESSAGE_UPDATED, 合并短时间内多次触发为一次
+        const flushUpdated = () => {
+            updatedTimer = undefined;
+            const ids = Array.from(pendingRenderIds);
+            pendingRenderIds = new Set();
+            if (ids.length === 0)
+                return;
+            _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.injectDialogueStyles();
+            for (const id of ids) {
+                _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderMessageById(id).catch(error => console.warn('[彼方] 编辑后重新渲染失败:', error));
+            }
+        };
         eventOn(tavern_events.MESSAGE_UPDATED, message_id => {
             if (!_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().正文渲染?.启用)
                 return;
             const id = Number(message_id);
             if (!Number.isFinite(id) || id <= 0)
                 return;
+            pendingRenderIds.add(id);
             try {
                 const ctx = SillyTavern?.getContext?.();
                 if (ctx?.generatingMessage) {
                     // 生成中(MVU 额外模型更新): 挂起, 等 GENERATION_ENDED 补渲染
-                    pendingRenderIds.add(id);
                     return;
                 }
             }
             catch {
                 // 忽略
             }
-            pendingRenderIds.delete(id);
-            _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.injectDialogueStyles();
-            _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderMessageById(id).catch(error => console.warn('[彼方] 编辑后重新渲染失败:', error));
+            // 非生成中: 防抖 400ms 合并连续更新(流式标签每 token 一次)
+            if (updatedTimer !== undefined)
+                window.clearTimeout(updatedTimer);
+            updatedTimer = window.setTimeout(flushUpdated, 400);
         });
     }
     // 重roll(换生成结果)后内容变化, 清掉该楼层缓存并重新渲染, 否则停在旧渲染/原文
