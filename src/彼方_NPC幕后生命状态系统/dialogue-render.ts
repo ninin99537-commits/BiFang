@@ -259,6 +259,28 @@ function simpleHash(text) {
         hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
     return hash;
 }
+
+/**
+ * 规范化消息文本用于缓存 hash 与分段:
+ * 其他插件(幕后系统/札记系统/MVU 等)会在正文输出完后往消息末尾插入标签
+ * (如 <StatusPlaceHolderImpl/>、<aftertalk>…</aftertalk>、<UpdateVariable>…</UpdateVariable> 等),
+ * 这些标签不改变正文内容, 但会改变 message.message → 若直接参与 hash 计算,
+ * 彼方会误判"内容变了"而重新调用 AI 解析 → 慢且可能失败(渲染失效)。
+ * 这里把这些"非正文尾部标签"从消息文本中剔除后再算 hash 和分段, 正文不变则缓存命中。
+ */
+function normalizeMessageForCache(text) {
+    let s = String(text ?? '');
+    // 剔除自闭合状态占位标签
+    s = s.replace(/<StatusPlaceHolderImpl\s*\/?\s*>/gi, '');
+    s = s.replace(/<[a-zA-Z][^>]*\/>/g, '');
+    // 剔除成对的非正文尾部标签块(aftertalk/UpdateVariable/JSONPatch/Analyze/LimZhuangTaiLan/后话等)
+    s = s.replace(/<(aftertalk|UpdateVariable|JSONPatch|Analyze|StatusPlaceHolderImpl|LimZhuangTaiLan|后话|aftertalk_block)[^>]*>[\s\S]*?<\/\1>/gi, '');
+    return s.trim();
+}
+/** 只读/排除模式外的正文判定: 消息是否"只有插件标签没有正文"(避免对纯标签消息调 AI) */
+function isPluginOnlyMessage(text) {
+    return !normalizeMessageForCache(text).replace(/<[^>]+>/g, '').trim();
+}
 function getPlayerName() {
     try {
         return getCurrentPersonaName() ?? '';
@@ -1216,7 +1238,12 @@ async function renderMessageById(messageId) {
     if (!message || message.role !== 'assistant' || message.is_hidden)
         return;
     const characters = buildCharactersFromLibrary(settings);
-    const segments = splitByTags(String(message.message || ''), settings.标签模式, settings.标签列表 ?? []);
+    // 用"剔除插件尾部标签后的文本"分段和算 hash: 其他插件插入 <StatusPlaceHolderImpl/> 等
+    // 不影响正文, 不应触发重新解析(否则渲染失效 + 卡顿)
+    const cacheText = normalizeMessageForCache(message.message);
+    if (!cacheText)
+        return;
+    const segments = splitByTags(cacheText, settings.标签模式, settings.标签列表 ?? []);
     if (segments.every(s => !s.text.trim()))
         return;
     // 流式预解析结果复用: 流式期间标签一闭合就已对"parse 段正文文本"预解析过, 若 hash 匹配则直接复用, 不再重复调用 AI
@@ -1242,9 +1269,9 @@ async function renderMessageById(messageId) {
         const mode = String(settings.标签模式 ?? '');
         const tags = [...(settings.标签列表 ?? [])];
         const segBlocks = segments.map(seg => (seg.kind === 'parse' ? pending : null));
-        cacheSet(messageId, { hash: simpleHash(String(message.message || '')), mode, tags, segments: segBlocks });
+        cacheSet(messageId, { hash: simpleHash(cacheText), mode, tags, segments: segBlocks });
     }
-    const hash = simpleHash(String(message.message || ''));
+    const hash = simpleHash(cacheText);
     const mode = String(settings.标签模式 ?? '');
     const tags = [...(settings.标签列表 ?? [])];
     const cached = parseCache.get(messageId);
@@ -1318,6 +1345,13 @@ async function renderMessageById(messageId) {
     }
     if (!el)
         return;
+    // 清理失效状态: 若楼层有 bfd-rendered 类但没有 bfd-reader(此前渲染中途失败/被插件打断),
+    // 先清除标记, 本次渲染成功后再重新添加, 避免留下"标记了却无渲染"的脏状态
+    if (el.classList.contains('bfd-rendered') && !el.querySelector('.bfd-reader')) {
+        el.classList.remove('bfd-rendered');
+        el.removeAttribute('data-bfd-original');
+        el.querySelectorAll('.bfd-chatu8-src').forEach(src => src.remove());
+    }
     if (el.getAttribute('data-bfd-original') === null)
         el.setAttribute('data-bfd-original', el.innerHTML);
     // 新方案: 用酒馆正则自己渲染原始正文(与酒馆显示一致), 不依赖酒馆在 DOM 里渲染好的 HTML
