@@ -1714,6 +1714,32 @@ function findTextNodeAtNormOffset(container, normOffset) {
     return null;
 }
 
+/**
+ * 给 st-chatu8 插入的图片元素标记入场动画, 与正文段落保持一致:
+ * - 顶部已在触发线以上 → 直接加 bfd-animate(显示)
+ * - 顶部在触发线以下 → 挂 bfd-animate-pending(opacity:0), 由轮询在滚到触发线时播放
+ */
+function applyEntryAnimationToImage(node) {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE)
+        return;
+    // 动画载体: 图片 span(内含 container)或图片容器本身; 若 node 是 button, 找相邻 span
+    let target = node.matches?.('.st-chatu8-image-span') ? node
+        : node.matches?.('.st-chatu8-image-container') ? node.parentElement
+            : null;
+    if (!target)
+        return;
+    if (target.classList.contains('bfd-animate') || target.classList.contains('bfd-animate-pending'))
+        return;
+    const topLine = getBandTopPx();
+    const rect = target.getBoundingClientRect();
+    if (rect.top < topLine) {
+        target.classList.add('bfd-animate');
+    }
+    else {
+        target.classList.add('bfd-animate-pending');
+    }
+}
+
 /** 楼层 DOM 上挂载的 st-chatu8 图片搬运 observer(避免重复监听) */
 const chatu8ObserverStore = new WeakMap();
 
@@ -1779,6 +1805,8 @@ function observeChatu8Insertions(mesTextEl) {
                             span.appendChild(container);
                         }
                     });
+                    // 归位后给图片 span 标记入场动画
+                    targetSpans.forEach(span => applyEntryAnimationToImage(span));
                 }
             }
             catch {
@@ -1829,17 +1857,18 @@ function observeChatu8Insertions(mesTextEl) {
                             reader.appendChild(node);
                         continue;
                     }
-                    // 已在正确位置则跳过: 图片前一个非图片兄弟位于目标段落内且已含 regex 尾部
+                    // 已在正确位置则跳过: 图片已位于目标段落内部(拆段插入过), 或紧邻目标段落之后
                     const targetPara = target.para;
+                    if (targetPara.contains(node))
+                        continue;
                     let prev = node.previousElementSibling;
                     while (prev && prev.matches?.(CHATU8_IMAGE_SELECTOR))
                         prev = prev.previousElementSibling;
-                    if (prev && (prev === targetPara || targetPara.contains(prev))) {
-                        const prevNorm = normForMatch(prev.textContent ?? '');
-                        if (!target.regexNorm || prevNorm.includes(target.regexNorm.slice(-15)) || prevNorm.endsWith(target.regexNorm))
-                            continue;
-                    }
+                    if (prev === targetPara)
+                        continue;
                     insertNodeAfterAnchor(reader, node, target.splitOffset, targetPara, target.regexNorm);
+                    // 图片归位后标记入场动画, 与正文段落一致
+                    applyEntryAnimationToImage(node);
                 }
                 catch (error) {
                     console.warn('[彼方] 搬运 st-chatu8 图片失败:', error);
@@ -2189,13 +2218,17 @@ function injectDialogueStyles() {
 .bfd-line-inner.bfd-animate { animation: pg-nar 0.5s ease-out both; }
 .bfd-line.bfd-animate { animation: var(--bfd-entry-anim, pg-line) 0.35s ease-out both; }
 .bfd-line-protagonist.bfd-animate { --bfd-entry-anim: pg-line-r; }
+/* st-chatu8 图片与正文段落一致的入场动画 */
+.bfd-reader .st-chatu8-image-span.bfd-animate { animation: pg-nar 0.5s ease-out both; }
+.bfd-reader .st-chatu8-image-span.bfd-animate-pending { opacity: 0; }
 @keyframes pg-nar { from { opacity: 0; } to { opacity: 1; } }
 @keyframes pg-line { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
 @keyframes pg-line-r { from { opacity: 0; transform: translateX(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
   .bfd-narration p.bfd-animate,
   .bfd-line.bfd-animate,
-  .bfd-line-inner.bfd-animate { animation: none !important; }
+  .bfd-line-inner.bfd-animate,
+  .bfd-reader .st-chatu8-image-span.bfd-animate { animation: none !important; }
 }
 
 /* ============================================================
