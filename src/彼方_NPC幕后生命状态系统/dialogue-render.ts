@@ -290,6 +290,9 @@ function simpleHash(text) {
  */
 function normalizeMessageForCache(text) {
     let s = String(text ?? '');
+    // 剔除 HTML 注释(创作辅助系统会在正文块内插入 <!-- 草稿:... --> 等注释;
+    // 浏览器解析 DOM 时注释不产生文本, 若保留注释, 正文段文本无法在楼层 DOM 中定位匹配, 渲染必失败)
+    s = s.replace(/<!--[\s\S]*?-->/g, '');
     // 剔除自闭合状态占位标签
     s = s.replace(/<StatusPlaceHolderImpl\s*\/?\s*>/gi, '');
     s = s.replace(/<[a-zA-Z][^>]*\/>/g, '');
@@ -1538,24 +1541,43 @@ async function renderMessageById(messageId, options = {}) {
         r.setStart(firstRange.startNode, firstRange.startOffset);
         r.setEnd(lastRange.endNode, lastRange.endOffset);
         // 抢救正文范围内的 st-chatu8 生图按钮/占位(DOM 元素, 不在消息数据里):
-        // 直接 deleteContents 会把它们一起删掉(编辑/重渲染后按钮消失) → 用 extractContents 提取,
-        // 图片元素保留并放进渲染块, 之后由图片定位观察器按句子重新定位。
+        // extractContents 提取后, 记录每个图片前的锚点文本, 渲染块创建后按锚点匹配对应句子段落插回,
+        // 避免全部堆叠到渲染块末尾(编辑/重渲染后图片堆叠)。
         const savedImages = [];
         try {
             const frag = r.extractContents();
             if (frag) {
-                frag.querySelectorAll(CHATU8_IMAGE_SELECTOR).forEach(img => {
-                    img.removeAttribute('data-bfd-placed');
-                    savedImages.push(img);
-                });
+                const collectImages = (node, textAcc) => {
+                    if (node.nodeType === Node.TEXT_NODE)
+                        return textAcc + node.data;
+                    if (node.nodeType === Node.ELEMENT_NODE) {
+                        if (node.matches?.(CHATU8_IMAGE_SELECTOR)) {
+                            if (!node.parentElement || !node.parentElement.closest?.(CHATU8_IMAGE_SELECTOR))
+                                savedImages.push({ img: node, anchor: textAcc });
+                            return textAcc; // 图片内部文本不计入锚点
+                        }
+                        for (const child of Array.from(node.childNodes))
+                            textAcc = collectImages(child, textAcc);
+                    }
+                    return textAcc;
+                };
+                collectImages(frag, '');
             }
         }
         catch {
             r.deleteContents();
         }
         r.insertNode(blockNode);
-        if (savedImages.length > 0)
-            savedImages.forEach(img => blockNode.appendChild(img));
+        // 按锚点把图片插回渲染块对应句子之后
+        if (savedImages.length > 0) {
+            for (const { img, anchor } of savedImages) {
+                const target = findParagraphByAnchor(blockNode, anchor);
+                if (target)
+                    target.after(img);
+                else
+                    blockNode.appendChild(img);
+            }
+        }
         replaced++;
     }
     if (replaced === 0) {
@@ -1594,6 +1616,33 @@ function clearDialogueRenders() {
 
 /** st-chatu8 图片元素选择器(它插入的按钮/图片容器/折叠包装等) */
 const CHATU8_IMAGE_SELECTOR = '.image-tag-button,.st-chatu8-image-button,.st-chatu8-image-span,.st-chatu8-image-container,.st-chatu8-collapse-wrapper';
+
+/** 在渲染块中按锚点文本匹配目标句子段落(抢救的生图图片应插在其后)。
+ * 锚点是图片前的正文文本, 取尾部(最贴近图片的一句)在段落中匹配(忽略标点空白差异) */
+function findParagraphByAnchor(reader, anchorText) {
+    const text = String(anchorText || '').trim();
+    if (!text)
+        return null;
+    const norm = s => String(s ?? '').replace(/[\s\p{P}\p{S}]/gu, '').toLowerCase();
+    const anchorNorm = norm(text);
+    if (!anchorNorm)
+        return null;
+    const paras = Array.from(reader.querySelectorAll('.bfd-line, .bfd-narration p, .bfd-line-text p'));
+    if (paras.length === 0)
+        return null;
+    // 从锚点尾部(最贴近图片)由长到短匹配, 从后往前找段落(图片位置靠后)
+    const tails = [anchorNorm.slice(-30), anchorNorm.slice(-16)];
+    for (const tail of tails) {
+        if (!tail)
+            continue;
+        for (let i = paras.length - 1; i >= 0; i--) {
+            const pn = norm(paras[i].textContent ?? '');
+            if (pn && (pn.endsWith(tail) || pn.includes(tail)))
+                return paras[i];
+        }
+    }
+    return null;
+}
 
 
 /** 检测楼层是否正在被酒馆编辑(编辑正文时会临时把 .mes_text 换成编辑框)。
