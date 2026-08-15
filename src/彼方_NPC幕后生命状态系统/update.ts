@@ -470,14 +470,15 @@ function extractCurrentTimeHint(worldbook, reply, context) {
     }
     return '';
 }
-function mergeCard(oldCard, update) {
+function mergeCard(oldCard, update, storyTimeText = '') {
     const merged = { ...(oldCard ?? {}) };
     // 剧情时间只用于时间轴展示(独立记录), 不再写入状态卡; 顺带清理旧数据残留
     delete merged['剧情时间'];
     for (const key of _state__WEBPACK_IMPORTED_MODULE_6__.CARD_FIELDS) {
         const value = update[key];
         if (typeof value === 'string' && value.trim()) {
-            merged[key] = value.trim();
+            // 生活状态: AI 若写了"今天/昨天 HH:mm"等相对时间, 用本次剧情时间补全为带日期格式
+            merged[key] = key === '生活状态' ? withStoryDate(value.trim(), storyTimeText) : value.trim();
         }
     }
     if ('可能偶遇' in update) {
@@ -486,6 +487,32 @@ function mergeCard(oldCard, update) {
     }
     merged['最后更新'] = Date.now();
     return merged;
+}
+
+/**
+ * 把生活状态里的相对时间("今天18:45"/"今天18点45"/"昨天15:30"等)补全为**剧情日期**。
+ * 剧情日期取自本次更新的剧情时间文本(storyTimeText, 形如 "2026-08-15 18:41 至 2026-08-15 18:48"),
+ * 取结束时刻所在日期作为"今天", 前一天作为"昨天"。
+ */
+function withStoryDate(text, storyTimeText) {
+    if (!text || !storyTimeText)
+        return text;
+    // 从剧情时间文本里提取日期(取最后一个出现的 YYYY-MM-DD, 通常为结束时刻)
+    const dates = String(storyTimeText).match(/\d{4}[-/.]\d{1,2}[-/.]\d{1,2}/g);
+    if (!dates || dates.length === 0)
+        return text;
+    const lastDate = dates[dates.length - 1].replace(/[./]/g, '-');
+    const parts = lastDate.split('-');
+    const today = `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+    // 昨天 = 剧情日期 - 1 天
+    const d = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+    d.setDate(d.getDate() - 1);
+    const yesterday = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return String(text)
+        .replace(/今天\s*(\d{1,2})\s*[:：]\s*(\d{1,2})/g, `${today} $1:$2`)
+        .replace(/今天\s*(\d{1,2})\s*点\s*(\d{1,2})?\s*分?/g, (_, h, m) => `${today} ${h}:${m ? m.padStart(2, '0') : '00'}`)
+        .replace(/昨天\s*(\d{1,2})\s*[:：]\s*(\d{1,2})/g, `${yesterday} $1:$2`)
+        .replace(/昨天\s*(\d{1,2})\s*点\s*(\d{1,2})?\s*分?/g, (_, h, m) => `${yesterday} ${h}:${m ? m.padStart(2, '0') : '00'}`);
 }
 /** 解析剧情时间为时间戳（支持 YYYY-MM-DD HH:mm、YYYY.MM.DD HH:mm、YYYY/MM/DD 等，分钟可省略） */
 function parseStoryTime(text) {
@@ -596,7 +623,7 @@ function applyUpdate(data, parsed, timeJump = null, playerName = null) {
                     if (name && name !== playerName) {
                         if (!inSceneList.includes(name))
                             inSceneList.push(name);
-                        newData.NPC[name] = mergeCard(newData.NPC[name], card);
+                        newData.NPC[name] = mergeCard(newData.NPC[name], card, storyTimeText);
                         inSceneCardNames.push(name);
                     }
                 }
@@ -628,7 +655,7 @@ function applyUpdate(data, parsed, timeJump = null, playerName = null) {
         // 在场 NPC 只按"在场NPC"数组中的版本合并一次, 顶层(幕后)跳过, 避免同一 NPC 双重更新/互相覆盖
         if (inSceneList.includes(name))
             continue;
-        newData.NPC[name] = mergeCard(newData.NPC[name], card);
+        newData.NPC[name] = mergeCard(newData.NPC[name], card, storyTimeText);
         updatedNames.push(name);
         if (!newData.名单.includes(name))
             newData.名单.push(name);
