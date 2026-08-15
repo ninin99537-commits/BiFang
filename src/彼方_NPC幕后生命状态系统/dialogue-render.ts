@@ -1236,7 +1236,7 @@ function observeEntryAnimations(root) {
         ensureAnimationPoller();
 }
 /** 正文渲染版本: 渲染结构/样式变更时 +1, 强制已渲染楼层重建(否则旧的 reader 因"跳过重建"永不更新) */
-const READER_VERSION = 9;
+const READER_VERSION = 10;
 /** 渲染指定楼层的正文显示(只改显示, 不改 message.mes 原始内容) */
 async function renderMessageById(messageId) {
     const settings = _settings__WEBPACK_IMPORTED_MODULE_1__.getSettings().正文渲染;
@@ -1364,18 +1364,12 @@ async function renderMessageById(messageId) {
         console.warn(`[彼方渲染] #${messageId} 未找到楼层 DOM(3秒等待后仍无), 放弃渲染`);
         return;
     }
-    // 关键: 若楼层已渲染(有 bfd-reader)且正文 hash 命中缓存(正文内容未变, 只是其他插件在末尾
-    // 加了 UpdateVariable/StatusPlaceHolderImpl 等标签), 则完全跳过重建——重建 reader 会让
-    // st-chatu8 已插入的图片失效、且有解析/渲染失败风险, 导致渲染掉落。
-    // 只有正文真正变化(hash 变化)、未渲染过、或渲染版本不同(结构/样式升级)时才重建。
-    // 方案2: reader 是 .mes_text 的兄弟节点(el.nextElementSibling)
+    // 方案2: reader 是 .mes_text 的兄弟节点(el.nextElementSibling)。
+    // 重建 reader 不影响酒馆的 .mes_text(酒馆重写 .mes_text 碰不到它) → 不会闪烁。
+    // 因此 MESSAGE_UPDATED(含流式插入 aftertalk 等尾部内容)时**应重建 reader**, 让新内容显示;
+    // 正文 hash 未变时用缓存(segmentBlocks 复用), 不重新调 AI。
     const existingReader = el.nextElementSibling?.matches?.('.bfd-reader') ? el.nextElementSibling : null;
-    if (existingReader && existingReader.getAttribute('data-version') === String(READER_VERSION)
-        && cached && cached.hash === hash && cached.mode === mode && JSON.stringify(cached.tags) === JSON.stringify(tags)) {
-        console.info(`[彼方渲染] #${messageId} 已有 reader 且正文未变(hash=${hash}), 跳过重建`);
-        return;
-    }
-    console.info(`[彼方渲染] #${messageId} 开始重建: 已有Reader=${!!existingReader} hash=${hash} cachedHash=${cached?.hash}`);
+    console.info(`[彼方渲染] #${messageId} 渲染: 已有Reader=${!!existingReader} hash=${hash} cachedHash=${cached?.hash} 缓存命中=${!!(cached && cached.hash === hash)}`);
     // 清理失效状态: 若 .mes_text 已隐藏但无 reader 兄弟(渲染中途失败/被打断), 先恢复原文再重新渲染
     if (el.classList.contains('bfd-original-hidden') && !existingReader) {
         console.info(`[彼方渲染] #${messageId} 清理失效状态(隐藏但无reader)`);
@@ -1968,9 +1962,6 @@ function observeChatu8Insertions(mesTextEl) {
         relocating = true;
         try {
             const srcText = src.textContent || '';
-            // 先清空 reader 里已有的 st-chatu8 图片(酒馆重写 .mes_text 后 st-chatu8 会重新插入,
-            // 旧图片不清理会导致叠加/重复); st-chatu8 会按当前 .mes_text 重新插入全部图片
-            reader.querySelectorAll('.st-chatu8-image-span').forEach(el => el.remove());
             // 修正"游离 container": 彼方重渲染后 st-chatu8 会把已生成的图片 container 堆到 reader 末尾,
             // 而对应的 span(带 request-id) 在正文正确位置。container 与 span 数量一致时, 按顺序移回。
             try {
@@ -1998,6 +1989,7 @@ function observeChatu8Insertions(mesTextEl) {
                 return;
             // 只处理"图片主体"元素: span/button/container 会重复计数, 取最外层 span 为准
             const seen = new Set();
+            const seenReqIds = new Set();
             const items = [];
             for (const node of targets) {
                 // 若该元素在另一个已处理的图片元素内部, 跳过(以最外层为准)
@@ -2006,6 +1998,19 @@ function observeChatu8Insertions(mesTextEl) {
                 if (seen.has(node))
                     continue;
                 seen.add(node);
+                // 按 request-id 去重: st-chatu8 流式插入时同一张图可能在 .mes_text 和 reader 各有一份,
+                // 只搬 src(.mes_text) 里的那份, 避免重复堆叠
+                const reqId = node.getAttribute?.('data-request-id') || '';
+                if (reqId) {
+                    if (seenReqIds.has(reqId))
+                        continue;
+                    // 若该 request-id 的图已存在于 reader(src 不在), 不再处理
+                    const inSrc = src.contains(node);
+                    const existingInReader = reqId && reader.querySelector(`.st-chatu8-image-span[data-request-id="${reqId}"]`);
+                    if (!inSrc && existingInReader)
+                        continue;
+                    seenReqIds.add(reqId);
+                }
                 let regex = '';
                 try {
                     const info = findAnchorInfo(srcText, node);
@@ -2024,6 +2029,14 @@ function observeChatu8Insertions(mesTextEl) {
             });
             for (const { node, regex } of items) {
                 try {
+                    // 搬运前移除 reader 中同 request-id 的旧 span: st-chatu8 流式重新插入同图时,
+                    // 用 src 里的新节点替换 reader 里旧的, 避免重复堆叠
+                    const reqId = node.getAttribute?.('data-request-id') || '';
+                    if (reqId && src.contains(node)) {
+                        const dup = reader.querySelector(`.st-chatu8-image-span[data-request-id="${reqId}"]`);
+                        if (dup && dup !== node)
+                            dup.remove();
+                    }
                     if (!regex) {
                         // 无法关联 regex: 若已在 reader 且不在末尾则不动, 否则放 reader 末尾
                         if (!reader.contains(node))
@@ -2602,6 +2615,7 @@ function injectDialogueStyles() {
 }
 
 export { applyImportedFonts, clearDialogueRenders, clearMessageCache, findMessageTextElement, getImportedFontNames, getRenderPromptSeed, injectDialogueStyles, loadParseCache, preParseStreamingContent, reRenderLatestMessage, reapplyAllRenders, reapplyImportedFonts, reapplyLatestRender, renderCachedMessagesInChat, renderMessageById };
+
 
 
 
