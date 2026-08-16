@@ -747,7 +747,15 @@ async function preParseStreamingContent(fullText) {
         const updatingStore = _state__WEBPACK_IMPORTED_MODULE_2__.useUpdatingStore();
         const signal = updatingStore.start('正在预解析正文…', '预解析');
         try {
-            const characters = buildCharactersFromLibrary(settings);
+    const characters = buildCharactersFromLibrary(settings);
+    // 预转换头像为 Blob URL: fetch 异步解码(不阻塞主线程), 渲染时直接用短 URL 的小 HTML, 避免同步 atob 解码大 base64 卡顿
+    await Promise.all(
+        characters
+            .filter(c => c?.头像 && String(c.头像).startsWith('data:'))
+            .map(async c => {
+                c.头像 = await toBlobUrl(c.头像);
+            }),
+    );
             const blocks = await parseDialogueContent(content, settings, -1, signal);
             if (blocks.length > 0) {
                 pendingParseCache.set(hash, blocks);
@@ -841,9 +849,10 @@ function resolveColor(name, char, settings) {
 }
 /** 头像 base64 → 父页面 Blob URL 缓存(reader HTML 里只存短 URL, 避免每层内联几 MB base64 导致渲染卡顿)。
  * 彼方 iframe 是 about:blank(origin: null), 自身创建的 blob URL 父页面无法加载,
- * 必须用父页面的 URL.createObjectURL(父 origin, 父页面 CSS 可引用) */
+ * 必须用父页面的 URL.createObjectURL(父 origin, 父页面 CSS 可引用)。
+ * 首次用 fetch(dataURL) 异步解码(不阻塞主线程 atob 逐字节循环, 避免渲染时卡一下) */
 const avatarBlobCache = new Map();
-function toBlobUrl(src) {
+async function toBlobUrl(src) {
     const s = String(src ?? '');
     if (!s.startsWith('data:'))
         return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
@@ -851,13 +860,7 @@ function toBlobUrl(src) {
     if (cached)
         return cached;
     try {
-        const comma = s.indexOf(',');
-        const mime = (s.slice(0, comma).match(/data:([^;]+)/) || [])[1] || 'image/png';
-        const bin = atob(s.slice(comma + 1));
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++)
-            bytes[i] = bin.charCodeAt(i);
-        const blob = new Blob([bytes], { type: mime });
+        const blob = await window.fetch(s).then(r => r.blob());
         const url = (window.parent?.URL ?? URL).createObjectURL(blob);
         avatarBlobCache.set(s, url);
         return url;
@@ -883,7 +886,7 @@ function buildAvatarHtml(name, char, settings, shape, colorOverride) {
         const varName = char.__avatarVar ?? '';
         if (varName)
             return `<div class="bfd-avatar" data-shape="${shape}" style="${style}background-image:var(${varName});background-size:cover;background-position:center;"></div>`;
-        return `<div class="bfd-avatar" data-shape="${shape}" style="${style}"><img src="${escapeAttr(toBlobUrl(char.头像))}" alt="${escapeAttr(name)}" /></div>`;
+        return `<div class="bfd-avatar" data-shape="${shape}" style="${style}"><img src="${escapeAttr(String(char.头像 ?? ''))}" alt="${escapeAttr(name)}" /></div>`;
     }
     const initial = (name || '?').trim().slice(0, 1) || '?';
     return `<div class="bfd-avatar bfd-avatar-initial" data-shape="${shape}" style="${style}"><span>${escapeHtml(initial)}</span></div>`;
@@ -1532,7 +1535,7 @@ async function renderMessageById(messageId, options = {}) {
         for (const c of characters) {
             if (c?.头像) {
                 c.__avatarVar = `--bfd-avatar-${avatarIdx++}`;
-                const cssUrl = toBlobUrl(c.头像);
+                const cssUrl = String(c.头像).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
                 avatarVars.push(`${c.__avatarVar}:url("${cssUrl}")`);
             }
         }
@@ -1727,8 +1730,17 @@ async function renderMessageById(messageId, options = {}) {
     el.classList.add('bfd-rendered');
     console.info(`[彼方渲染] #${messageId} 正则式替换完成: 替换段数=${replaced} hash=${hash}`);
     // 滚动到屏幕底部 1/3 处触发入场/情绪动画(逐旁白/逐对白行)
-    if (animateOn)
-        observeEntryAnimations(el);
+    if (animateOn) {
+        // 延迟到下一帧再挂动画 pending: 渲染块插入(大量 <p> 触发重排)与动画样式变化分帧, 避免同帧两次重排卡顿
+        window.requestAnimationFrame(() => {
+            try {
+                observeEntryAnimations(el);
+            }
+            catch {
+                // 忽略
+            }
+        });
+    }
     // 编辑关闭/楼层重渲染后, st-chatu8 会重新插入图片, 但彼方渲染块已存在时它定位易失败,
     // 图片可能落到渲染块外(标签外)或错位 → 延迟整理一次, 按 regex 把游离图片挪回渲染块对应句子后
     window.setTimeout(() => {
@@ -1991,6 +2003,8 @@ async function renderCachedMessagesInChat() {
             if (parseCache.has(m.message_id) && textEl && isNearViewport(textEl)) {
                 try {
                     await renderMessageById(m.message_id);
+                    // 让出主线程: 避免视口附近多个楼层连续插入大渲染块导致阻塞卡顿
+                    await new Promise(res => setTimeout(res, 0));
                 }
                 catch (error) {
                     // 单条失败不影响其他楼层
