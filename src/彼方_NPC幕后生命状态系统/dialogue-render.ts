@@ -724,7 +724,11 @@ async function preParseStreamingContent(fullText) {
     // 快速短路: 标签未闭合时不全文分段(未闭合时 parse 段不完整, 分段纯属浪费)
     if (!tags.some(tag => text.includes(`</${tag}>`)))
         return;
-    const segments = splitByTags(text, settings.标签模式, tags);
+    // 与 renderMessageById 用同一套归一化(剔除 HTML 注释/插件标签)后再分段算 hash:
+    // 否则正文含 <!-- 草稿 --> 等注释时, 预解析 hash ≠ renderMessageById 的 pendingHash,
+    // 预解析结果永远复用不上 → 白请求一次 + 楼层生成完又重复解析
+    const normalizedText = normalizeMessageForCache(text);
+    const segments = splitByTags(normalizedText, settings.标签模式, tags);
     const parseSegments = segments.filter(s => s.kind === 'parse' && s.text.trim());
     // 标签闭合后才会有 parse 段; 单段内容稳定, 直接提前解析
     if (parseSegments.length !== 1)

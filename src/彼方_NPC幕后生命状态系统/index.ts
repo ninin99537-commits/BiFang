@@ -25,6 +25,11 @@ function renderMessageWithRetry(messageId, label) {
     render();
     window.setTimeout(() => {
         try {
+            // 渲染/解析仍在进行中(解析可能超过 3 秒): 不重复请求, 避免 abort 前一次请求导致"用户中断"+重复 AI 调用
+            if (_state__WEBPACK_IMPORTED_MODULE_3__.useUpdatingStore().isActive('渲染')) {
+                console.info(`[彼方] ${label}仍在渲染/解析中, 跳过自动重试`);
+                return;
+            }
             const el = _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.findMessageTextElement(messageId);
             // 判定是否真正渲染成对话界面: reader 内出现对白行/旁白块; 元素不存在或只回退成原文都算未渲染
             const hasDialogueUi = !!el && !!(el.querySelector('.bfd-reader .bfd-line') || el.querySelector('.bfd-reader .bfd-narration'));

@@ -258,7 +258,11 @@ const useUpdatingStore = pinia__WEBPACK_IMPORTED_MODULE_1__.defineStore('bifang-
             message.value = [...tasks.keys()].join(' + ');
         }
     }
-    return { active, message, start, cancel, stop, tasks };
+    /** 指定任务是否还在进行(用于避免"自动重试"在解析进行中重复请求/误中断) */
+    function isActive(taskName) {
+        return taskName ? tasks.has(taskName) : tasks.size > 0;
+    }
+    return { active, message, start, cancel, stop, isActive, tasks };
 });
 
 export { BIFANG_WORLDBOOK_ENTRY_NAME, CARD_FIELDS, DATA_VERSION, SNAPSHOT_LIMIT, STORAGE_KEY, captureConsole, emptyData, freshClearData, loadData, saveData, useConsoleStore, useDebugStore, useMainPromptStore, useRenderLogStore, useStateStore, useUpdatingStore };
