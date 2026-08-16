@@ -21,7 +21,7 @@ function handleChatChanged() {
 /** 渲染指定楼层, 若 3 秒后仍未真正渲染成对话界面(消息 DOM 未就绪/仍为原文)则自动重试一次, 避免偶发"AI输出了但没自动渲染"。
  * 这是"正文产生"路径(新消息/重roll): 允许调 AI 解析(缓存未命中时); 维护/恢复场景不走这里 */
 function renderMessageWithRetry(messageId, label) {
-    const render = () => _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderMessageById(messageId, { allowParse: true }).catch(error => console.warn(`[彼方] ${label}失败:`, error));
+    const render = () => _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderMessageById(messageId, { allowParse: true, label }).catch(error => console.warn(`[彼方] ${label}失败:`, error));
     render();
     window.setTimeout(() => {
         try {
@@ -33,6 +33,7 @@ function renderMessageWithRetry(messageId, label) {
             const el = _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.findMessageTextElement(messageId);
             // 判定是否真正渲染成对话界面: reader 内出现对白行/旁白块; 元素不存在或只回退成原文都算未渲染
             const hasDialogueUi = !!el && !!(el.querySelector('.bfd-reader .bfd-line') || el.querySelector('.bfd-reader .bfd-narration'));
+            console.info(`[彼方] ${label} #${messageId} 3秒检查: DOM存在=${!!el} 已渲染对话UI=${hasDialogueUi}`);
             if (!el || !hasDialogueUi) {
                 console.warn(`[彼方] ${label}未完成(消息DOM未就绪或仍为原文), 自动重试`);
                 render();
@@ -157,10 +158,12 @@ $(() => {
         eventOn(tavern_events.GENERATION_ENDED, () => {
             if (!_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().正文渲染?.启用)
                 return;
+            console.info('[彼方渲染] 收到 GENERATION_ENDED, 1.2秒后恢复有缓存的楼层渲染');
             if (restoreTimer !== undefined)
                 window.clearTimeout(restoreTimer);
             restoreTimer = window.setTimeout(() => {
                 restoreTimer = undefined;
+                console.info('[彼方渲染] GENERATION_ENDED 延迟结束, 执行 renderCachedMessagesInChat');
                 _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderCachedMessagesInChat().catch(error => console.warn('[彼方] 生成结束后恢复渲染失败:', error));
             }, 1200);
         });
@@ -250,9 +253,10 @@ $(() => {
             pendingRenderIds = new Set();
             if (ids.length === 0)
                 return;
+            console.info(`[彼方渲染] flushUpdated 防抖触发, 待渲染楼层=[${ids.join(',')}]`);
             _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.injectDialogueStyles();
             for (const id of ids) {
-                _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderMessageById(id).catch(error => console.warn('[彼方] 编辑后重新渲染失败:', error));
+                _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderMessageById(id, { label: 'MESSAGE_UPDATED' }).catch(error => console.warn('[彼方] 编辑后重新渲染失败:', error));
             }
         };
         eventOn(tavern_events.MESSAGE_UPDATED, message_id => {
@@ -266,6 +270,7 @@ $(() => {
                 const ctx = SillyTavern?.getContext?.();
                 if (ctx?.generatingMessage) {
                     // 生成中(MVU 额外模型更新): 挂起, 等 GENERATION_ENDED 补渲染
+                    console.info(`[彼方渲染] MESSAGE_UPDATED #${id}: generatingMessage=true, 挂起等 GENERATION_ENDED 补渲染 (pending=${pendingRenderIds.size})`);
                     return;
                 }
             }
@@ -273,6 +278,7 @@ $(() => {
                 // 忽略
             }
             // 非生成中: 防抖 400ms 合并连续更新(流式标签每 token 一次)
+            console.info(`[彼方渲染] MESSAGE_UPDATED #${id}: generatingMessage=false, 防抖400ms后渲染 (pending=${pendingRenderIds.size})`);
             if (updatedTimer !== undefined)
                 window.clearTimeout(updatedTimer);
             updatedTimer = window.setTimeout(flushUpdated, 400);
@@ -286,7 +292,7 @@ $(() => {
         const id = Number(message_id);
         if (Number.isFinite(id) && id > 0) {
             _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.clearMessageCache(id);
-            _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderMessageById(id, { allowParse: true }).catch(error => console.warn('[彼方] 重roll后渲染失败:', error));
+            _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderMessageById(id, { allowParse: true, label: '重roll' }).catch(error => console.warn('[彼方] 重roll后渲染失败:', error));
         }
         else {
             _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.reRenderLatestMessage().catch(error => console.warn('[彼方] 重roll后渲染失败:', error));

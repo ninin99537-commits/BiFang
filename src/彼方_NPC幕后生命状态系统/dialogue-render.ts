@@ -1367,28 +1367,39 @@ const READER_VERSION = 6;
  */
 async function renderMessageById(messageId, options = {}) {
     const allowParse = !!options?.allowParse;
+    const source = String(options?.label ?? '未知来源');
     const settings = _settings__WEBPACK_IMPORTED_MODULE_1__.getSettings().正文渲染;
-    if (!settings.启用)
+    if (!settings.启用) {
+        console.info(`[彼方渲染] #${messageId} [${source}] 正文渲染未启用, 跳过`);
         return;
+    }
     let message;
     try {
         const msgs = getChatMessages(messageId);
         message = msgs && msgs[0];
     }
     catch {
+        console.warn(`[彼方渲染] #${messageId} [${source}] 读取消息失败, 跳过`);
         return;
     }
-    if (!message || message.role !== 'assistant' || message.is_hidden)
+    if (!message || message.role !== 'assistant' || message.is_hidden) {
+        console.info(`[彼方渲染] #${messageId} [${source}] 非assistant或隐藏楼层, 跳过 role=${message?.role} is_hidden=${message?.is_hidden}`);
         return;
+    }
     const characters = buildCharactersFromLibrary(settings);
     // 用"剔除插件尾部标签后的文本"分段和算 hash: 其他插件插入 <StatusPlaceHolderImpl/> 等
     // 不影响正文, 不应触发重新解析(否则渲染失效 + 卡顿)
     const cacheText = normalizeMessageForCache(message.message);
-    if (!cacheText)
+    if (!cacheText) {
+        console.info(`[彼方渲染] #${messageId} [${source}] cacheText为空(纯插件标签?), 跳过`);
         return;
+    }
     const segments = splitByTags(cacheText, settings.标签模式, settings.标签列表 ?? []);
-    if (segments.every(s => !s.text.trim()))
+    console.info(`[彼方渲染] #${messageId} [${source}] 分段: 模式=${settings.标签模式} 标签=[${(settings.标签列表 ?? []).join(',')}] 段数=${segments.length} 段构成=${segments.map(s => s.kind).join('+')} | 原文尾30=[${String(message.message).replace(/\s+/g, ' ').slice(-30)}] 归一后尾30=[${cacheText.replace(/\s+/g, ' ').slice(-30)}]`);
+    if (segments.every(s => !s.text.trim())) {
+        console.info(`[彼方渲染] #${messageId} [${source}] 所有段文本为空, 跳过`);
         return;
+    }
     // 流式预解析结果复用: 流式期间标签一闭合就已对"parse 段正文文本"预解析过, 若 hash 匹配则直接复用, 不再重复调用 AI
     const pendingParseSegments = segments.filter(s => s.kind === 'parse' && s.text.trim());
     const parseTextNow = pendingParseSegments.map(s => s.text.trim()).join('\n');
@@ -1424,17 +1435,17 @@ async function renderMessageById(messageId, options = {}) {
     // 缓存命中需同时满足: hash 相同 + 标签模式/列表一致(模式变化后分段结构不同, 旧缓存不能复用)
     if (cached && cached.hash === hash && cached.mode === mode && JSON.stringify(cached.tags) === JSON.stringify(tags)) {
         segmentBlocks = cached.segments;
-        console.info(`[彼方渲染] #${messageId} 缓存命中(hash=${hash} 一致), 复用解析结果, 不重新调 AI`);
+        console.info(`[彼方渲染] #${messageId} [${source}] 缓存命中(hash=${hash} 一致), 复用解析结果, 不重新调 AI`);
     }
     else {
         // 允许解析的时机只有"正文产生"处(MESSAGE_RECEIVED/重roll/手动按钮/只读流式预解析);
         // 维护/恢复场景(观察器/MVU更新/插件插入/切聊天/编辑)不自动解析, 缓存未命中则保留原文, 避免浪费 AI 请求
         if (!allowParse) {
-            console.info(`[彼方渲染] #${messageId} 缓存未命中且不允许自动解析(恢复/维护场景), 跳过, 保留原文`);
+            console.warn(`[彼方渲染] #${messageId} [${source}] 缓存未命中且不允许自动解析(恢复/维护场景), 跳过, 保留原文. 有缓存=${!!cached} cachedHash=${cached?.hash} newHash=${hash} mode=${mode} tags=[${tags.join(',')}]`);
             return;
         }
         // 需要实际调用 AI 解析: 显示"正在渲染"弹窗(可中断), 完成/失败/中断分别提示
-        console.info(`[彼方渲染] #${messageId} 缓存未命中: cached=${!!cached} cachedHash=${cached?.hash} newHash=${hash} mode=${mode} tags=[${tags.join(',')}], 重新调 AI 解析`);
+        console.info(`[彼方渲染] #${messageId} [${source}] 缓存未命中: cached=${!!cached} cachedHash=${cached?.hash} newHash=${hash} mode=${mode} tags=[${tags.join(',')}], 重新调 AI 解析`);
         const updatingStore = _state__WEBPACK_IMPORTED_MODULE_2__.useUpdatingStore();
         const signal = updatingStore.start('正在渲染正文…', '渲染');
         let renderError = null;
@@ -1497,13 +1508,13 @@ async function renderMessageById(messageId, options = {}) {
         }
     }
     if (!el) {
-        console.warn(`[彼方渲染] #${messageId} 未找到楼层 DOM(3秒等待后仍无), 放弃渲染`);
+        console.warn(`[彼方渲染] #${messageId} [${source}] 未找到楼层 DOM(3秒等待后仍无), 放弃渲染`);
         return;
     }
     // 编辑中不渲染: 酒馆"编辑正文"会临时把 .mes_text 换成编辑框(textarea/contenteditable),
     // 此时渲染会覆盖编辑框 → 跳过, 等编辑完成(MESSAGE_UPDATED)再渲染
     if (isMesTextBeingEdited(el)) {
-        console.info(`[彼方渲染] #${messageId} 楼层正在编辑中, 跳过渲染(避免覆盖编辑框)`);
+        console.info(`[彼方渲染] #${messageId} [${source}] 楼层正在编辑中, 跳过渲染(避免覆盖编辑框)`);
         return;
     }
     // 幂等跳过: 已有渲染块(data-bfd-rendered)且正文 hash 一致 → 什么都不用做。
@@ -1511,7 +1522,7 @@ async function renderMessageById(messageId, options = {}) {
     const rendered = el.querySelector('[data-bfd-rendered]');
     if (rendered && rendered.getAttribute('data-version') === String(READER_VERSION)
         && cached && cached.hash === hash && cached.mode === mode && JSON.stringify(cached.tags) === JSON.stringify(tags)) {
-        console.info(`[彼方渲染] #${messageId} 已有渲染块且正文未变(hash=${hash}), 跳过`);
+        console.info(`[彼方渲染] #${messageId} [${source}] 已有渲染块且正文未变(hash=${hash}), 跳过`);
         // st-chatu8 可能刚重新生图(双击/重新生成)在渲染块外新建/更新了 span,
         // 正文 hash 不变时这里幂等跳过, 但游离图片仍需整理进渲染块
         window.setTimeout(() => {
@@ -1524,7 +1535,7 @@ async function renderMessageById(messageId, options = {}) {
         }, 800);
         return;
     }
-    console.info(`[彼方渲染] #${messageId} 开始正则式替换: 已有渲染块=${!!rendered} hash=${hash} cachedHash=${cached?.hash}`);
+    console.info(`[彼方渲染] #${messageId} [${source}] 开始正则式替换: 已有渲染块=${!!rendered} hash=${hash} cachedHash=${cached?.hash} DOM文本前30=[${(el.textContent || '').replace(/\s+/g, ' ').slice(0, 30)}]`);
     // 备份原始楼层内容: 关闭渲染/清理时用 data-bfd-original 恢复原文(渲染块不含原文文本)
     if (el.getAttribute('data-bfd-original') === null)
         el.setAttribute('data-bfd-original', el.innerHTML);
@@ -1644,7 +1655,7 @@ async function renderMessageById(messageId, options = {}) {
             lastRange = r;
         }
         if (!firstRange || !lastRange || located === 0) {
-            console.warn(`[彼方渲染] #${messageId} 正文段定位失败(文本已被替换或外部改动), 该段保留原文`);
+            console.warn(`[彼方渲染] #${messageId} [${source}] 正文段定位失败(文本已被替换或外部改动), 该段保留原文. 段落数=${paras.length} 定位成功=${located} 段文本前30=[${bodyText.slice(0, 30)}] DOM文本前30=[${(el.textContent || '').replace(/\s+/g, ' ').slice(0, 30)}]`);
             continue;
         }
         const renderHtml = renderBlocksHtml(segmentBlocks[i], characters, settings);
@@ -1725,11 +1736,11 @@ async function renderMessageById(messageId, options = {}) {
         replaced++;
     }
     if (replaced === 0) {
-        console.warn(`[彼方渲染] #${messageId} 所有正文段均未替换, 楼层保持原文`);
+        console.warn(`[彼方渲染] #${messageId} [${source}] 所有正文段均未替换, 楼层保持原文`);
         return;
     }
     el.classList.add('bfd-rendered');
-    console.info(`[彼方渲染] #${messageId} 正则式替换完成: 替换段数=${replaced} hash=${hash}`);
+    console.info(`[彼方渲染] #${messageId} [${source}] 正则式替换完成: 替换段数=${replaced} hash=${hash}`);
     // 滚动到屏幕底部 1/3 处触发入场/情绪动画(逐旁白/逐对白行)
     if (animateOn) {
         // 延迟到下一帧再挂动画 pending: 渲染块插入(大量 <p> 触发重排)与动画样式变化分帧, 避免同帧两次重排卡顿
@@ -1931,7 +1942,7 @@ async function reRenderLatestMessage() {
         if (!latest)
             return;
         parseCache.delete(latest.message_id);
-        await renderMessageById(latest.message_id, { allowParse: true });
+        await renderMessageById(latest.message_id, { allowParse: true, label: '手动重新渲染' });
     }
     catch (error) {
         console.warn('[彼方] 重新渲染失败:', error);
@@ -1950,7 +1961,7 @@ async function reapplyLatestRender() {
         const latest = msgs[msgs.length - 1];
         if (!latest)
             return;
-        await renderMessageById(latest.message_id);
+        await renderMessageById(latest.message_id, { label: '视觉设置重应用' });
     }
     catch (error) {
         console.warn('[彼方] 重新应用渲染样式失败:', error);
@@ -1971,7 +1982,7 @@ async function reapplyAllRenders() {
         for (const m of msgs) {
             if (parseCache.has(m.message_id)) {
                 try {
-                    await renderMessageById(m.message_id);
+                    await renderMessageById(m.message_id, { label: '视觉重应用全部' });
                 }
                 catch {
                     // 单条失败不影响其他楼层
@@ -1993,17 +2004,23 @@ async function renderCachedMessagesInChat() {
     // 彼方初始化时用户可能还没切到目标聊天(此时 chatKey 是默认聊天, 缓存加载不到),
     // 之后切到目标聊天触发本函数时必须重新加载, 否则内存 parseCache 为空导致什么都不恢复
     loadParseCache();
+    console.info(`[彼方渲染] renderCachedMessagesInChat: 内存缓存条数=${parseCache.size}`);
     try {
         const lastId = getLastMessageId();
         if (lastId <= 0)
             return;
         const msgs = getChatMessages(`0-${lastId}`, { role: 'assistant' }).filter(m => !m.is_hidden);
+        let restored = 0;
+        let skipped = 0;
         for (const m of msgs) {
             // 只渲染已在 DOM 的楼层: 避免对虚拟化未渲染的消息逐个空等 3 秒(renderMessageById 内部会等元素), 导致恢复极慢
             const textEl = findMessageTextElement(m.message_id);
-            if (parseCache.has(m.message_id) && textEl && isNearViewport(textEl)) {
+            const hasCache = parseCache.has(m.message_id);
+            const nearViewport = !!textEl && isNearViewport(textEl);
+            if (hasCache && textEl && nearViewport) {
                 try {
-                    await renderMessageById(m.message_id);
+                    await renderMessageById(m.message_id, { label: '恢复渲染' });
+                    restored++;
                     // 让出主线程: 避免视口附近多个楼层连续插入大渲染块导致阻塞卡顿
                     await new Promise(res => setTimeout(res, 0));
                 }
@@ -2011,7 +2028,11 @@ async function renderCachedMessagesInChat() {
                     // 单条失败不影响其他楼层
                 }
             }
+            else {
+                skipped++;
+            }
         }
+        console.info(`[彼方渲染] renderCachedMessagesInChat 完成: 恢复=${restored} 跳过=${skipped} 总assistant楼层=${msgs.length}`);
     }
     catch (error) {
         console.warn('[彼方] 恢复已渲染楼层失败:', error);
