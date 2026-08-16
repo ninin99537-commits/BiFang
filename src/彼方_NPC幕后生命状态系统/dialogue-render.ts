@@ -703,7 +703,8 @@ async function parseDialogueContent(content, settings, messageId, signal) {
 const streamingParsePromises = new Map();
 /** 流式预解析状态: 当前流式会话是否已完成"标签闭合检测+预解析"; 避免每个 token 都全文分段(流式卡顿) */
 let preparseClosedDone = false;
-let preparseLastLen = 0;
+/** 上次预解析的正文 content hash: 用于判断"是否新楼层"(content 变化则重置已处理标记), 避免按 text 长度判断被流式增量反复重置 */
+let preparseLastHash = null;
 async function preParseStreamingContent(fullText) {
     const settings = _settings__WEBPACK_IMPORTED_MODULE_1__.getSettings().正文渲染;
     if (!settings.启用)
@@ -714,13 +715,6 @@ async function preParseStreamingContent(fullText) {
     if (tags.length === 0)
         return;
     const text = String(fullText || '');
-    // 新楼层流式开始(文本比上次短)重置"已完成"标记
-    if (preparseLastLen > text.length)
-        preparseClosedDone = false;
-    preparseLastLen = text.length;
-    // 标签已闭合且预解析已处理: 正文固定, 后续 token 直接跳过, 避免每个 token 都全文分段(流式卡顿)
-    if (preparseClosedDone)
-        return;
     // 快速短路: 标签未闭合时不全文分段(未闭合时 parse 段不完整, 分段纯属浪费)
     if (!tags.some(tag => text.includes(`</${tag}>`)))
         return;
@@ -733,17 +727,25 @@ async function preParseStreamingContent(fullText) {
     // 标签闭合后才会有 parse 段; 单段内容稳定, 直接提前解析
     if (parseSegments.length !== 1)
         return;
-    preparseClosedDone = true; // 闭合确认, 正文固定, 后续跳过
     const content = parseSegments[0].text.trim();
     if (content.length < 20)
         return;
     const hash = simpleHash(content);
+    // 新楼层(content 变化)重置"已处理"标记; 同一 content 已处理则跳过(避免每次 token 重复预解析/互相中断)
+    if (preparseLastHash !== hash) {
+        preparseLastHash = hash;
+        preparseClosedDone = false;
+    }
+    if (preparseClosedDone)
+        return;
+    preparseClosedDone = true;
+    console.info(`[彼方预解析] hash=${hash} content前=[${content.slice(0, 30)}] len=${content.length}`);
     if (pendingParseCache.has(hash) || streamingParsePromises.has(hash))
         return; // 已存或在解析
     const promise = (async () => {
-        // 与正常渲染共用一个"渲染"任务, 流式预解析期间也显示"正在渲染正文…"弹窗, 可中断
+        // 预解析用独立任务名"预解析"(不与正文渲染共用"渲染"), 避免互相 abort 导致解析失败/重复请求
         const updatingStore = _state__WEBPACK_IMPORTED_MODULE_2__.useUpdatingStore();
-        const signal = updatingStore.start('正在渲染正文…', '渲染');
+        const signal = updatingStore.start('正在预解析正文…', '预解析');
         try {
             const characters = buildCharactersFromLibrary(settings);
             const blocks = await parseDialogueContent(content, settings, -1, signal);
@@ -763,7 +765,7 @@ async function preParseStreamingContent(fullText) {
             return null;
         }
         finally {
-            updatingStore.stop('渲染');
+            updatingStore.stop('预解析');
             streamingParsePromises.delete(hash);
         }
     })();
@@ -1393,6 +1395,7 @@ async function renderMessageById(messageId, options = {}) {
     const parseTextNow = pendingParseSegments.map(s => s.text.trim()).join('\n');
     // 只对"单个 parse 段"复用预解析结果: 预解析是把全部 parse 段拼接后一次解析, 多段时无法逐段拆分, 只能各自解析
     const pendingHash = pendingParseSegments.length === 1 ? simpleHash(parseTextNow) : null;
+    console.info(`[彼方渲染] #${messageId} pendingHash=${pendingHash} 缓存命中=${pendingHash !== null && pendingParseCache.has(pendingHash)} parseText前=[${parseTextNow.slice(0, 30)}] len=${parseTextNow.length}`);
     let pending = pendingHash !== null ? pendingParseCache.get(pendingHash) : undefined;
     if (pending === undefined && pendingHash !== null) {
         // 预解析尚在进行中: 等它完成再复用, 避免"正文输出完后又重复调一次解析 AI"的等待
