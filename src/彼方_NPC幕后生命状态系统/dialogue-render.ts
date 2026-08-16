@@ -963,7 +963,7 @@ function renderBlocksHtml(blocks, characters, settings) {
                 continue;
             const innerHtml = clean
                 .split(/\n/)
-                .map(line => line.split(/(?<=[。！？…])/))
+                .map(line => line.split(/(?<=[。！？])/))
                 .flat()
                 .map(p => p.trim())
                 .filter(Boolean)
@@ -983,7 +983,7 @@ function renderBlocksHtml(blocks, characters, settings) {
             // 多条 regex 会匹配到同一行 → 图片全堆到段末。每句一行则每条 regex 匹配到独立行。
             const paras = clean
                 .split(/\n/)
-                .map(line => line.split(/(?<=[。！？…])/))
+                .map(line => line.split(/(?<=[。！？])/))
                 .flat()
                 .map(p => p.trim())
                 .filter(Boolean)
@@ -1005,7 +1005,7 @@ function renderBlocksHtml(blocks, characters, settings) {
             // 动作: 按句子分 <p>(与旁白一致), <p> 间加 \n 配合 st-chatu8 按行匹配
             const paras = clean
                 .split(/\n/)
-                .map(line => line.split(/(?<=[。！？…])/))
+                .map(line => line.split(/(?<=[。！？])/))
                 .flat()
                 .map(p => p.trim())
                 .filter(Boolean)
@@ -1044,7 +1044,7 @@ function renderBlocksHtml(blocks, characters, settings) {
         // 对白: 按句子分 <p>(句末标点。！？…分割), <p> 间加 \n 配合 st-chatu8 按行匹配
         const innerHtml = clean
             .split(/\n/)
-            .map(line => line.split(/(?<=[。！？…])/))
+            .map(line => line.split(/(?<=[。！？])/))
             .flat()
             .map(p => p.trim())
             .filter(Boolean)
@@ -1785,7 +1785,7 @@ function findParagraphByAnchor(reader, anchorText) {
         return null;
     const paraNorms = paras.map(p => norm(p.textContent ?? ''));
     // 取锚点最后一句(按句末标点切分, 去尾部引号; 末句为空则取倒数第二句)
-    const sentences = text.split(/(?<=[。！？…])/).map(s => s.trim()).filter(Boolean);
+    const sentences = text.split(/(?<=[。！？])/).map(s => s.trim()).filter(Boolean);
     let lastSentence = sentences.length ? sentences[sentences.length - 1] : text;
     lastSentence = lastSentence.replace(/["'“”‘’「」『』」』"']+$/, '').trim();
     if (!lastSentence && sentences.length > 1)
