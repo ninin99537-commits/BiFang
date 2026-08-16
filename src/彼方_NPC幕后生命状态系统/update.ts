@@ -737,29 +737,6 @@ function applyUpdate(data, parsed, timeJump = null, playerName = null) {
         }
         newData.时间轴 = kept;
     }
-    // 更新"字段未变化计数": 比较本轮合并后与上一轮的差异——没变化的字段 +1(最多5), 变化的重置为0(生理字段与可能偶遇不参与)
-    const stagnationFields = _state__WEBPACK_IMPORTED_MODULE_6__.CARD_FIELDS.filter(field => !PHYSIO_FIELDS.includes(field));
-    const newCounts = {};
-    for (const [name, newCard] of Object.entries(newData.NPC)) {
-        const oldCard = (data.NPC ?? {})[name];
-        const prev = data.卡字段计数?.[name] ?? {};
-        const counts = {};
-        for (const field of stagnationFields) {
-            const oldVal = oldCard ? String(oldCard[field] ?? '') : '';
-            const newVal = String(newCard[field] ?? '');
-            if (!oldCard) {
-                counts[field] = 0;
-            }
-            else if (newVal === oldVal) {
-                counts[field] = Math.min((prev[field] ?? 0) + 1, 5);
-            }
-            else {
-                counts[field] = 0;
-            }
-        }
-        newCounts[name] = counts;
-    }
-    newData.卡字段计数 = newCounts;
     newData.统计.更新次数 = (newData.统计.更新次数 ?? 0) + 1;
     newData.统计.最后更新 = Date.now();
     return newData;
@@ -854,7 +831,6 @@ async function updateNpcStates(force = false, fresh = false) {
             worldbook,
             currentStoryTime: data.剧情时间,
             storyTimeHint,
-            cardStagnation: data.卡字段计数,
             playerName,
             自定义提示词: settings.更新.自定义提示词 ?? [],
         });

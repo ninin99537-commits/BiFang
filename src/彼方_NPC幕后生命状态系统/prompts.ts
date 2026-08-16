@@ -106,24 +106,6 @@ function buildUpdateMessages(input) {
         ? `\n\n世界书/设定(与主AI相同的方式激活, 供你理解世界设定与角色, 其中可能包含 AM 编码触发的历史轮次纪要):
 ${input.worldbook}`
         : '';
-    // 停滞字段提醒: 数字越大表示该字段越久没更新, 必须优先推进(隐藏计数, 生理字段不参与)
-    const stagnationSection = (() => {
-        const stagnation = input.cardStagnation ?? {};
-        const lines = [];
-        for (const [name, fields] of Object.entries(stagnation)) {
-            const stalled = Object.entries(fields)
-                .filter(([, n]) => n >= 2)
-                .map(([field, n]) => {
-                const force = n >= 4 ? '【必须立即更新】' : n >= 2 ? '(应更新)' : '';
-                return `「${field}」已连续${n}轮未变化${force}`;
-            });
-            if (stalled.length > 0)
-                lines.push(`- ${name}: ${stalled.join(', ')}`);
-        }
-        if (lines.length === 0)
-            return '';
-        return `\n\n【字段未变化提醒】(隐藏计数, 数字越大更新要求越强烈; 这些字段已多轮原样保留, 必须按最新剧情推进为新的内容, 不要再换几个字敷衍):\n${lines.join('\n')}`;
-    })();
     const userContent = `【最新用户输入】(玩家最近一次的行动/话语, 更新 NPC 状态时需重点参考——NPC 的"当前在做/当前状态"要与此呼应):
 ${input.context || '(无)'}
 
@@ -145,7 +127,7 @@ ${input.storyTimeHint ? `【★正文当前时间(务必以此为准)★】: ${i
 ${JSON.stringify(input.currentCards, null, 2)}
 
 现有后台互动记录(已在进行的互动, 若最近剧情未明确结束, 必须继续列入"后台互动"并推进其进展; "已持续轮次"表明已延续的更新次数, 轮次越大越应收尾):
-${input.interactions.length > 0 ? JSON.stringify(input.interactions) : '(无)'}${stagnationSection}
+${input.interactions.length > 0 ? JSON.stringify(input.interactions) : '(无)'}
 
 **更新 NPC 状态时, 必须同时参考【最新用户输入】与【最新正文回复】(尤其【最新回复】)——NPC 的"当前在做/当前状态/位置"要同时反映玩家最新行动与正文最新进展(以正文结尾为准), 不可只根据其中一方推断, 也不可忽略玩家刚刚做出的行动。**
 
