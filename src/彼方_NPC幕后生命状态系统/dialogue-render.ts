@@ -957,6 +957,8 @@ function renderBlocksHtml(blocks, characters, settings) {
                 continue;
             const innerHtml = clean
                 .split(/\n/)
+                .map(line => line.split(/(?<=[。！？…])/))
+                .flat()
                 .map(p => p.trim())
                 .filter(Boolean)
                 .map(p => `<p>${escapeHtml(p)}</p>`)
@@ -970,10 +972,13 @@ function renderBlocksHtml(blocks, characters, settings) {
             const clean = normalizeDisplayText(block.text, 'narration');
             if (!clean)
                 continue;
-            // 旁白: 按原文行分 <p>(尊重原文换行结构), <p> 间加 \n —— st-chatu8 的 fuzzyMatchLine
-            // 按 \n 分行匹配目标句, 渲染行与原文行一致时, 图片能插到对应行之后(不再堆到旁白末尾)
+            // 旁白: 按句子分 <p>(句末标点。！？…分割), <p> 间加 \n。
+            // 原文一行(段落)常含多句, 若按行合并, st-chatu8 的 fuzzyMatchLine 按 \n 分行匹配,
+            // 多条 regex 会匹配到同一行 → 图片全堆到段末。每句一行则每条 regex 匹配到独立行。
             const paras = clean
                 .split(/\n/)
+                .map(line => line.split(/(?<=[。！？…])/))
+                .flat()
                 .map(p => p.trim())
                 .filter(Boolean)
                 .filter(p => !SPEECH_VERB_ONLY.test(p))
@@ -991,9 +996,11 @@ function renderBlocksHtml(blocks, characters, settings) {
                 continue;
             const actionChar = charMap.get(block.speaker);
             const color = resolveColor(block.speaker, actionChar, settings);
-            // 动作: 按原文行分 <p>(与旁白一致), <p> 间加 \n 配合 st-chatu8 按行匹配
+            // 动作: 按句子分 <p>(与旁白一致), <p> 间加 \n 配合 st-chatu8 按行匹配
             const paras = clean
                 .split(/\n/)
+                .map(line => line.split(/(?<=[。！？…])/))
+                .flat()
                 .map(p => p.trim())
                 .filter(Boolean)
                 .map(p => `<p>${escapeHtml(p)}</p>`)
@@ -1028,9 +1035,11 @@ function renderBlocksHtml(blocks, characters, settings) {
         const avatarHtml = buildAvatarHtml(displayName, char, settings, shape, isProtagonist ? settings.主角头像色 || undefined : undefined);
         const nameHtml = settings.显示角色名 ? `<div class="bfd-name" style="color:${nameColor || accent}">${escapeHtml(displayName)}</div>` : '';
         const clean = normalizeDisplayText(block.text, block.type);
-        // 对白: 按原文行分 <p>(与旁白一致), <p> 间加 \n 配合 st-chatu8 按行匹配
+        // 对白: 按句子分 <p>(句末标点。！？…分割), <p> 间加 \n 配合 st-chatu8 按行匹配
         const innerHtml = clean
             .split(/\n/)
+            .map(line => line.split(/(?<=[。！？…])/))
+            .flat()
             .map(p => p.trim())
             .filter(Boolean)
             .map(p => `<p>${escapeHtml(p)}</p>`)
@@ -1633,42 +1642,68 @@ async function renderMessageById(messageId, options = {}) {
         r.setStart(firstRange.startNode, firstRange.startOffset);
         r.setEnd(lastRange.endNode, lastRange.endOffset);
         // 抢救正文范围内的 st-chatu8 生图按钮/占位(DOM 元素, 不在消息数据里):
-        // extractContents 提取后, 记录每个图片前的锚点文本, 渲染块创建后按锚点匹配对应句子段落插回,
-        // 避免全部堆叠到渲染块末尾(编辑/重渲染后图片堆叠)。
+        // extractContents 提取后, 记录每个图片前的文本长度, 渲染块创建后按"原文相对文本位置"
+        // 比例映射到渲染块对应段落插回(不受清理/引号差异影响, 避免堆叠)。
         const savedImages = [];
+        let totalLen = 0;
         try {
             const frag = r.extractContents();
             if (frag) {
                 const collectImages = (node, textAcc) => {
+                    // extractContents 返回 DocumentFragment(nodeType 11), 必须遍历其子节点,
+                    // 否则抢救逻辑从未生效(编辑/重渲染后 Range 内图片被直接删掉)
                     if (node.nodeType === Node.TEXT_NODE)
                         return textAcc + node.data;
+                    if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
+                        for (const child of Array.from(node.childNodes))
+                            textAcc = collectImages(child, textAcc);
+                        return textAcc;
+                    }
                     if (node.nodeType === Node.ELEMENT_NODE) {
                         if (node.matches?.(CHATU8_IMAGE_SELECTOR)) {
                             if (!node.parentElement || !node.parentElement.closest?.(CHATU8_IMAGE_SELECTOR))
-                                savedImages.push({ img: node, anchor: textAcc });
-                            return textAcc; // 图片内部文本不计入锚点
+                                savedImages.push({ img: node, anchorLen: textAcc.length });
+                            return textAcc; // 图片内部文本不计入
                         }
                         for (const child of Array.from(node.childNodes))
                             textAcc = collectImages(child, textAcc);
                     }
                     return textAcc;
                 };
-                collectImages(frag, '');
+                totalLen = collectImages(frag, '').length;
             }
         }
         catch {
             r.deleteContents();
         }
         r.insertNode(blockNode);
-        // 按锚点把图片插回渲染块对应句子之后
-        if (savedImages.length > 0) {
-            for (const { img, anchor } of savedImages) {
-                const target = findParagraphByAnchor(blockNode, anchor);
-                if (target)
-                    target.after(img);
-                else
-                    blockNode.appendChild(img);
+        // 按"原文相对文本位置"把图片插回渲染块对应段落之后
+        if (savedImages.length > 0 && totalLen > 0) {
+            const normTxt = s => String(s ?? '').replace(/[\s\p{P}\p{S}]/gu, '').toLowerCase();
+            const paras = Array.from(blockNode.querySelectorAll('.bfd-line, .bfd-narration p, .bfd-line-text p'));
+            if (paras.length > 0) {
+                const paraAcc = [];
+                let acc = 0;
+                paras.forEach(p => {
+                    acc += normTxt(p.textContent ?? '').length;
+                    paraAcc.push(acc);
+                });
+                const totalPara = acc || 1;
+                for (const { img, anchorLen } of savedImages) {
+                    const ratio = Math.min(0.999, anchorLen / totalLen);
+                    const targetPos = ratio * totalPara;
+                    let idx = paraAcc.findIndex(x => x >= targetPos);
+                    if (idx < 0)
+                        idx = paras.length - 1;
+                    paras[idx].after(img);
+                }
             }
+            else {
+                savedImages.forEach(({ img }) => blockNode.appendChild(img));
+            }
+        }
+        else if (savedImages.length > 0) {
+            savedImages.forEach(({ img }) => blockNode.appendChild(img));
         }
         replaced++;
     }
@@ -1720,26 +1755,32 @@ function clearDialogueRenders() {
 const CHATU8_IMAGE_SELECTOR = '.image-tag-button,.st-chatu8-image-button,.st-chatu8-image-span,.st-chatu8-image-container,.st-chatu8-collapse-wrapper';
 
 /** 在渲染块中按锚点文本匹配目标句子段落(抢救的生图图片应插在其后)。
- * 锚点是图片前的正文文本, 取尾部(最贴近图片的一句)在段落中匹配(忽略标点空白差异) */
+ * 锚点是"图片前的原文文本"(含对白引号等), 渲染块段落是清理后的文本(去引号/前缀),
+ * 取锚点最后一句(去尾部引号)后去标点, 用连续子串在段落中匹配(从后往前) */
 function findParagraphByAnchor(reader, anchorText) {
     const text = String(anchorText || '').trim();
     if (!text)
         return null;
     const norm = s => String(s ?? '').replace(/[\s\p{P}\p{S}]/gu, '').toLowerCase();
-    const anchorNorm = norm(text);
-    if (!anchorNorm)
-        return null;
     const paras = Array.from(reader.querySelectorAll('.bfd-line, .bfd-narration p, .bfd-line-text p'));
     if (paras.length === 0)
         return null;
-    // 从锚点尾部(最贴近图片)由长到短匹配, 从后往前找段落(图片位置靠后)
-    const tails = [anchorNorm.slice(-30), anchorNorm.slice(-16)];
-    for (const tail of tails) {
-        if (!tail)
+    const paraNorms = paras.map(p => norm(p.textContent ?? ''));
+    // 取锚点最后一句(按句末标点切分, 去尾部引号; 末句为空则取倒数第二句)
+    const sentences = text.split(/(?<=[。！？…])/).map(s => s.trim()).filter(Boolean);
+    let lastSentence = sentences.length ? sentences[sentences.length - 1] : text;
+    lastSentence = lastSentence.replace(/["'“”‘’「」『』」』"']+$/, '').trim();
+    if (!lastSentence && sentences.length > 1)
+        lastSentence = sentences[sentences.length - 2].replace(/["'“”‘’「」『』」』"']+$/, '').trim();
+    const lastNorm = norm(lastSentence);
+    // 多候选: 最后一句整句 → 最后一句尾部 12 字符 → 锚点全文尾部 12 字符
+    const candidates = [lastNorm, lastNorm && lastNorm.slice(-12), norm(text).slice(-12)];
+    for (const cand of candidates) {
+        if (!cand)
             continue;
         for (let i = paras.length - 1; i >= 0; i--) {
-            const pn = norm(paras[i].textContent ?? '');
-            if (pn && (pn.endsWith(tail) || pn.includes(tail)))
+            const pn = paraNorms[i];
+            if (pn && pn.includes(cand))
                 return paras[i];
         }
     }
@@ -1783,8 +1824,9 @@ function findRegexByLink(images, node) {
 }
 
 /** 渲染后整理游离的 st-chatu8 图片: 编辑关闭/楼层重渲染后, st-chatu8 重新插入图片时彼方渲染块
- * 已存在, 它定位易失败 → 图片落到渲染块外(标签外)或错位。这里把渲染块外的游离图片按 regex
- * 挪回渲染块内对应句子之后(只处理一次, 不持续观察, 不干扰 st-chatu8 生图注入) */
+ * 已存在, 它定位易失败 → 图片落到渲染块外(标签外)或错位。这里把渲染块外的游离图片挪回渲染块:
+ * 优先用 request-id 找渲染块内同 id 的按钮(按钮已定位正确, 图片插到按钮后); 无按钮时用
+ * data-link 匹配 regex 定位(只处理一次, 不持续观察, 不干扰 st-chatu8 生图注入) */
 function tidyStrayImages(el) {
     const reader = el.querySelector('.bfd-reader');
     if (!reader)
@@ -1796,8 +1838,6 @@ function tidyStrayImages(el) {
     const ctx = typeof SillyTavern?.getContext === 'function' ? SillyTavern.getContext() : undefined;
     const msg = ctx?.chat?.[mid];
     const images = msg?.extra?.images?.[msg.swipe_id ?? 0] || msg?.extra?.images?.[0] || [];
-    if (!Array.isArray(images) || images.length === 0)
-        return;
     const strays = Array.from(el.querySelectorAll(CHATU8_IMAGE_SELECTOR)).filter(e => !e.closest('.bfd-reader'));
     // 只取最外层游离元素(避免 button/span/container 被分别挪动拆散)
     const outer = strays.filter(e => !e.closest(CHATU8_IMAGE_SELECTOR) || e.closest(CHATU8_IMAGE_SELECTOR) === e);
@@ -1805,10 +1845,18 @@ function tidyStrayImages(el) {
     for (const img of outer) {
         if (!img.isConnected)
             continue;
-        const regex = findRegexByLink(images, img);
-        if (!regex)
-            continue;
-        const target = findParagraphByAnchor(reader, regex);
+        let target = null;
+        // 1) 优先: 用 request-id 找渲染块内同 id 的按钮(按钮定位正确), 图片插到按钮后
+        const reqId = img.getAttribute('data-request-id');
+        if (reqId) {
+            target = reader.querySelector(`.image-tag-button[data-request-id="${reqId}"]`);
+        }
+        // 2) 无按钮: 用 data-link 匹配 extra.images 的 regex 定位句子
+        if (!target && Array.isArray(images)) {
+            const regex = findRegexByLink(images, img);
+            if (regex)
+                target = findParagraphByAnchor(reader, regex);
+        }
         if (target) {
             target.after(img);
             moved++;
