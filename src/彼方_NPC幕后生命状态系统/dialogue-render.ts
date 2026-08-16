@@ -1286,7 +1286,8 @@ function getBandTopPx() {
     return Math.round((window.parent?.innerHeight ?? window.innerHeight) * (Math.max(5, Math.min(100, pct)) / 100));
 }
 /**
- * 入场/情绪动画轮询: 每 500ms 检查一次 pending 元素, 顶部已滚过 1/3 线(含快速滚动/跳转/恢复滚动位置/正常下滑)的直接显示。
+ * 入场/情绪动画轮询: 每 300ms 检查一次 pending 元素, 顶部已滚过 1/3 线的分批触发(每轮限量 10 个,
+ * 从视口顶部开始), 避免几十上百个段落同时播放 CSS 动画导致卡顿。
  * 不用 IntersectionObserver(跨域 root 几何易错)也不用 scroll 监听(scroll 事件不冒泡, #chat 内部滚动到不了 window);
  * 按需启动: 存在 .bfd-animate-pending 元素时才轮询, 全部显示完即停止(避免永久空转拖累页面)。
  */
@@ -1307,17 +1308,21 @@ function startAnimationPoller() {
                 return;
             }
             const topLine = getBandTopPx();
-            let shown = 0;
+            // 分批触发: 每轮最多 10 个, 其余等下一轮, 避免大量元素同时动画卡顿
+            let batch = 0;
+            const BATCH = 10;
             for (const el of Array.from(pending)) {
+                if (batch >= BATCH)
+                    break;
                 const r = el.getBoundingClientRect();
                 if (r.top < topLine) {
                     el.classList.remove('bfd-animate-pending');
                     el.classList.add('bfd-animate');
-                    shown++;
+                    batch++;
                 }
             }
             // 全部显示完则停止轮询(下次新渲染会重新 start)
-            if (shown > 0) {
+            if (batch > 0) {
                 const still = doc.querySelectorAll('.bfd-animate-pending').length;
                 if (still === 0) {
                     window.clearInterval(animationPollerTimer);
@@ -1336,27 +1341,17 @@ function ensureAnimationPoller() {
         startAnimationPoller();
 }
 /**
- * 渲染时标记入场/情绪动画状态: 元素顶部已在触发线以上(正在看/已读过/已滚出视口顶部)直接显示;
- * 顶部在触发线以下(还没读到)挂 pending(opacity:0), 由轮询在滚到触发线时播放动画。
+ * 渲染时标记入场/情绪动画状态: 全部先挂 pending(opacity:0), 由动画轮询器分批触发(每轮限量),
+ * 避免渲染后大量段落(按句分 <p> 后每层几十上百段)同时播放 CSS 动画导致卡顿。
  */
 function observeEntryAnimations(root) {
     // 逐段动画: 旁白按 <p> 触发, 对白/心声按整块触发
     const targets = Array.from(root.querySelectorAll('.bfd-narration p, .bfd-line, .bfd-line-inner'));
-    const topLine = getBandTopPx();
-    let hasPending = false;
-    for (const el of targets) {
-        const rect = el.getBoundingClientRect();
-        if (rect.top < topLine) {
-            el.classList.add('bfd-animate');
-        }
-        else {
-            el.classList.add('bfd-animate-pending');
-            hasPending = true;
-        }
-    }
-    // 有挂起动画的段落 → 确保轮询在跑(无 pending 时轮询会自动停止, 不空转)
-    if (hasPending)
-        ensureAnimationPoller();
+    if (targets.length === 0)
+        return;
+    for (const el of targets)
+        el.classList.add('bfd-animate-pending');
+    ensureAnimationPoller();
 }
 /** 正文渲染版本: 渲染结构/样式变更时 +1, 强制已渲染楼层重建(否则旧的 reader 因"跳过重建"永不更新) */
 const READER_VERSION = 6;
