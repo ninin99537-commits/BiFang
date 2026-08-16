@@ -1681,6 +1681,16 @@ async function renderMessageById(messageId, options = {}) {
     // 滚动到屏幕底部 1/3 处触发入场/情绪动画(逐旁白/逐对白行)
     if (animateOn)
         observeEntryAnimations(el);
+    // 编辑关闭/楼层重渲染后, st-chatu8 会重新插入图片, 但彼方渲染块已存在时它定位易失败,
+    // 图片可能落到渲染块外(标签外)或错位 → 延迟整理一次, 按 regex 把游离图片挪回渲染块对应句子后
+    window.setTimeout(() => {
+        try {
+            tidyStrayImages(el);
+        }
+        catch {
+            // 忽略
+        }
+    }, 800);
 }
 /** 关闭正文渲染时, 恢复所有已渲染楼层为原始正文(渲染块不含原文文本, 用渲染前备份 data-bfd-original 恢复) */
 function clearDialogueRenders() {
@@ -1734,6 +1744,78 @@ function findParagraphByAnchor(reader, anchorText) {
         }
     }
     return null;
+}
+
+/** 压缩空白 + 去常用标点/引号, 用于"原文句 ↔ 图片 data-link(tag)"的宽松匹配 */
+function looseText(text) {
+    return String(text ?? '').replace(/\s+/g, '').replace(/[，。！？；：、""''「」『』（）《》…—~·,.;:!?(){}<>"']/g, '');
+}
+
+/** 规范化 st-chatu8 的 tag: 去掉 image### 标签前缀 */
+function normalizeChatu8Tag(value) {
+    return looseText(String(value ?? '').replace(/^image###|^<image>/i, ''));
+}
+
+/** 从 extra.images 找图片元素对应的 regex: 用按钮 data-link 与 tag 最长公共前缀匹配 */
+function findRegexByLink(images, node) {
+    let link = (node?.getAttribute && (node.getAttribute('data-link') || node.getAttribute('data-image-tag') || node.getAttribute('data-change'))) || '';
+    if (!link && node?.querySelector)
+        link = node.querySelector('.image-tag-button')?.getAttribute('data-link') || '';
+    if (!link || !Array.isArray(images) || images.length === 0)
+        return null;
+    const linkNorm = normalizeChatu8Tag(link);
+    let best = null;
+    let bestLen = 0;
+    for (const m of images) {
+        const tagNorm = m.tag ? normalizeChatu8Tag(m.tag) : '';
+        if (!tagNorm || !m.regex)
+            continue;
+        let common = 0;
+        const maxLen = Math.min(linkNorm.length, tagNorm.length);
+        while (common < maxLen && linkNorm[common] === tagNorm[common])
+            common++;
+        if (common > bestLen) {
+            bestLen = common;
+            best = m;
+        }
+    }
+    return best?.regex || null;
+}
+
+/** 渲染后整理游离的 st-chatu8 图片: 编辑关闭/楼层重渲染后, st-chatu8 重新插入图片时彼方渲染块
+ * 已存在, 它定位易失败 → 图片落到渲染块外(标签外)或错位。这里把渲染块外的游离图片按 regex
+ * 挪回渲染块内对应句子之后(只处理一次, 不持续观察, 不干扰 st-chatu8 生图注入) */
+function tidyStrayImages(el) {
+    const reader = el.querySelector('.bfd-reader');
+    if (!reader)
+        return;
+    const mes = el.closest?.('.mes');
+    const mid = mes ? Number(mes.getAttribute('mesid')) : NaN;
+    if (!(Number.isFinite(mid) && mid > 0))
+        return;
+    const ctx = typeof SillyTavern?.getContext === 'function' ? SillyTavern.getContext() : undefined;
+    const msg = ctx?.chat?.[mid];
+    const images = msg?.extra?.images?.[msg.swipe_id ?? 0] || msg?.extra?.images?.[0] || [];
+    if (!Array.isArray(images) || images.length === 0)
+        return;
+    const strays = Array.from(el.querySelectorAll(CHATU8_IMAGE_SELECTOR)).filter(e => !e.closest('.bfd-reader'));
+    // 只取最外层游离元素(避免 button/span/container 被分别挪动拆散)
+    const outer = strays.filter(e => !e.closest(CHATU8_IMAGE_SELECTOR) || e.closest(CHATU8_IMAGE_SELECTOR) === e);
+    let moved = 0;
+    for (const img of outer) {
+        if (!img.isConnected)
+            continue;
+        const regex = findRegexByLink(images, img);
+        if (!regex)
+            continue;
+        const target = findParagraphByAnchor(reader, regex);
+        if (target) {
+            target.after(img);
+            moved++;
+        }
+    }
+    if (moved > 0)
+        console.info(`[彼方渲染] #${mid} 整理游离生图图片: ${moved} 张挪回渲染块`);
 }
 
 
