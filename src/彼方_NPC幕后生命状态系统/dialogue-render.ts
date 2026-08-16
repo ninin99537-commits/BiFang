@@ -1505,6 +1505,16 @@ async function renderMessageById(messageId, options = {}) {
     if (rendered && rendered.getAttribute('data-version') === String(READER_VERSION)
         && cached && cached.hash === hash && cached.mode === mode && JSON.stringify(cached.tags) === JSON.stringify(tags)) {
         console.info(`[彼方渲染] #${messageId} 已有渲染块且正文未变(hash=${hash}), 跳过`);
+        // st-chatu8 可能刚重新生图(双击/重新生成)在渲染块外新建/更新了 span,
+        // 正文 hash 不变时这里幂等跳过, 但游离图片仍需整理进渲染块
+        window.setTimeout(() => {
+            try {
+                tidyStrayImages(el);
+            }
+            catch {
+                // 忽略
+            }
+        }, 800);
         return;
     }
     console.info(`[彼方渲染] #${messageId} 开始正则式替换: 已有渲染块=${!!rendered} hash=${hash} cachedHash=${cached?.hash}`);
