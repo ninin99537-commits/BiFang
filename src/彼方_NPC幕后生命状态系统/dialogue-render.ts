@@ -1414,7 +1414,8 @@ async function renderMessageById(messageId, options = {}) {
         const mode = String(settings.标签模式 ?? '');
         const tags = [...(settings.标签列表 ?? [])];
         const segBlocks = segments.map(seg => (seg.kind === 'parse' ? pending : null));
-        cacheSet(messageId, { hash: simpleHash(cacheText), mode, tags, segments: segBlocks });
+        // 缓存 hash 必须与下方渲染判断用的 hash(parse 段文本 hash)一致, 否则刚写进去立刻 miss → 重复调 AI
+        cacheSet(messageId, { hash: simpleHash(pendingParseSegments.map(s => s.text.trim()).join('\n') || cacheText), mode, tags, segments: segBlocks });
     }
     const hash = simpleHash(pendingParseSegments.map(s => s.text.trim()).join('\n') || cacheText);
     const mode = String(settings.标签模式 ?? '');
