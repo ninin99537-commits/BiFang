@@ -957,12 +957,10 @@ function renderBlocksHtml(blocks, characters, settings) {
                 continue;
             const innerHtml = clean
                 .split(/\n/)
-                .map(line => line.split(/(?<=[。！？…])/))
-                .flat()
                 .map(p => p.trim())
                 .filter(Boolean)
                 .map(p => `<p>${escapeHtml(p)}</p>`)
-                .join('');
+                .join('\n');
             const avatarHtml = buildAvatarHtml(displayName, char, settings, resolveShape(block.speaker, char, settings), isPro ? settings.主角头像色 || undefined : undefined);
             const nameHtml = settings.显示角色名 ? `<div class="bfd-name" style="color:${color}">${escapeHtml(displayName)}</div>` : '';
             html.push(`<div class="bfd-line bfd-line-inner" style="--role-accent:${color};--role-accent-2:${deriveAccent2(color)}">${avatarHtml}<div class="bfd-line-body">${nameHtml}<div class="bfd-inner-text">${innerHtml}</div></div></div>`);
@@ -972,17 +970,15 @@ function renderBlocksHtml(blocks, characters, settings) {
             const clean = normalizeDisplayText(block.text, 'narration');
             if (!clean)
                 continue;
-            // 旁白: 按句子分 <p>(句末标点。！？…分割)。st-chatu8 生图的定位 regex 是"原文的一句话",
-            // 段落边界必须精确到句, 一行多句若合并在一个 <p> 里图片会堆到段末
+            // 旁白: 按原文行分 <p>(尊重原文换行结构), <p> 间加 \n —— st-chatu8 的 fuzzyMatchLine
+            // 按 \n 分行匹配目标句, 渲染行与原文行一致时, 图片能插到对应行之后(不再堆到旁白末尾)
             const paras = clean
                 .split(/\n/)
-                .map(line => line.split(/(?<=[。！？…])/))
-                .flat()
                 .map(p => p.trim())
                 .filter(Boolean)
                 .filter(p => !SPEECH_VERB_ONLY.test(p))
                 .map(p => `<p>${escapeHtml(p)}</p>`)
-                .join('');
+                .join('\n');
             if (!paras)
                 continue;
             html.push(`<div class="bfd-narration">${paras}</div>`);
@@ -995,15 +991,13 @@ function renderBlocksHtml(blocks, characters, settings) {
                 continue;
             const actionChar = charMap.get(block.speaker);
             const color = resolveColor(block.speaker, actionChar, settings);
-            // 按句子分 <p>(与旁白一致): 避免一行多句合并导致 st-chatu8 生图定位偏差
+            // 动作: 按原文行分 <p>(与旁白一致), <p> 间加 \n 配合 st-chatu8 按行匹配
             const paras = clean
                 .split(/\n/)
-                .map(line => line.split(/(?<=[。！？…])/))
-                .flat()
                 .map(p => p.trim())
                 .filter(Boolean)
                 .map(p => `<p>${escapeHtml(p)}</p>`)
-                .join('');
+                .join('\n');
             if (!paras)
                 continue;
             const isMerge = settings.动作并入旁白;
@@ -1034,15 +1028,13 @@ function renderBlocksHtml(blocks, characters, settings) {
         const avatarHtml = buildAvatarHtml(displayName, char, settings, shape, isProtagonist ? settings.主角头像色 || undefined : undefined);
         const nameHtml = settings.显示角色名 ? `<div class="bfd-name" style="color:${nameColor || accent}">${escapeHtml(displayName)}</div>` : '';
         const clean = normalizeDisplayText(block.text, block.type);
-        // 对白: 按句子分 <p>(句末标点。！？…分割), 段落边界精确到句, 与 st-chatu8 按句定位一致
+        // 对白: 按原文行分 <p>(与旁白一致), <p> 间加 \n 配合 st-chatu8 按行匹配
         const innerHtml = clean
             .split(/\n/)
-            .map(line => line.split(/(?<=[。！？…])/))
-            .flat()
             .map(p => p.trim())
             .filter(Boolean)
             .map(p => `<p>${escapeHtml(p)}</p>`)
-            .join('');
+            .join('\n');
         const textHtml = `<div class="bfd-line-text">${innerHtml}</div>`;
         const body = `<div class="bfd-line-body">${nameHtml}${textHtml}</div>`;
         // 情绪动画: 解析 AI 给出的对白情绪 → 直接挂在对白行上(情绪 class + 强度/颜色变量 + data-emotion, 关闭模式不输出)
