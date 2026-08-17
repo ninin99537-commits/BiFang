@@ -1509,7 +1509,17 @@ async function renderMessageById(messageId, options = {}) {
         return;
     }
     // 头像去重: 先给所有有头像的角色分配 CSS 变量名(renderBlocksHtml 里 buildAvatarHtml 会引用),
-    // 再在渲染块 style 里注入这些变量(避免每个对白块内联整份 base64 导致渲染块膨胀几十 MB)
+    // 再在渲染块 style 里注入这些变量(避免每个对白块内联整份 base64 导致渲染块膨胀几十 MB)。
+    // 关键: base64 头像先转父页面 Blob URL(短 URL)——否则渲染 HTML 写入 extra.display_text 后,
+    // 酒馆 messageFormatting(DOMPurify/encodeStyleTags) 每次处理整段大 base64 <style> 会 O(n²) 卡死页面。
+    // 并行转换(Blob URL 有缓存, 重复渲染不重复 fetch)。
+    await Promise.all(
+        characters
+            .filter(c => c?.头像 && String(c.头像).startsWith('data:'))
+            .map(async c => {
+                c.头像 = await toBlobUrl(c.头像);
+            }),
+    );
     const avatarVars = [];
     {
         let avatarIdx = 0;
