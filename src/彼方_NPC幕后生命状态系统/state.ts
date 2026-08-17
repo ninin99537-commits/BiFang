@@ -251,27 +251,42 @@ function startLongTaskObserver() {
     if (typeof parentWin.PerformanceObserver !== 'function')
         return;
     longTaskObserverStarted = true;
+    // 记录彼方 iframe 的 id, 用于区分长任务是否来自彼方(attribution 里 containerId)
+    let selfFrameId = '';
+    try {
+        selfFrameId = String(window.frameElement?.id || '');
+    }
+    catch {
+        // 忽略
+    }
     try {
         const perfStore = usePerfStore();
         const observer = new parentWin.PerformanceObserver(list => {
             for (const entry of list.getEntries()) {
                 try {
                     const dur = Math.round(entry.duration);
-                    // attribution 里通常有一个或多个: 取第一个有 name 的(iframe/script 来源)
-                    let source = '';
+                    // 遍历 attribution, 拼接来源信息(iframe id / script url)
+                    const sources = [];
                     const attrs = entry.attribution || [];
-                    if (attrs.length > 0) {
-                        const a = attrs[0];
-                        source = a.name || a.containerType || '';
+                    for (const a of attrs) {
+                        let s = a.name || a.containerType || '';
+                        if (a.containerId)
+                            s += ` #${a.containerId}`;
                         if (a.containerSrc)
-                            source += ` (${a.containerSrc.slice(0, 60)})`;
+                            s += ` (${a.containerSrc.slice(0, 50)})`;
+                        if (s)
+                            sources.push(s);
                     }
+                    let detail = `${dur}ms 来源:${sources.join(';') || 'unknown'}`;
+                    // 标记是否来自彼方 iframe
+                    if (sources.some(s => s.includes(selfFrameId) || s.includes('TH-script--彼方')))
+                        detail += ' [彼方]';
                     perfStore.record({
                         name: '主线程长任务',
                         stage: 'longtask',
                         start: entry.startTime,
                         end: entry.startTime + entry.duration,
-                        detail: `${dur}ms 来源:${source || '?'}`,
+                        detail,
                     });
                 }
                 catch {

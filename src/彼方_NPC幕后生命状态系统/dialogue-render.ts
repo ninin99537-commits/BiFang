@@ -1601,11 +1601,11 @@ async function renderMessageById(messageId, options = {}) {
     ].join(';');
     // 整个楼层不再被整体接管: data-emotion-mode 供注入样式的情绪动画分级(完整/简化/关闭)
     const emotionMode = String(settings.情绪动画 ?? '完整');
-    // 头像 base64 用 <style> 块注入(而非 style 属性): 超大 base64 放 style 属性会被 innerHTML 解析截断;
-    // 放 <style> 里只出现一次, 对白块用 var(--bfd-avatar-N) 引用
-    const avatarStyleBlock = avatarVars.length > 0
-        ? `<style>${avatarVars.map(v => `.bfd-reader[data-version="${READER_VERSION}"]{${v}}`).join('')}</style>`
-        : '';
+    // 头像变量注入到彼方全局样式(单独 <style> id), 不写进 display_text:
+    // display_text 要经过酒馆 messageFormatting(DOMPurify/encodeStyleTags), 内嵌 <style> 块
+    // 会让酒馆每次刷新楼层时处理它(即使内容短, 也是慢点来源之一)。
+    // 头像变量全局生效, 渲染块用 var(--bfd-avatar-N) 引用, 样式一致。
+    injectAvatarVars(avatarVars);
     // 在原始文本上按"正文标签块"做替换: 块内正文 → 渲染 HTML, 标签本身与标签外原文原样保留。
     // 每个 parse 段(标签块内正文)按**顺序**对应一个渲染结果(segmentBlocks[i] 可能为 null=该段保留原文)。
     const readonlyTags = settings.标签列表?.length > 0 ? settings.标签列表 : ['content'];
@@ -1629,7 +1629,7 @@ async function renderMessageById(messageId, options = {}) {
             const openTag = fullBlock.match(/^<[^>]*>/)?.[0] ?? '';
             const closeTag = fullBlock.match(/<\/[^>]*>$/)?.[0] ?? '';
             replaced++;
-            return `${openTag}<div class="bfd-reader" style="${vars}" data-emotion-mode="${emotionMode}" data-version="${READER_VERSION}">${avatarStyleBlock}${renderHtml}</div>${closeTag}`;
+            return `${openTag}<div class="bfd-reader" style="${vars}" data-emotion-mode="${emotionMode}" data-version="${READER_VERSION}">${renderHtml}</div>${closeTag}`;
         });
     }
     if (replaced === 0) {
@@ -2076,7 +2076,31 @@ async function renderCachedMessagesInChat() {
 }
 /** 注入正文渲染样式到酒馆页面(固定 id, 重复注入前先移除旧的, 避免样式堆积覆盖) */
 const BFD_STYLE_ID = '彼方-正文渲染样式';
+const BFD_AVATAR_STYLE_ID = '彼方-头像变量样式';
 let stylesInjected = false;
+/** 头像 CSS 变量注入到彼方全局样式(独立 <style> id): 不写进 display_text, 避免酒馆 messageFormatting
+ * 每次刷新楼层时处理内嵌 <style> 块(慢点来源)。渲染块用 var(--bfd-avatar-N) 引用, 样式一致。 */
+function injectAvatarVars(avatarVars) {
+    try {
+        const doc = window.parent?.document;
+        if (!doc)
+            return;
+        let style = doc.querySelector(`#${CSS.escape(BFD_AVATAR_STYLE_ID)}`);
+        if (!style) {
+            style = doc.createElement('style');
+            style.id = BFD_AVATAR_STYLE_ID;
+            doc.head.appendChild(style);
+        }
+        const css = avatarVars.length > 0
+            ? `.bfd-reader[data-version="${READER_VERSION}"]{${avatarVars.join(';')}}`
+            : '';
+        if (style.textContent !== css)
+            style.textContent = css;
+    }
+    catch {
+        // 忽略
+    }
+}
 function injectDialogueStyles() {
     if (stylesInjected)
         return;
