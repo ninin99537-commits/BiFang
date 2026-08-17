@@ -556,6 +556,22 @@
                 </div>
               </div>
 
+              <!-- 性能 -->
+              <div v-else-if="tab === 'perf'" key="perf" class="bf-page">
+                <div class="bf-page-title"><PhGauge :size="18" weight="duotone" /> 性能
+                  <button class="bf-btn bf-btn-mini" @click="copyPerfReport"><PhCopy :size="12" weight="bold" />复制报告</button>
+                  <button class="bf-btn bf-btn-mini" @click="perfStore.clear()">清空</button>
+                </div>
+                <div class="bf-hint">记录了彼方渲染/幕后更新各阶段耗时, 以及酒馆主线程长任务(>50ms 卡顿来源)。复现"卡一下"后点"复制报告"发给我。</div>
+                <div v-if="perfEntries.length === 0" class="bf-empty-text">还没有性能记录(记录彼方和酒馆的关键耗时, 复现卡顿后回来查看)</div>
+                <div v-else class="bf-console">
+                  <div v-for="(e, index) in perfEntriesReversed" :key="index" class="bf-console-line" :class="'bf-console-' + (e.ms !== undefined && e.ms > 50 ? 'warn' : 'log')">
+                    <span class="bf-console-time">{{ fmtTime(e.time) }}</span>
+                    <span class="bf-console-text">{{ e.name }} | {{ e.stage }} | {{ e.ms !== undefined ? e.ms + 'ms' : '-' }} | {{ e.detail }}</span>
+                  </div>
+                </div>
+              </div>
+
               <!-- 设置 -->
               <div v-else key="settings" class="bf-page">
                 <div class="bf-page-title"><PhGearSix :size="18" weight="duotone" /> 设置
@@ -1170,7 +1186,7 @@ import {
 } from '@phosphor-icons/vue';
 import { chatCompletion, fetchModelList } from './api';
 import { useSettingsStore } from './settings';
-import { CARD_FIELDS, freshClearData, loadData, useConsoleStore, useDebugStore, useMainPromptStore, useRenderLogStore, useStateStore, useUpdatingStore } from './state';
+import { CARD_FIELDS, freshClearData, loadData, useConsoleStore, useDebugStore, useMainPromptStore, usePerfStore, useRenderLogStore, useStateStore, useUpdatingStore } from './state';
 import type { NpcStateCard } from './state';
 import { updateNpcStates } from './update';
 import { syncNpcStatesWorldbook } from './worldbook-inject';
@@ -1223,13 +1239,20 @@ const consoleStore = useConsoleStore();
 const { lines: consoleLines } = storeToRefs(consoleStore);
 const consoleLinesReversed = computed(() => [...consoleLines.value].reverse());
 
+const perfStore = usePerfStore();
+const { entries: perfEntries } = storeToRefs(perfStore);
+const perfEntriesReversed = computed(() => [...perfEntries.value].reverse());
+async function copyPerfReport() {
+  await copyText(perfStore.toReportText());
+}
+
 const rootEl = ref<HTMLElement | null>(null);
 const frameWin = computed<Window | null>(() => rootEl.value?.ownerDocument?.defaultView ?? null);
 const frame = computed<HTMLIFrameElement | null>(() => frameWin.value?.frameElement as HTMLIFrameElement | null);
 const parentWin = computed<Window | null>(() => frameWin.value?.parent ?? null);
 
 const panelOpen = ref(false);
-const tab = ref<'dashboard' | 'npc' | 'interaction' | 'timeline' | 'logs' | 'settings'>('dashboard');
+const tab = ref<'dashboard' | 'npc' | 'interaction' | 'timeline' | 'logs' | 'perf' | 'settings'>('dashboard');
 const showKey = ref(false);
 const fetchingModels = ref(false);
 const testing = ref(false);
@@ -1303,6 +1326,7 @@ const tabs = [
   { key: 'interaction', icon: PhChatsCircle, label: '互动' },
   { key: 'timeline', icon: PhClockCounterClockwise, label: '时间轴' },
   { key: 'logs', icon: PhScroll, label: '日志' },
+  { key: 'perf', icon: PhGauge, label: '性能' },
   { key: 'settings', icon: PhGearSix, label: '设置' },
 ] as const;
 

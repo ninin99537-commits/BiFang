@@ -104,6 +104,8 @@ function maybeInjectNpcStates() {
     ], { once: true });
 }
 $(() => {
+    // 性能监控: 注册顶层页面(酒馆)长任务监听, 记录主线程卡顿来源(彼方/酒馆/其他插件)
+    _state__WEBPACK_IMPORTED_MODULE_3__.startLongTaskObserver();
     appendInexistentScriptButtons([{ name: '彼方·手动更新', visible: true }]);
     eventOn(getButtonEvent('彼方·手动更新'), () => {
         // 幕后总开关: 关闭时不调用 API, 不更新状态(已有状态数据保留)
@@ -301,6 +303,22 @@ $(() => {
             _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.reRenderLatestMessage().catch(error => console.warn('[彼方] 重roll后渲染失败:', error));
         }
     });
+    // 其他插件(如 MVU 额外模型/幕后更新/st-chatu8)在彼方渲染后往 mes 插入标签时,
+    // 不一定触发 MESSAGE_UPDATED, 但会触发楼层重渲染(CHARACTER/USER_MESSAGE_RENDERED)。
+    // 彼方监听它, 对比彼方记录的 mes hash: 变了说明有外部插入, 重新应用渲染(缓存命中零 AI),
+    // 把新插入的标签外内容并进 display_text——无需手动"编辑再关闭"。
+    {
+        const checkAndReapply = (message_id) => {
+            if (!_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().正文渲染?.启用)
+                return;
+            const id = Number(message_id);
+            if (!Number.isFinite(id) || id <= 0)
+                return;
+            _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.reapplyMessageIfMesChanged(id).catch(error => console.warn('[彼方] 楼层渲染后检查重应用失败:', error));
+        };
+        eventOn(tavern_events.CHARACTER_MESSAGE_RENDERED, checkAndReapply);
+        eventOn(tavern_events.USER_MESSAGE_RENDERED, checkAndReapply);
+    }
     console.info('[彼方] NPC幕后生命状态系统已加载');
 });
 

@@ -1368,6 +1368,9 @@ const READER_VERSION = 6;
 async function renderMessageById(messageId, options = {}) {
     const allowParse = !!options?.allowParse;
     const source = String(options?.label ?? '未知来源');
+    const perf = _state__WEBPACK_IMPORTED_MODULE_2__.usePerfStore();
+    const renderStart = performance.now();
+    const recordPerf = (stage, detail, start = renderStart) => perf.record({ name: `渲染#${messageId}[${source}]`, stage, start, end: performance.now(), detail });
     const settings = _settings__WEBPACK_IMPORTED_MODULE_1__.getSettings().正文渲染;
     if (!settings.启用) {
         console.info(`[彼方渲染] #${messageId} [${source}] 正文渲染未启用, 跳过`);
@@ -1446,6 +1449,7 @@ async function renderMessageById(messageId, options = {}) {
         }
         // 需要实际调用 AI 解析: 显示"正在渲染"弹窗(可中断), 完成/失败/中断分别提示
         console.info(`[彼方渲染] #${messageId} [${source}] 缓存未命中: cached=${!!cached} cachedHash=${cached?.hash} newHash=${hash} mode=${mode} tags=[${tags.join(',')}], 重新调 AI 解析`);
+        const parseStart = performance.now();
         const updatingStore = _state__WEBPACK_IMPORTED_MODULE_2__.useUpdatingStore();
         const signal = updatingStore.start('正在渲染正文…', '渲染');
         let renderError = null;
@@ -1461,7 +1465,9 @@ async function renderMessageById(messageId, options = {}) {
                 }
                 if (seg.kind === 'parse' && seg.text.trim()) {
                     try {
+                        const segStart = performance.now();
                         segmentBlocks.push(await parseDialogueContent(seg.text, settings, messageId, signal));
+                        perf.record({ name: `解析#${messageId}[${source}]`, stage: 'AI解析完成', start: segStart, end: performance.now(), detail: `段长${seg.text.length}` });
                         allFailed = false;
                     }
                     catch (error) {
@@ -1483,9 +1489,11 @@ async function renderMessageById(messageId, options = {}) {
             updatingStore.stop('渲染');
         }
         if (cancelled) {
+            perf.record({ name: `渲染#${messageId}[${source}]`, stage: 'AI解析中断', start: parseStart, end: performance.now() });
             console.warn('[彼方] 正文渲染已中断');
             return;
         }
+        perf.record({ name: `渲染#${messageId}[${source}]`, stage: 'AI解析结束', start: parseStart, end: performance.now(), detail: `结果=${allFailed ? '空/失败' : '成功'}` });
         // 解析失败的结果不写缓存, 避免下次命中 null 缓存永远走 fallback(丢正则样式)
         if (!allFailed)
             cacheSet(messageId, { hash, mode, tags, segments: segmentBlocks });
@@ -1629,8 +1637,11 @@ async function renderMessageById(messageId, options = {}) {
         return;
     }
     console.info(`[彼方渲染] #${messageId} [${source}] 正则式替换完成: 替换标签块数=${replaced} hash=${hash}`);
+    recordPerf('替换完成', `标签块=${replaced} 文本长=${displayText.length}`);
     // 写入消息数据的 extra.display_text(酒馆显示楼层优先用它, 渲染结果持久存在 → 永不掉)
+    const writeStart = performance.now();
     await writeDisplayText(messageId, displayText, hash);
+    perf.record({ name: `渲染#${messageId}[${source}]`, stage: '写入display_text+刷新楼层', start: writeStart, end: performance.now(), detail: `文本长=${displayText.length}` });
     // 滚动到屏幕底部 1/3 处触发入场/情绪动画(逐旁白/逐对白行)
     if (animateOn) {
         window.requestAnimationFrame(() => {
@@ -1679,6 +1690,16 @@ async function writeDisplayText(messageId, displayText, hash) {
             msg.extra = { ...(msg.extra ?? {}), display_text: displayText };
             if (hash !== undefined)
                 msg.extra.彼方_渲染hash = String(hash);
+            // 记录"当前完整 mes 的 hash"(含其他插件插入的标签外内容): 其他插件在彼方渲染后
+            // 插入标签(MVU/aftertalk/st-chatu8 等)时 mes 会变, 彼方监听楼层渲染事件对比此值,
+            // 变了就重新应用渲染(把新插入的标签外内容并进 display_text), 无需手动编辑。
+            try {
+                const mesRaw = String(msg.mes ?? msg.message ?? '');
+                msg.extra.彼方_mesHash = String(simpleHash(mesRaw));
+            }
+            catch {
+                // 忽略
+            }
         }
         // 刷新该楼层显示: refreshOneMessage 触发 MESSAGE_RENDERED(彼方不监听, 不会死循环),
         // 酒馆 updateMessageBlock 用 extra.display_text 显示渲染结果。
@@ -1706,6 +1727,7 @@ function clearDialogueRenders() {
             if (typeof msg.extra === 'object') {
                 delete msg.extra.display_text;
                 delete msg.extra.彼方_渲染hash;
+                delete msg.extra.彼方_mesHash;
                 changed = true;
             }
         }
@@ -1713,6 +1735,47 @@ function clearDialogueRenders() {
     if (changed)
         console.info('[彼方渲染] 关闭正文渲染, 已恢复所有楼层为原文');
 }
+
+/** 楼层渲染后检查: 其他插件是否往该楼层 mes 插入了新内容(对比彼方记录的彼方_mesHash)。
+ * 变了 → 用缓存重新应用渲染(allowParse=false 不调 AI), 把新插入的标签外内容并进 display_text,
+ * 这样插件插入的标签(MVU/aftertalk/状态占位等)能显示, 无需手动"编辑再关闭"。 */
+async function reapplyMessageIfMesChanged(messageId) {
+    try {
+        const settings = _settings__WEBPACK_IMPORTED_MODULE_1__.getSettings().正文渲染;
+        if (!settings.启用)
+            return;
+        const ctx = SillyTavern?.getContext?.();
+        const chat = ctx?.chat;
+        if (!chat)
+            return;
+        const msg = chat.find(m => m.message_id === messageId) || chat[messageId];
+        if (!msg || msg.role !== 'assistant' || msg.is_hidden)
+            return;
+        // 只处理已渲染过的楼层(有彼方_mesHash 记录)
+        const prevMesHash = msg?.extra?.彼方_mesHash;
+        if (typeof prevMesHash !== 'string')
+            return;
+        const mesRaw = String(msg.mes ?? msg.message ?? '');
+        const curMesHash = String(simpleHash(mesRaw));
+        if (curMesHash === prevMesHash)
+            return; // mes 没变, 无需重建
+        console.info(`[彼方渲染] #${messageId} 楼层渲染后检测到 mes 变化(其他插件插入内容), 重新应用渲染`);
+        // 防重入 + 限制每轮只处理少量: 防止插件大量触发时卡死
+        if (reapplyBusy)
+            return;
+        reapplyBusy = true;
+        try {
+            await renderMessageById(messageId, { label: '插件插入后重应用' });
+        }
+        finally {
+            reapplyBusy = false;
+        }
+    }
+    catch (error) {
+        console.warn('[彼方] 楼层渲染后检查重应用失败:', error);
+    }
+}
+let reapplyBusy = false;
 
 /* ============================================================
    st-chatu8 图片定位修正(正则式方案)
@@ -2410,5 +2473,5 @@ function injectDialogueStyles() {
     }
 }
 
-export { applyImportedFonts, clearDialogueRenders, clearMessageCache, findMessageTextElement, getImportedFontNames, getRenderPromptSeed, injectDialogueStyles, loadParseCache, preParseStreamingContent, reRenderLatestMessage, reapplyAllRenders, reapplyImportedFonts, reapplyLatestRender, renderCachedMessagesInChat, renderMessageById };
+export { applyImportedFonts, clearDialogueRenders, clearMessageCache, findMessageTextElement, getImportedFontNames, getRenderPromptSeed, injectDialogueStyles, loadParseCache, preParseStreamingContent, reRenderLatestMessage, reapplyAllRenders, reapplyImportedFonts, reapplyLatestRender, reapplyMessageIfMesChanged, renderCachedMessagesInChat, renderMessageById };
 
