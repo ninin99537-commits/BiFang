@@ -827,14 +827,12 @@ import {
   PhPencilSimple,
   PhPlug,
   PhPulse,
-  PhRepeat,
   PhScroll,
   PhStarFour,
   PhSuitcaseSimple,
   PhSun,
   PhTag,
   PhTerminalWindow,
-  PhTextAlignLeft,
   PhTrash,
   PhUserPlus,
   PhUsers,
@@ -3076,38 +3074,6 @@ function clearAll() {
   background: var(--bf-bg2);
   cursor: pointer;
   flex: none;
-}
-/* 杀八股规则组勾选 */
-.bf-sba-groups {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin-bottom: 12px;
-}
-.bf-sba-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--bf-border);
-  border-radius: var(--bf-radius-sm);
-  background: var(--bf-bg2);
-  cursor: pointer;
-  font-size: 12.5px;
-  color: var(--bf-text);
-}
-.bf-sba-item input {
-  accent-color: var(--bf-accent);
-  flex: none;
-}
-.bf-sba-item .bf-hint {
-  margin: 0;
-  font-size: 11px;
-}
-@media (max-width: 620px) {
-  .bf-sba-groups {
-    grid-template-columns: 1fr;
-  }
 }
 
 /* ---------- Footer ---------- */
