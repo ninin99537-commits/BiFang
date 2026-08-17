@@ -255,7 +255,10 @@ $(() => {
                 return;
             console.info(`[彼方渲染] flushUpdated 防抖触发, 待渲染楼层=[${ids.join(',')}]`);
             _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.injectDialogueStyles();
-            for (const id of ids) {
+            // 只处理最近的楼层, 每轮最多 2 层: 切聊天/其他插件批量更新消息时
+            // MESSAGE_UPDATED 可能触发几十上百次, 全部重渲染会卡死页面
+            const sorted = ids.sort((a, b) => b - a).slice(0, 2);
+            for (const id of sorted) {
                 _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderMessageById(id, { label: 'MESSAGE_UPDATED' }).catch(error => console.warn('[彼方] 编辑后重新渲染失败:', error));
             }
         };
