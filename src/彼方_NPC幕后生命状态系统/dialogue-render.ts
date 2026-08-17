@@ -1710,6 +1710,31 @@ async function writeDisplayText(messageId, displayText, hash) {
                 // 忽略
             }
         }
+        // 同步到 swipe_info[swipe_id].extra: getChatMessages 返回的 extra 优先读 swipe_info[swipe_id],
+        // 彼方只写 chat[i].extra 时 getChatMessages 读不到 display_text → alreadyRendered 永远 false,
+        // 导致 renderCachedMessagesInChat 每次重复渲染同一楼层(触发 refreshOneMessage → 酒馆重渲染 → 长任务)。
+        try {
+            const swipeId = msg.swipe_id ?? 0;
+            if (!msg.swipe_info || !Array.isArray(msg.swipe_info))
+                msg.swipe_info = [];
+            if (!msg.swipe_info[swipeId] || typeof msg.swipe_info[swipeId] !== 'object')
+                msg.swipe_info[swipeId] = {};
+            if (displayText === null || displayText === undefined || displayText === '') {
+                delete msg.swipe_info[swipeId].display_text;
+                delete msg.swipe_info[swipeId].彼方_渲染hash;
+                delete msg.swipe_info[swipeId].彼方_mesHash;
+            }
+            else {
+                msg.swipe_info[swipeId].display_text = displayText;
+                if (hash !== undefined)
+                    msg.swipe_info[swipeId].彼方_渲染hash = String(hash);
+                if (msg.extra?.彼方_mesHash)
+                    msg.swipe_info[swipeId].彼方_mesHash = msg.extra.彼方_mesHash;
+            }
+        }
+        catch {
+            // 忽略
+        }
         // 刷新该楼层显示: refreshOneMessage 触发 MESSAGE_RENDERED(彼方不监听, 不会死循环),
         // 酒馆 updateMessageBlock 用 extra.display_text 显示渲染结果。
         try {
@@ -2048,8 +2073,12 @@ async function renderCachedMessagesInChat() {
             }
             if (!msg || msg.role !== 'assistant' || msg.is_hidden)
                 continue;
+            // getChatMessages 返回的 extra 优先取 swipe_info[swipe_id], 彼方写入的是 chat[i].extra;
+            // 两者可能不同步, 回退读 chat[i].extra 再判断是否已渲染, 避免"已渲染却重复重建"
+            const chatMsg = chat.find(m => m.message_id === messageId) || chat[messageId];
+            const msgExtra = msg?.extra ?? chatMsg?.extra;
             // 已有彼方渲染的 display_text 且 READER_VERSION 匹配 → 已持久渲染, 无需重建
-            const existing = msg?.extra?.display_text;
+            const existing = msgExtra?.display_text;
             const alreadyRendered = typeof existing === 'string' && existing.includes(`data-version="${READER_VERSION}"`);
             if (alreadyRendered) {
                 skipped++;
