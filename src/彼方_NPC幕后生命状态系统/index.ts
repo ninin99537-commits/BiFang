@@ -79,17 +79,6 @@ function maybeInjectNpcStates() {
 $(() => {
     // 性能监控: 注册顶层页面(酒馆)长任务监听, 记录主线程卡顿来源(彼方/酒馆/其他插件)
     _state__WEBPACK_IMPORTED_MODULE_3__.startLongTaskObserver();
-    appendInexistentScriptButtons([{ name: '彼方·手动更新', visible: true }]);
-    eventOn(getButtonEvent('彼方·手动更新'), () => {
-        // 幕后总开关: 关闭时不调用 API, 不更新状态(已有状态数据保留)
-        if (!_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().启用幕后) {
-            toastr.warning('幕后系统已关闭(设置→启用幕后), 如需更新请先开启', '彼方');
-            return;
-        }
-        _update__WEBPACK_IMPORTED_MODULE_4__.updateNpcStates(true).catch(error => {
-            console.error('[彼方] 手动更新失败:', error);
-        });
-    });
     eventOn(tavern_events.MESSAGE_RECEIVED, message_id => {
         handleMessageReceived(message_id).catch(error => {
             console.error('[彼方] 消息处理失败:', error);
