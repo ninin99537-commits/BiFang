@@ -747,7 +747,6 @@ async function updateNpcStates(force = false, fresh = false) {
         return;
     }
     isUpdating = true;
-    const updatePerfStart = performance.now();
     const debugStore = _state__WEBPACK_IMPORTED_MODULE_6__.useDebugStore();
     const updatingStore = _state__WEBPACK_IMPORTED_MODULE_6__.useUpdatingStore();
     const abortSignal = updatingStore.start('正在分析最近楼层…', '幕后');
@@ -859,15 +858,7 @@ async function updateNpcStates(force = false, fresh = false) {
                         content: `${messages[messages.length - 1].content}\n\n【上次输出不符合要求, 请根据错误原因修正后重新输出】\n错误原因: ${lastErrorReason}\n上次输出(仅 JSON 部分):\n\`\`\`json\n${lastErrorOutput}\n\`\`\``,
                     },
                 ];
-            const attemptStart = performance.now();
             content = await _api__WEBPACK_IMPORTED_MODULE_1__.chatCompletion(attemptMessages, { signal: abortSignal });
-            _state__WEBPACK_IMPORTED_MODULE_6__.usePerfStore().record({
-                name: '幕后更新AI请求',
-                stage: `第${attempt}次${abortSignal.aborted ? '(中断)' : '完成'}`,
-                start: attemptStart,
-                end: performance.now(),
-                detail: `消息数=${attemptMessages.length} 输出长=${String(content ?? '').length}`,
-            });
             debugStore.record({ time: Date.now(), response: content });
             try {
                 parsed = parseModelResponse(content);
@@ -956,7 +947,6 @@ async function updateNpcStates(force = false, fresh = false) {
                 console.error('[彼方] 同步世界书条目失败:', error);
             });
         }
-        _state__WEBPACK_IMPORTED_MODULE_6__.usePerfStore().record({ name: '幕后更新', stage: '完成', start: updatePerfStart, end: performance.now(), detail: `NPC变化=${updatedNpcs.length} 移除=${removedNpcs.length}` });
         console.info(`[彼方] 幕后NPC状态更新完成: ${updatedNpcs.join('、') || '(本次无重要NPC变化)'}${removedNpcs.length > 0 ? `; 已移除: ${removedNpcs.join('、')}` : ''}`);
         toastr.success(updatedNpcs.length > 0
             ? `彼方: 已更新 ${updatedNpcs.length} 个NPC的幕后状态${removedNpcs.length > 0 ? `，移除 ${removedNpcs.length} 个NPC` : ''}`
@@ -966,7 +956,6 @@ async function updateNpcStates(force = false, fresh = false) {
     }
     catch (error) {
         if (abortSignal.aborted) {
-            _state__WEBPACK_IMPORTED_MODULE_6__.usePerfStore().record({ name: '幕后更新', stage: '中断', start: updatePerfStart, end: performance.now() });
             const message = '更新已中断';
             debugStore.record({ time: Date.now(), error: message });
             toastr.info(`彼方: ${message}`, '彼方');

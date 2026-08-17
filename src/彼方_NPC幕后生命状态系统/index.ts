@@ -77,8 +77,6 @@ function maybeInjectNpcStates() {
     ], { once: true });
 }
 $(() => {
-    // 性能监控: 注册顶层页面(酒馆)长任务监听, 记录主线程卡顿来源(彼方/酒馆/其他插件)
-    _state__WEBPACK_IMPORTED_MODULE_3__.startLongTaskObserver();
     eventOn(tavern_events.MESSAGE_RECEIVED, message_id => {
         handleMessageReceived(message_id).catch(error => {
             console.error('[彼方] 消息处理失败:', error);
