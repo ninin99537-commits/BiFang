@@ -1735,11 +1735,17 @@ async function writeDisplayText(messageId, displayText, hash) {
         catch {
             // 忽略
         }
-        // 刷新该楼层显示: refreshOneMessage 触发 MESSAGE_RENDERED(彼方不监听, 不会死循环),
-        // 酒馆 updateMessageBlock 用 extra.display_text 显示渲染结果。
+        // 刷新该楼层显示: 仅在楼层 DOM 尚无彼方当前版本渲染块时才刷新(避免每次刷新用 display_text
+        // 重建楼层, 冲掉 st-chatu8 生图等插件插入的 DOM 图片)。数据已写入 extra.display_text,
+        // 酒馆下次自然重渲染楼层时会用渲染结果; 用户看到的是已有渲染块 + 图片共存。
         try {
-            if (typeof refreshOneMessage === 'function')
+            const doc = window.parent?.document;
+            const mesEl = doc?.querySelector(`[mesid="${messageId}"] .mes_text, [mesid="${messageId}"] .mes_content`);
+            const hasReader = !!mesEl?.querySelector(`.bfd-reader[data-version="${READER_VERSION}"]`);
+            if (!hasReader && typeof refreshOneMessage === 'function')
                 await refreshOneMessage(messageId);
+            else
+                console.info(`[彼方渲染] #${messageId} 楼层已有渲染块, 跳过刷新(保留插件插入的DOM图片)`);
         }
         catch {
             // 忽略
