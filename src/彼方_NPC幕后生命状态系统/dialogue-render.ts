@@ -1304,7 +1304,7 @@ function startAnimationPoller() {
             const doc = window.parent?.document;
             if (!doc)
                 return;
-            const pending = doc.querySelectorAll('.bfd-animate-pending');
+            const pending = doc.querySelectorAll('.custom-bfd-animate-pending');
             if (pending.length === 0) {
                 // 没有待触发动画的元素, 停止轮询
                 window.clearInterval(animationPollerTimer);
@@ -1320,14 +1320,14 @@ function startAnimationPoller() {
                     break;
                 const r = el.getBoundingClientRect();
                 if (r.top < topLine) {
-                    el.classList.remove('bfd-animate-pending');
-                    el.classList.add('bfd-animate');
+                    el.classList.remove('custom-bfd-animate-pending');
+                    el.classList.add('custom-bfd-animate');
                     batch++;
                 }
             }
             // 全部显示完则停止轮询(下次新渲染会重新 start)
             if (batch > 0) {
-                const still = doc.querySelectorAll('.bfd-animate-pending').length;
+                const still = doc.querySelectorAll('.custom-bfd-animate-pending').length;
                 if (still === 0) {
                     window.clearInterval(animationPollerTimer);
                     animationPollerTimer = null;
@@ -1350,11 +1350,11 @@ function ensureAnimationPoller() {
  */
 function observeEntryAnimations(root) {
     // 逐段动画: 旁白按 <p> 触发, 对白/心声按整块触发
-    const targets = Array.from(root.querySelectorAll('.bfd-narration p, .bfd-line, .bfd-line-inner'));
+    const targets = Array.from(root.querySelectorAll('.custom-bfd-narration p, .custom-bfd-line, .custom-bfd-line-inner'));
     if (targets.length === 0)
         return;
     for (const el of targets)
-        el.classList.add('bfd-animate-pending');
+        el.classList.add('custom-bfd-animate-pending');
     ensureAnimationPoller();
 }
 /** 正文渲染版本: 渲染结构/样式变更时 +1, 强制已渲染楼层重建(否则旧的 reader 因"跳过重建"永不更新) */
@@ -1496,49 +1496,18 @@ async function renderMessageById(messageId, options = {}) {
             toastr.warning('正文渲染失败(解析结果为空), 楼层保持原文', '彼方');
         }
     }
-    let el = findMessageTextElement(messageId);
-    if (!el) {
-        // 生成刚结束时消息 DOM 可能还没渲染出来, 轮询等待(最多 3 秒)再渲染, 避免"解析成功却没显示成原文"
-        const deadline = Date.now() + 3000;
-        while (Date.now() < deadline) {
-            await sleep(200);
-            el = findMessageTextElement(messageId);
-            if (el)
-                break;
-        }
-    }
-    if (!el) {
-        console.warn(`[彼方渲染] #${messageId} [${source}] 未找到楼层 DOM(3秒等待后仍无), 放弃渲染`);
+    // ===== 正则式应用: 渲染结果写入消息的 extra.display_text =====
+    // 酒馆显示楼层优先用 `extra.display_text ?? mes`(见酒馆 script.js updateMessageBlock/getMessageTextHTML):
+    // 渲染结果作为消息数据持久存在 → 其他插件/MVU 更新、酒馆重渲染楼层都不会清掉它(永不掉渲染)。
+    // AI 提示词/编辑楼层/导出聊天仍用原始 mes, 渲染 HTML 不污染原文。
+    //
+    // 保留原始标签块(如 <content>...</content>): 只把"标签块内正文"替换为渲染 HTML,
+    // 标签块本身与标签块外原文(时间戳/其他插件标签)原样保留。
+    const rawText = String(message.message ?? message.mes ?? '');
+    if (!rawText.trim()) {
+        console.warn(`[彼方渲染] #${messageId} [${source}] 原始正文为空, 跳过`);
         return;
     }
-    // 编辑中不渲染: 酒馆"编辑正文"会临时把 .mes_text 换成编辑框(textarea/contenteditable),
-    // 此时渲染会覆盖编辑框 → 跳过, 等编辑完成(MESSAGE_UPDATED)再渲染
-    if (isMesTextBeingEdited(el)) {
-        console.info(`[彼方渲染] #${messageId} [${source}] 楼层正在编辑中, 跳过渲染(避免覆盖编辑框)`);
-        return;
-    }
-    // 幂等跳过: 已有渲染块(data-bfd-rendered)且正文 hash 一致 → 什么都不用做。
-    // 外部插件/酒馆重渲染把渲染块清掉后, content 块文本会回来, 这里不命中, 走下方重新替换(像正则那样每次渲染应用)
-    const rendered = el.querySelector('[data-bfd-rendered]');
-    if (rendered && rendered.getAttribute('data-version') === String(READER_VERSION)
-        && cached && cached.hash === hash && cached.mode === mode && JSON.stringify(cached.tags) === JSON.stringify(tags)) {
-        console.info(`[彼方渲染] #${messageId} [${source}] 已有渲染块且正文未变(hash=${hash}), 跳过`);
-        // st-chatu8 可能刚重新生图(双击/重新生成)在渲染块外新建/更新了 span,
-        // 正文 hash 不变时这里幂等跳过, 但游离图片仍需整理进渲染块
-        window.setTimeout(() => {
-            try {
-                tidyStrayImages(el);
-            }
-            catch {
-                // 忽略
-            }
-        }, 800);
-        return;
-    }
-    console.info(`[彼方渲染] #${messageId} [${source}] 开始正则式替换: 已有渲染块=${!!rendered} hash=${hash} cachedHash=${cached?.hash} DOM文本前30=[${(el.textContent || '').replace(/\s+/g, ' ').slice(0, 30)}]`);
-    // 备份原始楼层内容: 关闭渲染/清理时用 data-bfd-original 恢复原文(渲染块不含原文文本)
-    if (el.getAttribute('data-bfd-original') === null)
-        el.setAttribute('data-bfd-original', el.innerHTML);
     // 头像去重: 先给所有有头像的角色分配 CSS 变量名(renderBlocksHtml 里 buildAvatarHtml 会引用),
     // 再在渲染块 style 里注入这些变量(避免每个对白块内联整份 base64 导致渲染块膨胀几十 MB)
     const avatarVars = [];
@@ -1564,17 +1533,13 @@ async function renderMessageById(messageId, options = {}) {
     if (bgColor) {
         const bgColor2 = String(settings.对白背景色2 || '').trim() || bgColor;
         const dirMap = { '横向': 'to right', '纵向': 'to bottom', '对角': 'to bottom right' };
-        // "到透明"变体(如"横向到透明")先去掉后缀再查方向, 否则会落到纯色分支导致渐变失效
         const dir = dirMap[gradient.replace(/到透明$/, '')] ?? null;
         const toTransparent = /到透明$/.test(gradient);
         const opacityPct = Math.round(bgOpacity * 100);
-        // 单方向渐变生成函数: startColor→endColor(到透明则终点透明), 透明度混合
         const build = (d, mirror) => {
             if (!d) {
-                // 无方向: 纯色 + 透明度(主角也同色)
                 return opacityPct >= 100 ? bgColor : `color-mix(in srgb, ${bgColor} ${opacityPct}%, transparent)`;
             }
-            // 主角镜像方向: 横向↔反向, 纵向↔反向, 对角↔反向
             const dirFinal = mirror
                 ? d === 'to right' ? 'to left' : d === 'to bottom' ? 'to top' : d === 'to bottom right' ? 'to bottom left' : d
                 : d;
@@ -1623,159 +1588,120 @@ async function renderMessageById(messageId, options = {}) {
     const avatarStyleBlock = avatarVars.length > 0
         ? `<style>${avatarVars.map(v => `.bfd-reader[data-version="${READER_VERSION}"]{${v}}`).join('')}</style>`
         : '';
-    // 像正则那样: 在酒馆渲染好的消息 DOM 中, 把每个正文(parse)段文本替换成对白渲染块,
-    // 标签外内容(time_format/外部插件插入的标签与内容)DOM 原样保留——不覆盖整个楼层、不做隐藏层。
-    // 从后往前替换, 避免前面替换后文本偏移影响后续段定位。
-    const parseIndices = [];
+    // 在原始文本上按"正文标签块"做替换: 块内正文 → 渲染 HTML, 标签本身与标签外原文原样保留。
+    // 每个 parse 段(标签块内正文)按**顺序**对应一个渲染结果(segmentBlocks[i] 可能为 null=该段保留原文)。
+    const readonlyTags = settings.标签列表?.length > 0 ? settings.标签列表 : ['content'];
+    // parse 段渲染结果按出现顺序排队
+    const renderQueue = [];
     segments.forEach((seg, i) => {
         if (seg.kind === 'parse' && segmentBlocks[i])
-            parseIndices.push(i);
+            renderQueue.push(segmentBlocks[i]);
     });
     let replaced = 0;
-    for (let k = parseIndices.length - 1; k >= 0; k--) {
-        const i = parseIndices[k];
-        const bodyText = String(segments[i].text || '').replace(/^\s+|\s+$/g, '');
-        if (!bodyText)
-            continue;
-        // 正文在酒馆 DOM 中会被拆成多个独立段落(<p>), 且段落内可能混入"加载中…"等插件占位文本,
-        // 整段连续匹配会失败 → 按空行拆成子段逐段定位, 取第一个子段的起点与最后一个子段的终点合并替换。
-        // 子段间若混入外部插入的占位文本(如"加载中…")会被一并替换掉(渲染块取代正文位置), 可接受。
-        const paras = bodyText.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
-        // 批量定位: 一次全文规范化 + 一次文本节点遍历, 避免逐段 findRangeForText 的 O(n²) 扫描
-        const ranges = locateRanges(el, paras);
-        let firstRange = null;
-        let lastRange = null;
-        let located = 0;
-        for (const r of ranges) {
-            if (!r)
-                continue;
-            located++;
-            if (!firstRange)
-                firstRange = r;
-            lastRange = r;
-        }
-        if (!firstRange || !lastRange || located === 0) {
-            console.warn(`[彼方渲染] #${messageId} [${source}] 正文段定位失败(文本已被替换或外部改动), 该段保留原文. 段落数=${paras.length} 定位成功=${located} 段文本前30=[${bodyText.slice(0, 30)}] DOM文本前30=[${(el.textContent || '').replace(/\s+/g, ' ').slice(0, 30)}]`);
-            continue;
-        }
-        const renderHtml = renderBlocksHtml(segmentBlocks[i], characters, settings);
-        if (!renderHtml)
-            continue;
-        const blockHtml = `<div class="bfd-reader" style="${vars}" data-emotion-mode="${emotionMode}" data-version="${READER_VERSION}" data-bfd-rendered="1">${avatarStyleBlock}${renderHtml}</div>`;
-        const doc = el.ownerDocument;
-        const holder = doc.createElement('div');
-        holder.innerHTML = blockHtml;
-        const blockNode = holder.firstChild;
-        const r = doc.createRange();
-        r.setStart(firstRange.startNode, firstRange.startOffset);
-        r.setEnd(lastRange.endNode, lastRange.endOffset);
-        // 抢救正文范围内的 st-chatu8 生图按钮/占位(DOM 元素, 不在消息数据里):
-        // extractContents 提取后, 记录每个图片前的文本长度, 渲染块创建后按"原文相对文本位置"
-        // 比例映射到渲染块对应段落插回(不受清理/引号差异影响, 避免堆叠)。
-        const savedImages = [];
-        let totalLen = 0;
-        try {
-            const frag = r.extractContents();
-            if (frag) {
-                const collectImages = (node, textAcc) => {
-                    // extractContents 返回 DocumentFragment(nodeType 11), 必须遍历其子节点,
-                    // 否则抢救逻辑从未生效(编辑/重渲染后 Range 内图片被直接删掉)
-                    if (node.nodeType === Node.TEXT_NODE)
-                        return textAcc + node.data;
-                    if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
-                        for (const child of Array.from(node.childNodes))
-                            textAcc = collectImages(child, textAcc);
-                        return textAcc;
-                    }
-                    if (node.nodeType === Node.ELEMENT_NODE) {
-                        if (node.matches?.(CHATU8_IMAGE_SELECTOR)) {
-                            if (!node.parentElement || !node.parentElement.closest?.(CHATU8_IMAGE_SELECTOR))
-                                savedImages.push({ img: node, anchorLen: textAcc.length });
-                            return textAcc; // 图片内部文本不计入
-                        }
-                        for (const child of Array.from(node.childNodes))
-                            textAcc = collectImages(child, textAcc);
-                    }
-                    return textAcc;
-                };
-                totalLen = collectImages(frag, '').length;
-            }
-        }
-        catch {
-            r.deleteContents();
-        }
-        r.insertNode(blockNode);
-        // 按"原文相对文本位置"把图片插回渲染块对应段落之后
-        if (savedImages.length > 0 && totalLen > 0) {
-            const normTxt = s => String(s ?? '').replace(/[\s\p{P}\p{S}]/gu, '').toLowerCase();
-            const paras = Array.from(blockNode.querySelectorAll('.bfd-line, .bfd-narration p, .bfd-line-text p'));
-            if (paras.length > 0) {
-                const paraAcc = [];
-                let acc = 0;
-                paras.forEach(p => {
-                    acc += normTxt(p.textContent ?? '').length;
-                    paraAcc.push(acc);
-                });
-                const totalPara = acc || 1;
-                for (const { img, anchorLen } of savedImages) {
-                    const ratio = Math.min(0.999, anchorLen / totalLen);
-                    const targetPos = ratio * totalPara;
-                    let idx = paraAcc.findIndex(x => x >= targetPos);
-                    if (idx < 0)
-                        idx = paras.length - 1;
-                    paras[idx].after(img);
-                }
-            }
-            else {
-                savedImages.forEach(({ img }) => blockNode.appendChild(img));
-            }
-        }
-        else if (savedImages.length > 0) {
-            savedImages.forEach(({ img }) => blockNode.appendChild(img));
-        }
-        replaced++;
+    let displayText = rawText;
+    for (const tag of readonlyTags) {
+        const esc = String(tag).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const blockRe = new RegExp(`<${esc}\\b[^>]*>[\\s\\S]*?<\\/${esc}>`, 'gi');
+        displayText = displayText.replace(blockRe, (fullBlock) => {
+            const renderHtml = renderQueue.length > 0
+                ? renderBlocksHtml(renderQueue.shift(), characters, settings)
+                : '';
+            if (!renderHtml)
+                return fullBlock;
+            const openTag = fullBlock.match(/^<[^>]*>/)?.[0] ?? '';
+            const closeTag = fullBlock.match(/<\/[^>]*>$/)?.[0] ?? '';
+            replaced++;
+            return `${openTag}<div class="bfd-reader" style="${vars}" data-emotion-mode="${emotionMode}" data-version="${READER_VERSION}">${avatarStyleBlock}${renderHtml}</div>${closeTag}`;
+        });
     }
     if (replaced === 0) {
-        console.warn(`[彼方渲染] #${messageId} [${source}] 所有正文段均未替换, 楼层保持原文`);
+        console.warn(`[彼方渲染] #${messageId} [${source}] 所有正文标签块均未替换, 保留原文`);
         return;
     }
-    el.classList.add('bfd-rendered');
-    console.info(`[彼方渲染] #${messageId} [${source}] 正则式替换完成: 替换段数=${replaced} hash=${hash}`);
+    console.info(`[彼方渲染] #${messageId} [${source}] 正则式替换完成: 替换标签块数=${replaced} hash=${hash}`);
+    // 写入消息数据的 extra.display_text(酒馆显示楼层优先用它, 渲染结果持久存在 → 永不掉)
+    await writeDisplayText(messageId, displayText, hash);
     // 滚动到屏幕底部 1/3 处触发入场/情绪动画(逐旁白/逐对白行)
     if (animateOn) {
-        // 延迟到下一帧再挂动画 pending: 渲染块插入(大量 <p> 触发重排)与动画样式变化分帧, 避免同帧两次重排卡顿
         window.requestAnimationFrame(() => {
             try {
-                observeEntryAnimations(el);
+                const doc = window.parent?.document;
+                const el = doc?.querySelector(`[mesid="${messageId}"] .bfd-reader`);
+                if (el)
+                    observeEntryAnimations(el);
             }
             catch {
                 // 忽略
             }
         });
     }
-    // 编辑关闭/楼层重渲染后, st-chatu8 会重新插入图片, 但彼方渲染块已存在时它定位易失败,
-    // 图片可能落到渲染块外(标签外)或错位 → 延迟整理一次, 按 regex 把游离图片挪回渲染块对应句子后
-    window.setTimeout(() => {
+}
+/** 把渲染后的显示文本写入消息的 extra.display_text(酒馆显示楼层优先用它: `extra.display_text ?? mes`)。
+ * 渲染结果作为消息数据持久存在 → 其他插件/MVU 更新、酒馆重渲染楼层、刷新页面都不会清掉它(永不掉渲染)。
+ * 原文 mes 保持不变 → AI 提示词/编辑/导出都用原文。
+ * 关键: 不用 setChatMessages 写 extra(需要 swipes 结构、普通楼层不生效、且触发 MESSAGE_UPDATED 死循环),
+ * 不用 saveChat(批量全量序列化聊天文件卡死); 直接改 ctx.chat[i].extra + refreshOneMessage 刷新该楼层,
+ * 持久化交给酒馆自身的自动保存。 */
+async function writeDisplayText(messageId, displayText, hash) {
+    try {
+        const ctx = SillyTavern?.getContext?.();
+        const chat = ctx?.chat;
+        if (!chat)
+            return;
+        const msg = chat.find(m => m.message_id === messageId) || chat[messageId];
+        if (!msg)
+            return;
+        // 幂等: 已写入同版本渲染结果则跳过(避免重复刷新)
+        const prev = msg?.extra?.display_text;
+        if (typeof prev === 'string' && prev.includes(`data-version="${READER_VERSION}"`)) {
+            if (hash !== undefined && msg?.extra?.彼方_渲染hash === String(hash))
+                return;
+            if (prev === displayText)
+                return;
+        }
+        if (displayText === null || displayText === undefined || displayText === '') {
+            if (msg.extra && typeof msg.extra === 'object') {
+                delete msg.extra.display_text;
+                delete msg.extra.彼方_渲染hash;
+            }
+        }
+        else {
+            msg.extra = { ...(msg.extra ?? {}), display_text: displayText };
+            if (hash !== undefined)
+                msg.extra.彼方_渲染hash = String(hash);
+        }
+        // 刷新该楼层显示: refreshOneMessage 触发 MESSAGE_RENDERED(彼方不监听, 不会死循环),
+        // 酒馆 updateMessageBlock 用 extra.display_text 显示渲染结果。
         try {
-            tidyStrayImages(el);
+            if (typeof refreshOneMessage === 'function')
+                await refreshOneMessage(messageId);
         }
         catch {
             // 忽略
         }
-    }, 800);
+    }
+    catch (error) {
+        console.warn(`[彼方渲染] #${messageId} 写入 display_text 失败:`, error);
+    }
 }
-/** 关闭正文渲染时, 恢复所有已渲染楼层为原始正文(渲染块不含原文文本, 用渲染前备份 data-bfd-original 恢复) */
+/** 关闭正文渲染时, 恢复所有已渲染楼层为原始正文(删除 extra.display_text 即可, 酒馆自动回退显示 mes 原文) */
 function clearDialogueRenders() {
-    const doc = window.parent?.document;
-    if (!doc)
+    const ctx = SillyTavern?.getContext?.();
+    const chat = ctx?.chat;
+    if (!chat)
         return;
-    doc.querySelectorAll('.bfd-rendered').forEach((el) => {
-        const original = el.getAttribute('data-bfd-original');
-        if (original !== null)
-            el.innerHTML = original;
-        el.removeAttribute('data-bfd-original');
-        el.classList.remove('bfd-rendered', 'bfd-animate');
+    let changed = false;
+    chat.forEach((msg) => {
+        if (msg?.extra?.display_text || msg?.extra?.彼方_渲染hash) {
+            if (typeof msg.extra === 'object') {
+                delete msg.extra.display_text;
+                delete msg.extra.彼方_渲染hash;
+                changed = true;
+            }
+        }
     });
+    if (changed)
+        console.info('[彼方渲染] 关闭正文渲染, 已恢复所有楼层为原文');
 }
 
 /* ============================================================
@@ -1995,47 +1921,84 @@ async function reapplyAllRenders() {
     }
 }
 /** 切聊天后: 只恢复"有解析缓存"楼层中**已渲染到 DOM**的(缓存命中快, 不触发解析); 虚拟化未渲染/无缓存的楼层跳过 */
+/** 恢复"有解析缓存"楼层的渲染(缓存命中快, 不触发解析)。渲染结果写入 extra.display_text 后是消息数据的一部分,
+ * 刷新页面/切聊天回来仍在, 无需重建; 只对"有缓存但尚未写入 display_text"(如彼方设置刚开启/样式版本升级)的楼层补写。
+ * 只遍历 DOM 中已渲染的楼层(酒馆虚拟化只渲染视口附近, 数量少), 每轮最多 2 层 + 防重入,
+ * 避免对全部几百层逐个生成大渲染文本卡死。 */
+let cachedRenderBusy = false;
 async function renderCachedMessagesInChat() {
-    const settings = _settings__WEBPACK_IMPORTED_MODULE_1__.getSettings().正文渲染;
-    if (!settings.启用)
+    if (cachedRenderBusy)
         return;
-    injectDialogueStyles();
-    // 每次恢复前重新从 localStorage 加载当前聊天的解析缓存:
-    // 彼方初始化时用户可能还没切到目标聊天(此时 chatKey 是默认聊天, 缓存加载不到),
-    // 之后切到目标聊天触发本函数时必须重新加载, 否则内存 parseCache 为空导致什么都不恢复
-    loadParseCache();
-    console.info(`[彼方渲染] renderCachedMessagesInChat: 内存缓存条数=${parseCache.size}`);
+    cachedRenderBusy = true;
     try {
-        const lastId = getLastMessageId();
-        if (lastId <= 0)
+        const settings = _settings__WEBPACK_IMPORTED_MODULE_1__.getSettings().正文渲染;
+        if (!settings.启用)
             return;
-        const msgs = getChatMessages(`0-${lastId}`, { role: 'assistant' }).filter(m => !m.is_hidden);
+        injectDialogueStyles();
+        // 每次恢复前重新从 localStorage 加载当前聊天的解析缓存:
+        // 彼方初始化时用户可能还没切到目标聊天(此时 chatKey 是默认聊天, 缓存加载不到),
+        // 之后切到目标聊天触发本函数时必须重新加载, 否则内存 parseCache 为空导致什么都不恢复
+        loadParseCache();
+        console.info(`[彼方渲染] renderCachedMessagesInChat: 内存缓存条数=${parseCache.size}`);
+        const doc = window.parent?.document;
+        if (!doc)
+            return;
+        const mesEls = Array.from(doc.querySelectorAll('.mes[mesid]'));
         let restored = 0;
         let skipped = 0;
-        for (const m of msgs) {
-            // 只渲染已在 DOM 的楼层: 避免对虚拟化未渲染的消息逐个空等 3 秒(renderMessageById 内部会等元素), 导致恢复极慢
-            const textEl = findMessageTextElement(m.message_id);
-            const hasCache = parseCache.has(m.message_id);
-            const nearViewport = !!textEl && isNearViewport(textEl);
-            if (hasCache && textEl && nearViewport) {
-                try {
-                    await renderMessageById(m.message_id, { label: '恢复渲染' });
-                    restored++;
-                    // 让出主线程: 避免视口附近多个楼层连续插入大渲染块导致阻塞卡顿
-                    await new Promise(res => setTimeout(res, 0));
-                }
-                catch (error) {
-                    // 单条失败不影响其他楼层
-                }
-            }
-            else {
+        for (const mesEl of mesEls) {
+            const rawId = mesEl.getAttribute('mesid') || mesEl.getAttribute('data-message-id');
+            const messageId = Number(rawId);
+            if (!Number.isFinite(messageId) || messageId <= 0)
+                continue;
+            // 只处理"有解析缓存"的楼层(缓存 key 即 messageId)
+            if (!parseCache.has(messageId)) {
                 skipped++;
+                continue;
+            }
+            let msg;
+            try {
+                const msgs = getChatMessages(messageId);
+                msg = msgs && msgs[0];
+            }
+            catch {
+                continue;
+            }
+            if (!msg || msg.role !== 'assistant' || msg.is_hidden)
+                continue;
+            // 已有彼方渲染的 display_text 且 READER_VERSION 匹配 → 已持久渲染, 无需重建
+            const existing = msg?.extra?.display_text;
+            const alreadyRendered = typeof existing === 'string' && existing.includes(`data-version="${READER_VERSION}"`);
+            if (alreadyRendered) {
+                skipped++;
+                continue;
+            }
+            // 只补写视口附近的楼层, 每轮最多 2 层, 其余留待后续轮次(初始化/切聊天会调用多轮)
+            if (!isNearViewport(mesEl)) {
+                skipped++;
+                continue;
+            }
+            if (restored >= 2) {
+                skipped++;
+                continue;
+            }
+            try {
+                await renderMessageById(messageId, { label: '恢复渲染' });
+                restored++;
+                // 让出主线程, 避免连续生成大渲染文本阻塞
+                await new Promise(res => setTimeout(res, 100));
+            }
+            catch (error) {
+                // 单条失败不影响其他楼层
             }
         }
-        console.info(`[彼方渲染] renderCachedMessagesInChat 完成: 恢复=${restored} 跳过=${skipped} 总assistant楼层=${msgs.length}`);
+        console.info(`[彼方渲染] renderCachedMessagesInChat 完成: 补写=${restored} 跳过=${skipped} DOM楼层=${mesEls.length}`);
     }
     catch (error) {
         console.warn('[彼方] 恢复已渲染楼层失败:', error);
+    }
+    finally {
+        cachedRenderBusy = false;
     }
 }
 /** 注入正文渲染样式到酒馆页面(固定 id, 重复注入前先移除旧的, 避免样式堆积覆盖) */
@@ -2056,7 +2019,7 @@ function injectDialogueStyles() {
    彼方 · 小说阅读器
    模式: Read —— 排版是主角, 装饰退让
    ============================================================ */
-.bfd-reader {
+.custom-bfd-reader {
   --bfd-serif: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', 'SimSun', serif;
   --bfd-sans: -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --pg-bg: transparent;
@@ -2080,7 +2043,7 @@ function injectDialogueStyles() {
 }
 
 /* ---- 旁白 · 正文本体 ---- */
-.bfd-narration {
+.custom-bfd-narration {
   display: flow-root;   /* 建立独立 BFC, 防止块外距与内部 <p> 外边距折叠 */
   margin: var(--bfd-nar-gap, 1.6em) 0;
   margin-left: var(--bfd-nar-indent, 0);
@@ -2094,47 +2057,47 @@ function injectDialogueStyles() {
   text-align: justify;
 }
 /* 段间距: 用 <p> 的下边距, 同块内段落间不折叠(下一段 margin-top 为 0) */
-.bfd-narration p {
+.custom-bfd-narration p {
   margin: 0 0 var(--bfd-nar-para-gap, 1.15em) 0;
 }
-.bfd-narration p:last-child {
+.custom-bfd-narration p:last-child {
   margin-bottom: 0;
 }
 
 /* 动作叙述: 与旁白同级, 斜体弱化 */
-.bfd-action-narration {
+.custom-bfd-action-narration {
   font-style: italic;
   color: var(--bfd-action-color, var(--pg-text-soft));
 }
 
 /* ---- 心声 · 内心独白 ---- */
-.bfd-line-inner .bfd-line-body {
+.custom-bfd-line-inner .custom-bfd-line-body {
   background: transparent;
   border-left: none;
   padding: 2px 0 2px 14px;
   border-left: 2px dashed color-mix(in srgb, var(--role-accent, var(--pg-accent)) 40%, transparent);
   border-radius: 0;
 }
-.bfd-inner-text {
+.custom-bfd-inner-text {
   font-family: var(--bfd-dial-font, inherit);
   font-style: italic;
   font-size: 0.97em;
   color: var(--pg-text-soft);
   line-height: 1.9;
 }
-.bfd-inner-text p { margin: 0 0 0.5em 0; }
-.bfd-inner-text p:last-child { margin-bottom: 0; }
-.bfd-line-inner .bfd-avatar { opacity: 0.55; }
+.custom-bfd-inner-text p { margin: 0 0 0.5em 0; }
+.custom-bfd-inner-text p:last-child { margin-bottom: 0; }
+.custom-bfd-line-inner .custom-bfd-avatar { opacity: 0.55; }
 
 /* ---- 对白 · 人物排版块 ---- */
-.bfd-line {
+.custom-bfd-line {
   display: flex;
   align-items: flex-start;
   gap: var(--bfd-line-gap, 16px);
   margin: var(--bfd-dial-gap, 2.2em) 0;
   max-width: min(var(--bfd-dial-max, 78%), 86%);
 }
-.bfd-line-body {
+.custom-bfd-line-body {
   min-width: 0;
   flex: 0 1 auto;
   padding: 6px 14px 6px 16px;
@@ -2144,12 +2107,12 @@ function injectDialogueStyles() {
   /* 细线: 角色色强调线, 跟随对白圆角弯曲; 宽度由 JS 端根据开关输出(关闭=0px) */
   border-left: var(--bfd-dial-line-width-effective, 2px) solid var(--bfd-dial-line-color, var(--role-accent, var(--pg-accent)));
 }
-.bfd-line-protagonist .bfd-line-body {
+.custom-bfd-line-protagonist .custom-bfd-line-body {
   border-left: none;
   border-right: var(--bfd-dial-line-width-effective, 2px) solid var(--bfd-dial-line-color, var(--role-accent, var(--pg-accent)));
   background: var(--bfd-dial-bg-computed-proto, var(--bfd-dial-bg-computed, transparent));
 }
-.bfd-name {
+.custom-bfd-name {
   font-family: var(--bfd-sans);
   font-size: var(--bfd-name-size, 12px);
   font-weight: 600;
@@ -2158,30 +2121,30 @@ function injectDialogueStyles() {
   margin-bottom: 6px;
   opacity: 0.92;
 }
-.bfd-line-text {
+.custom-bfd-line-text {
   font-family: var(--bfd-dial-font, inherit);
   font-size: var(--bfd-dial-size, 17px);
   font-weight: var(--bfd-dial-weight, 400);
   line-height: var(--bfd-dial-lineheight, 1.9);
   letter-spacing: 0.015em;
 }
-.bfd-line-text p { margin: 0 0 0.45em 0; }
-.bfd-line-text p:last-child { margin-bottom: 0; }
+.custom-bfd-line-text p { margin: 0 0 0.45em 0; }
+.custom-bfd-line-text p:last-child { margin-bottom: 0; }
 
 /* 主角 · 右侧镜像 */
-.bfd-line-protagonist {
+.custom-bfd-line-protagonist {
   margin-left: auto;
   flex-direction: row-reverse;
 }
-.bfd-line-protagonist .bfd-line-body {
+.custom-bfd-line-protagonist .custom-bfd-line-body {
   text-align: right;
 }
-.bfd-line-protagonist .bfd-line-text {
+.custom-bfd-line-protagonist .custom-bfd-line-text {
   text-align: right;
 }
 
 /* ---- 头像 · 角色视觉锚点 ---- */
-.bfd-avatar {
+.custom-bfd-avatar {
   flex: none;
   width: var(--pg-avatar-size);
   height: var(--pg-avatar-size);
@@ -2197,23 +2160,23 @@ function injectDialogueStyles() {
   border: 1px solid color-mix(in srgb, var(--role-accent, var(--pg-accent)) 45%, transparent);
   margin-top: 4px;
 }
-.bfd-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.bfd-avatar[data-shape="circle"]   { border-radius: 50%; }
-.bfd-avatar[data-shape="rounded"]  { border-radius: 10px; }
-.bfd-avatar[data-shape="portrait"] { border-radius: 44% 44% 18% 18% / 52% 52% 24% 24%; }
-.bfd-avatar[data-shape="soft"]     { border-radius: 30% 70% 62% 38% / 38% 42% 58% 62%; }
+.custom-bfd-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.custom-bfd-avatar[data-shape="circle"]   { border-radius: 50%; }
+.custom-bfd-avatar[data-shape="rounded"]  { border-radius: 10px; }
+.custom-bfd-avatar[data-shape="portrait"] { border-radius: 44% 44% 18% 18% / 52% 52% 24% 24%; }
+.custom-bfd-avatar[data-shape="soft"]     { border-radius: 30% 70% 62% 38% / 38% 42% 58% 62%; }
 
 /* Fallback 头像: 扁平高级 —— 柔和纯色底 + 细边框, 无立体渐变 */
-.bfd-avatar-initial {
+.custom-bfd-avatar-initial {
   background: color-mix(in srgb, var(--role-accent, var(--pg-accent)) 16%, transparent);
 }
-.bfd-avatar-initial span {
+.custom-bfd-avatar-initial span {
   position: relative;
   z-index: 1;
   letter-spacing: 0.02em;
 }
 /* 左下角辅色小点缀, 增加设计细节但不抢眼 */
-.bfd-avatar-initial::after {
+.custom-bfd-avatar-initial::after {
   content: '';
   position: absolute;
   left: 12%;
@@ -2226,7 +2189,7 @@ function injectDialogueStyles() {
 }
 
 /* ---- 场景分隔 ---- */
-.bfd-scene-break {
+.custom-bfd-scene-break {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2237,8 +2200,8 @@ function injectDialogueStyles() {
   letter-spacing: 0.3em;
   user-select: none;
 }
-.bfd-scene-break::before,
-.bfd-scene-break::after {
+.custom-bfd-scene-break::before,
+.custom-bfd-scene-break::after {
   content: '';
   flex: 0 1 64px;
   height: 1px;
@@ -2248,22 +2211,22 @@ function injectDialogueStyles() {
 /* ---- 动画(克制, 尊重 reduced-motion) ----
    元素级触发: JS 观察器在元素滚到视口底部 1/3 处时添加 bfd-animate, 入场/情绪动画才播放;
    未触发前用 bfd-animate-pending 保持不可见, 避免"先播完再看到"。 */
-.bfd-animate-pending { opacity: 0; }
-.bfd-narration p.bfd-animate { animation: pg-nar 0.5s ease-out both; }
-.bfd-line-inner.bfd-animate { animation: pg-nar 0.5s ease-out both; }
-.bfd-line.bfd-animate { animation: var(--bfd-entry-anim, pg-line) 0.35s ease-out both; }
-.bfd-line-protagonist.bfd-animate { --bfd-entry-anim: pg-line-r; }
+.custom-bfd-animate-pending { opacity: 0; }
+.custom-bfd-narration p.custom-bfd-animate { animation: pg-nar 0.5s ease-out both; }
+.custom-bfd-line-inner.custom-bfd-animate { animation: pg-nar 0.5s ease-out both; }
+.custom-bfd-line.custom-bfd-animate { animation: var(--bfd-entry-anim, pg-line) 0.35s ease-out both; }
+.custom-bfd-line-protagonist.custom-bfd-animate { --bfd-entry-anim: pg-line-r; }
 /* st-chatu8 图片与正文段落一致的入场动画 */
-.bfd-reader .st-chatu8-image-span.bfd-animate { animation: pg-nar 0.5s ease-out both; }
-.bfd-reader .st-chatu8-image-span.bfd-animate-pending { opacity: 0; }
+.custom-bfd-reader .st-chatu8-image-span.custom-bfd-animate { animation: pg-nar 0.5s ease-out both; }
+.custom-bfd-reader .st-chatu8-image-span.custom-bfd-animate-pending { opacity: 0; }
 @keyframes pg-nar { from { opacity: 0; } to { opacity: 1; } }
 @keyframes pg-line { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
 @keyframes pg-line-r { from { opacity: 0; transform: translateX(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
-  .bfd-narration p.bfd-animate,
-  .bfd-line.bfd-animate,
-  .bfd-line-inner.bfd-animate,
-  .bfd-reader .st-chatu8-image-span.bfd-animate { animation: none !important; }
+  .custom-bfd-narration p.custom-bfd-animate,
+  .custom-bfd-line.custom-bfd-animate,
+  .custom-bfd-line-inner.custom-bfd-animate,
+  .custom-bfd-reader .st-chatu8-image-span.custom-bfd-animate { animation: none !important; }
 }
 
 /* ============================================================
@@ -2272,36 +2235,36 @@ function injectDialogueStyles() {
    一次性 accent 与入场组合在整条对白行上(整个 Character Message Group 一起动),
    由观察器在滚动到视口底部 1/3 处触发(bfd-animate)后播放一次
    ============================================================ */
-.bfd-line[data-emotion] { --bfd-em-i: var(--bfd-em-i-base, 0.5); }
+.custom-bfd-line[data-emotion] { --bfd-em-i: var(--bfd-em-i-base, 0.5); }
 /* ---- 静态情绪表现(不动竖线/细线/角色名/对白本身; 通过 头像情绪色细环 传达) ---- */
-.bfd-line[data-emotion] .bfd-avatar {
+.custom-bfd-line[data-emotion] .custom-bfd-avatar {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--bfd-em-color) calc(32% * var(--bfd-em-i)), transparent);
 }
 /* 悲伤/疲惫: 文字降亮(不是边框); 愤怒: 头像对比度 */
-.bfd-line[data-emotion].bfd-em-sad .bfd-line-body,
-.bfd-line[data-emotion].bfd-em-tired .bfd-line-body { filter: brightness(var(--bfd-em-dim, 0.96)) saturate(var(--bfd-em-sat, 0.92)); }
-.bfd-line[data-emotion].bfd-em-sad .bfd-avatar { filter: brightness(0.94) saturate(0.88); }
-.bfd-line[data-emotion].bfd-em-angry .bfd-avatar { filter: contrast(1.06); }
+.custom-bfd-line[data-emotion].custom-bfd-em-sad .custom-bfd-line-body,
+.custom-bfd-line[data-emotion].custom-bfd-em-tired .custom-bfd-line-body { filter: brightness(var(--bfd-em-dim, 0.96)) saturate(var(--bfd-em-sat, 0.92)); }
+.custom-bfd-line[data-emotion].custom-bfd-em-sad .custom-bfd-avatar { filter: brightness(0.94) saturate(0.88); }
+.custom-bfd-line[data-emotion].custom-bfd-em-angry .custom-bfd-avatar { filter: contrast(1.06); }
 /* ---- 一次性 accent 动画(与入场组合, 作用于整个 Character Message Group) ---- */
-.bfd-line.bfd-animate[data-emotion].bfd-em-nervous { animation: var(--bfd-entry-anim, pg-line) 0.35s ease-out both, em-tension calc(0.16s * (0.6 + 0.4 * var(--bfd-em-i))) ease-in-out 0.3s; }
-.bfd-line.bfd-animate[data-emotion].bfd-em-afraid { animation: var(--bfd-entry-anim, pg-line) 0.35s ease-out both, em-fear calc(0.18s * (0.6 + 0.4 * var(--bfd-em-i))) ease-in-out 0.3s; }
-.bfd-line.bfd-animate[data-emotion].bfd-em-angry { animation: var(--bfd-entry-anim, pg-line) 0.35s ease-out both, em-anger calc(0.18s * (0.6 + 0.4 * var(--bfd-em-i))) ease-in-out 0.3s; }
-.bfd-line.bfd-animate[data-emotion].bfd-em-frustrated { animation: var(--bfd-entry-anim, pg-line) 0.35s ease-out both, em-frustration 0.25s ease-in-out 0.3s; }
-.bfd-line.bfd-animate[data-emotion].bfd-em-surprised { animation: var(--bfd-entry-anim, pg-line) 0.35s ease-out both, em-surprise calc(0.3s * (0.7 + 0.3 * var(--bfd-em-i))) ease-in-out 0.3s; }
-.bfd-line.bfd-animate[data-emotion].bfd-em-happy,
-.bfd-line.bfd-animate[data-emotion].bfd-em-excited { animation: var(--bfd-entry-anim, pg-line) 0.35s ease-out both, em-joy calc(0.35s * (0.7 + 0.3 * var(--bfd-em-i))) ease-out 0.3s; }
-.bfd-line.bfd-animate[data-emotion].bfd-em-sad { animation: var(--bfd-entry-anim, pg-line) 0.35s ease-out both, em-sadness calc(0.6s * (0.7 + 0.3 * var(--bfd-em-i))) ease-out 0.3s 2; }
-.bfd-line.bfd-animate[data-emotion].bfd-em-tired { animation: var(--bfd-entry-anim, pg-line) 0.35s ease-out both, em-concern 0.8s ease-out 0.3s; }
+.custom-bfd-line.custom-bfd-animate[data-emotion].custom-bfd-em-nervous { animation: var(--bfd-entry-anim, pg-line) 0.35s ease-out both, em-tension calc(0.16s * (0.6 + 0.4 * var(--bfd-em-i))) ease-in-out 0.3s; }
+.custom-bfd-line.custom-bfd-animate[data-emotion].custom-bfd-em-afraid { animation: var(--bfd-entry-anim, pg-line) 0.35s ease-out both, em-fear calc(0.18s * (0.6 + 0.4 * var(--bfd-em-i))) ease-in-out 0.3s; }
+.custom-bfd-line.custom-bfd-animate[data-emotion].custom-bfd-em-angry { animation: var(--bfd-entry-anim, pg-line) 0.35s ease-out both, em-anger calc(0.18s * (0.6 + 0.4 * var(--bfd-em-i))) ease-in-out 0.3s; }
+.custom-bfd-line.custom-bfd-animate[data-emotion].custom-bfd-em-frustrated { animation: var(--bfd-entry-anim, pg-line) 0.35s ease-out both, em-frustration 0.25s ease-in-out 0.3s; }
+.custom-bfd-line.custom-bfd-animate[data-emotion].custom-bfd-em-surprised { animation: var(--bfd-entry-anim, pg-line) 0.35s ease-out both, em-surprise calc(0.3s * (0.7 + 0.3 * var(--bfd-em-i))) ease-in-out 0.3s; }
+.custom-bfd-line.custom-bfd-animate[data-emotion].custom-bfd-em-happy,
+.custom-bfd-line.custom-bfd-animate[data-emotion].custom-bfd-em-excited { animation: var(--bfd-entry-anim, pg-line) 0.35s ease-out both, em-joy calc(0.35s * (0.7 + 0.3 * var(--bfd-em-i))) ease-out 0.3s; }
+.custom-bfd-line.custom-bfd-animate[data-emotion].custom-bfd-em-sad { animation: var(--bfd-entry-anim, pg-line) 0.35s ease-out both, em-sadness calc(0.6s * (0.7 + 0.3 * var(--bfd-em-i))) ease-out 0.3s 2; }
+.custom-bfd-line.custom-bfd-animate[data-emotion].custom-bfd-em-tired { animation: var(--bfd-entry-anim, pg-line) 0.35s ease-out both, em-concern 0.8s ease-out 0.3s; }
 /* 头像独立细微效果(属于整个消息组的情绪表达, 幅度更小) */
-.bfd-line.bfd-animate[data-emotion].bfd-em-happy .bfd-avatar,
-.bfd-line.bfd-animate[data-emotion].bfd-em-excited .bfd-avatar { animation: em-avatar-pop 0.3s ease-out 0.3s; }
-.bfd-line.bfd-animate[data-emotion].bfd-em-surprised .bfd-avatar { animation: em-avatar-pop 0.3s ease-in-out 0.3s; }
-.bfd-line.bfd-animate[data-emotion].bfd-em-shy .bfd-avatar,
-.bfd-line.bfd-animate[data-emotion].bfd-em-embarrassed .bfd-avatar { animation: em-avatar-warm calc(0.9s * (0.6 + 0.4 * var(--bfd-em-i))) ease-out 0.3s; }
+.custom-bfd-line.custom-bfd-animate[data-emotion].custom-bfd-em-happy .custom-bfd-avatar,
+.custom-bfd-line.custom-bfd-animate[data-emotion].custom-bfd-em-excited .custom-bfd-avatar { animation: em-avatar-pop 0.3s ease-out 0.3s; }
+.custom-bfd-line.custom-bfd-animate[data-emotion].custom-bfd-em-surprised .custom-bfd-avatar { animation: em-avatar-pop 0.3s ease-in-out 0.3s; }
+.custom-bfd-line.custom-bfd-animate[data-emotion].custom-bfd-em-shy .custom-bfd-avatar,
+.custom-bfd-line.custom-bfd-animate[data-emotion].custom-bfd-em-embarrassed .custom-bfd-avatar { animation: em-avatar-warm calc(0.9s * (0.6 + 0.4 * var(--bfd-em-i))) ease-out 0.3s; }
 /* 角色名情绪锚点: 害羞/愤怒时名字更亮 */
-.bfd-line[data-emotion].bfd-em-embarrassed .bfd-name,
-.bfd-line[data-emotion].bfd-em-shy .bfd-name { filter: brightness(1.18); }
-.bfd-line[data-emotion].bfd-em-angry .bfd-name { filter: brightness(1.12); }
+.custom-bfd-line[data-emotion].custom-bfd-em-embarrassed .custom-bfd-name,
+.custom-bfd-line[data-emotion].custom-bfd-em-shy .custom-bfd-name { filter: brightness(1.18); }
+.custom-bfd-line[data-emotion].custom-bfd-em-angry .custom-bfd-name { filter: brightness(1.12); }
 @keyframes em-tension { 0% { transform: translateX(0); } 25% { transform: translateX(calc(-2px * var(--bfd-em-i))); } 50% { transform: translateX(calc(2px * var(--bfd-em-i))); } 75% { transform: translateX(calc(-1px * var(--bfd-em-i))); } 100% { transform: none; } }
 @keyframes em-fear { 0% { transform: translateX(0); filter: brightness(1); } 30% { transform: translateX(calc(-2.5px * var(--bfd-em-i))); filter: brightness(0.95); } 60% { transform: translateX(calc(2.5px * var(--bfd-em-i))); } 100% { transform: none; filter: brightness(1); } }
 @keyframes em-anger { 0% { transform: translateX(0); } 40% { transform: translateX(calc(-3px * var(--bfd-em-i))); } 70% { transform: translateX(calc(3px * var(--bfd-em-i))); } 100% { transform: none; } }
@@ -2313,16 +2276,16 @@ function injectDialogueStyles() {
 @keyframes em-sadness { 0% { transform: translateY(0); filter: brightness(1) saturate(1); } 30% { transform: translateY(calc(4px * var(--bfd-em-i))); } 100% { transform: translateY(calc(2px * var(--bfd-em-i))); filter: brightness(var(--bfd-em-dim, 0.96)) saturate(var(--bfd-em-sat, 0.88)); } }
 @keyframes em-avatar-pop { 0% { transform: scale(1); } 60% { transform: scale(calc(1 + 0.045 * var(--bfd-em-i))); } 100% { transform: scale(1); } }
 /* ---- 情绪动画: 模式与偏好设置 ---- */
-.bfd-reader[data-emotion-mode="简化"] .bfd-line[data-emotion].bfd-animate { animation: var(--bfd-entry-anim, pg-line) 0.35s ease-out both !important; }
-.bfd-reader[data-emotion-mode="简化"] .bfd-line[data-emotion] .bfd-avatar { animation: none !important; }
+.custom-bfd-reader[data-emotion-mode="简化"] .custom-bfd-line[data-emotion].custom-bfd-animate { animation: var(--bfd-entry-anim, pg-line) 0.35s ease-out both !important; }
+.custom-bfd-reader[data-emotion-mode="简化"] .custom-bfd-line[data-emotion] .custom-bfd-avatar { animation: none !important; }
 @media (prefers-reduced-motion: reduce) {
-  .bfd-reader .bfd-line[data-emotion].bfd-animate,
-  .bfd-reader .bfd-line[data-emotion] .bfd-avatar { animation: none !important; }
+  .custom-bfd-reader .custom-bfd-line[data-emotion].custom-bfd-animate,
+  .custom-bfd-reader .custom-bfd-line[data-emotion] .custom-bfd-avatar { animation: none !important; }
 }
 
 /* ---- 响应式 · 手机端专用 UI(头像与对白同行, 正文占满) ---- */
 @media (max-width: 700px) {
-  .bfd-reader {
+  .custom-bfd-reader {
     padding: 4px 0 8px;        /* 正则式替换块: 紧凑 padding, 嵌在正文流中 */
     width: 100%;
     max-width: 100%;
@@ -2330,11 +2293,11 @@ function injectDialogueStyles() {
     overflow-wrap: anywhere;
   }
   /* 情绪动画: 手机端强度 ×0.75, 以阅读稳定性优先 */
-  .bfd-reader .bfd-line[data-emotion] {
+  .custom-bfd-reader .custom-bfd-line[data-emotion] {
     --bfd-em-i: calc(var(--bfd-em-i-base, 0.5) * 0.75);
   }
   /* 旁白: 纯正文, 宽度最大化 */
-  .bfd-narration {
+  .custom-bfd-narration {
     margin-left: 0;
     margin-right: 0;
     max-width: 100%;
@@ -2344,7 +2307,7 @@ function injectDialogueStyles() {
     box-sizing: border-box;
   }
   /* 对白: 头像 + 对白同一行(横向), 对白用 flex:1 占满剩余宽度 */
-  .bfd-line {
+  .custom-bfd-line {
     display: flex;
     flex-direction: row;
     align-items: flex-start;
@@ -2356,13 +2319,13 @@ function injectDialogueStyles() {
     gap: 8px;
   }
   /* 头像: 小而精致, 与对白同行 */
-  .bfd-line .bfd-avatar {
+  .custom-bfd-line .custom-bfd-avatar {
     --pg-avatar-size: 36px;
     margin-top: 2px;
     flex: none;
   }
   /* 对白主体: 占满剩余宽度 */
-  .bfd-line .bfd-line-body {
+  .custom-bfd-line .custom-bfd-line-body {
     flex: 1 1 auto;
     min-width: 0;
     max-width: 100%;
@@ -2371,13 +2334,13 @@ function injectDialogueStyles() {
     box-sizing: border-box;
   }
   /* 角色名: 小号, 角色色 */
-  .bfd-line .bfd-name {
+  .custom-bfd-line .custom-bfd-name {
     font-size: max(var(--bfd-name-size, 12px), 11px);
     letter-spacing: 0.12em;
     margin-bottom: 3px;
   }
   /* 主角: 镜像到右侧(整体靠右, 头像在最右, 对白在左), 对白文本左对齐保持可读 */
-  .bfd-line-protagonist {
+  .custom-bfd-line-protagonist {
     flex-direction: row-reverse;
     margin-left: auto;
     width: fit-content;
@@ -2385,42 +2348,42 @@ function injectDialogueStyles() {
     min-width: 0;
     justify-content: flex-end;
   }
-  .bfd-line-protagonist .bfd-line-body {
+  .custom-bfd-line-protagonist .custom-bfd-line-body {
     text-align: right;
   }
-  .bfd-line-protagonist .bfd-line-text {
+  .custom-bfd-line-protagonist .custom-bfd-line-text {
     text-align: left;
   }
   /* 动作叙述/心声: 与旁白同级 */
-  .bfd-action-narration,
-  .bfd-line-inner .bfd-line-body {
+  .custom-bfd-action-narration,
+  .custom-bfd-line-inner .custom-bfd-line-body {
     max-width: 100%;
   }
   /* 场景分隔: 更克制 */
-  .bfd-scene-break {
+  .custom-bfd-scene-break {
     margin: 2.4em 0;
     font-size: 11px;
   }
   /* 禁横向滚动 */
-  .bfd-reader,
-  .bfd-reader * {
+  .custom-bfd-reader,
+  .custom-bfd-reader * {
     max-width: 100%;
     overflow-wrap: anywhere;
     word-break: break-word;
   }
   /* 动作叙述/心声: 与旁白同级 */
-  .bfd-action-narration,
-  .bfd-line-inner .bfd-line-body {
+  .custom-bfd-action-narration,
+  .custom-bfd-line-inner .custom-bfd-line-body {
     max-width: 100%;
   }
   /* 场景分隔: 更克制 */
-  .bfd-scene-break {
+  .custom-bfd-scene-break {
     margin: 2.4em 0;
     font-size: 11px;
   }
   /* 禁横向滚动 */
-  .bfd-reader,
-  .bfd-reader * {
+  .custom-bfd-reader,
+  .custom-bfd-reader * {
     max-width: 100%;
     overflow-wrap: anywhere;
     word-break: break-word;
