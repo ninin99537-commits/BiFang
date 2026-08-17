@@ -1390,6 +1390,7 @@ async function renderMessageById(messageId, options = {}) {
         return;
     }
     const characters = buildCharactersFromLibrary(settings);
+    recordPerf('构建角色表', `图片库条目=${(settings.图片库 ?? []).length}`);
     // 用"剔除插件尾部标签后的文本"分段和算 hash: 其他插件插入 <StatusPlaceHolderImpl/> 等
     // 不影响正文, 不应触发重新解析(否则渲染失效 + 卡顿)
     const cacheText = normalizeMessageForCache(message.message);
@@ -1398,6 +1399,7 @@ async function renderMessageById(messageId, options = {}) {
         return;
     }
     const segments = splitByTags(cacheText, settings.标签模式, settings.标签列表 ?? []);
+    recordPerf('分段', `段数=${segments.length} 文本长=${cacheText.length}`);
     console.info(`[彼方渲染] #${messageId} [${source}] 分段: 模式=${settings.标签模式} 标签=[${(settings.标签列表 ?? []).join(',')}] 段数=${segments.length} 段构成=${segments.map(s => s.kind).join('+')} | 原文尾30=[${String(message.message).replace(/\s+/g, ' ').slice(-30)}] 归一后尾30=[${cacheText.replace(/\s+/g, ' ').slice(-30)}]`);
     if (segments.every(s => !s.text.trim())) {
         console.info(`[彼方渲染] #${messageId} [${source}] 所有段文本为空, 跳过`);
@@ -1521,6 +1523,7 @@ async function renderMessageById(messageId, options = {}) {
     // 关键: base64 头像先转父页面 Blob URL(短 URL)——否则渲染 HTML 写入 extra.display_text 后,
     // 酒馆 messageFormatting(DOMPurify/encodeStyleTags) 每次处理整段大 base64 <style> 会 O(n²) 卡死页面。
     // 并行转换(Blob URL 有缓存, 重复渲染不重复 fetch)。
+    const avatarStart = performance.now();
     await Promise.all(
         characters
             .filter(c => c?.头像 && String(c.头像).startsWith('data:'))
@@ -1528,6 +1531,7 @@ async function renderMessageById(messageId, options = {}) {
                 c.头像 = await toBlobUrl(c.头像);
             }),
     );
+    perf.record({ name: `渲染#${messageId}[${source}]`, stage: '头像转BlobURL', start: avatarStart, end: performance.now(), detail: `角色数=${characters.length}` });
     const avatarVars = [];
     {
         let avatarIdx = 0;
@@ -1622,7 +1626,12 @@ async function renderMessageById(messageId, options = {}) {
         const blockRe = new RegExp(`<${esc}\\b[^>]*>[\\s\\S]*?<\\/${esc}>`, 'gi');
         displayText = displayText.replace(blockRe, (fullBlock) => {
             const renderHtml = renderQueue.length > 0
-                ? renderBlocksHtml(renderQueue.shift(), characters, settings)
+                ? (() => {
+                    const rbStart = performance.now();
+                    const html = renderBlocksHtml(renderQueue.shift(), characters, settings);
+                    perf.record({ name: `渲染#${messageId}[${source}]`, stage: 'renderBlocksHtml', start: rbStart, end: performance.now(), detail: `HTML长=${String(html ?? '').length}` });
+                    return html;
+                })()
                 : '';
             if (!renderHtml)
                 return fullBlock;
