@@ -138,7 +138,7 @@ ${input.interactions.length > 0 ? JSON.stringify(input.interactions) : '(无)'}
 4. 把已死亡/永久离开/不再影响剧情的已建档NPC列入 "移除NPC" 数组。
 
 输出这些NPC的幕后状态更新 JSON。${interactionsInstruction}${physioInstruction}`.trim();
-    // 用户自定义提示词: 非空时替换内置幕后提示词, 支持占位符; 与正文渲染(dialogue-render 的 buildParsePrompt)的提示词系统完全独立
+    // 用户自定义提示词: 非空时替换内置幕后提示词, 支持占位符
     const custom = input.自定义提示词 ?? [];
     if (custom.length > 0) {
         const replace = (t) => String(t ?? '')

@@ -1,4 +1,4 @@
-// 已从酒馆导出的打包产物恢复 (webpack 编译形态还原)
+﻿// 已从酒馆导出的打包产物恢复 (webpack 编译形态还原)
 import * as zod__WEBPACK_IMPORTED_MODULE_0__ from 'zod';
 import * as klona__WEBPACK_IMPORTED_MODULE_1__ from 'klona';
 import * as pinia__WEBPACK_IMPORTED_MODULE_2__ from 'pinia';
@@ -25,7 +25,7 @@ const ApiConfigSchema = zod__WEBPACK_IMPORTED_MODULE_0__.z
     .prefault({});
 const Settings = zod__WEBPACK_IMPORTED_MODULE_0__.z
     .object({
-    /** 启用幕后系统(NPC状态更新/注入等): 关闭后不再调用 API、不再自动更新, 已有状态数据保留(重开恢复); 与正文渲染相互独立 */
+    /** 启用幕后系统(NPC状态更新/注入等): 关闭后不再调用 API、不再自动更新, 已有状态数据保留(重开恢复) */
     启用幕后: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(true),
     接口: ApiConfigSchema,
     /** 保存的多套接口配置预设(名字 → 完整接口配置), 用于快速切换不同 AI */
@@ -57,122 +57,6 @@ const Settings = zod__WEBPACK_IMPORTED_MODULE_0__.z
         .object({
         模式: zod__WEBPACK_IMPORTED_MODULE_0__.z.enum(['排除', '只读']).default('排除'),
         列表: zod__WEBPACK_IMPORTED_MODULE_0__.z.array(zod__WEBPACK_IMPORTED_MODULE_0__.z.string()).default(['aftertalk']),
-    })
-        .prefault({}),
-    正文渲染: zod__WEBPACK_IMPORTED_MODULE_0__.z
-        .object({
-        启用: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(false),
-        /** 解析接口配置名: 空=复用彼方当前接口; 填了=用保存的接口配置预设(不同 API, 与更新互不干扰) */
-        解析接口预设: zod__WEBPACK_IMPORTED_MODULE_0__.z.string().default(''),
-        /** 图片库: 每张图片匹配一个或多个关键词(角色名/别名), 渲染时按说话者名字匹配头像 */
-        图片库: zod__WEBPACK_IMPORTED_MODULE_0__.z
-            .array(zod__WEBPACK_IMPORTED_MODULE_0__.z
-            .object({
-            关键词: zod__WEBPACK_IMPORTED_MODULE_0__.z.array(zod__WEBPACK_IMPORTED_MODULE_0__.z.string()).default([]),
-            图片: zod__WEBPACK_IMPORTED_MODULE_0__.z.string().default(''),
-            颜色: zod__WEBPACK_IMPORTED_MODULE_0__.z.string().default(''),
-            头像形状: zod__WEBPACK_IMPORTED_MODULE_0__.z.enum(['auto', 'circle', 'rounded', 'portrait', 'soft']).default('auto'),
-        })
-            .prefault({ 关键词: [], 图片: '', 颜色: '', 头像形状: 'auto' }))
-            .default([]),
-        /** 角色色: 自动=从设计调色板按角色名稳定取色; 固定=所有未配图角色同一色; 灰=中性灰 */
-        角色配色: zod__WEBPACK_IMPORTED_MODULE_0__.z.enum(['自动', '固定', '灰']).default('自动'),
-        固定角色色: zod__WEBPACK_IMPORTED_MODULE_0__.z.string().default('#8b93a7'),
-        /** 头像形状: 自动=按角色名稳定分配; 固定=所有角色同一形状 */
-        头像形状: zod__WEBPACK_IMPORTED_MODULE_0__.z.enum(['auto', 'circle', 'rounded', 'portrait', 'soft']).default('auto'),
-        /** 主角名: 主角对白显示用此名字(空=用 persona 名 / "你"), 也用于判定哪些对白是主角 */
-        主角名: zod__WEBPACK_IMPORTED_MODULE_0__.z.string().default(''),
-        /** 主角对白独立样式(留空则用角色解析色): 对白文字色/名字色/竖线色/头像色 */
-        主角对白文字色: zod__WEBPACK_IMPORTED_MODULE_0__.z.string().default(''),
-        主角名字色: zod__WEBPACK_IMPORTED_MODULE_0__.z.string().default(''),
-        主角细线色: zod__WEBPACK_IMPORTED_MODULE_0__.z.string().default(''),
-        主角头像色: zod__WEBPACK_IMPORTED_MODULE_0__.z.string().default(''),
-        /** 正文标签预处理: 无/排除(删标签内)/只读(只留标签内) */
-        标签模式: zod__WEBPACK_IMPORTED_MODULE_0__.z.enum(['无', '排除', '只读']).default('排除'),
-        标签列表: zod__WEBPACK_IMPORTED_MODULE_0__.z.array(zod__WEBPACK_IMPORTED_MODULE_0__.z.string()).default([]),
-        /** 对白外观: 用户自由定制背景/渐变/透明度/圆角/细线等(无背景细线为默认) */
-        /** 对白背景色: 空=无背景(保留细线样式) */
-        对白背景色: zod__WEBPACK_IMPORTED_MODULE_0__.z.string().default(''),
-        /** 对白背景色2: 渐变终点色(空=与背景色同色, 仅渐变时用) */
-        对白背景色2: zod__WEBPACK_IMPORTED_MODULE_0__.z.string().default(''),
-        /** 对白背景透明度(0-100, 0=全透明无背景) */
-        对白背景透明度: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(12).transform(value => _.clamp(value, 0, 100)),
-        /** 对白背景渐变方向: 无/横向/纵向/对角 */
-        对白渐变: zod__WEBPACK_IMPORTED_MODULE_0__.z.enum(['无', '横向', '纵向', '对角', '横向到透明', '纵向到透明', '对角到透明']).default('无'),
-        /** 对白左侧细线: 开启后使用角色色细线强调(默认开启, 细线效果) */
-        对白细线: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(true),
-        /** 对白细线颜色: 空=使用角色色 */
-        对白细线颜色: zod__WEBPACK_IMPORTED_MODULE_0__.z.string().default(''),
-        /** 对白细线粗细(px) */
-        对白细线粗细: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(2).transform(value => _.clamp(value, 0, 8)),
-        /** 对白圆角(px) */
-        对白圆角: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(4).transform(value => _.clamp(value, 0, 30)),
-        /** 对白文字颜色: 空=跟随主题正文色 */
-        对白文字色: zod__WEBPACK_IMPORTED_MODULE_0__.z.string().default(''),
-        显示角色名: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(false),
-        /** 角色名字号(px): 显示角色名时的大小 */
-        角色名字号: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(12).transform(value => _.clamp(value, 8, 24)),
-        对白最大宽度: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(75).transform(value => _.clamp(value, 40, 95)),
-        头像大小: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(50).transform(value => Math.max(32, Math.round(value))),
-        /** 阅读区最大宽度(px): 控制正文左右留白 */
-        阅读宽度: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(760).transform(value => Math.max(480, Math.min(1200, Math.round(value)))),
-        /** 旁白字体设置 */
-        旁白字体: zod__WEBPACK_IMPORTED_MODULE_0__.z.string().default('Noto Serif SC, Source Han Serif SC, Songti SC, STSong, SimSun, serif'),
-        旁白字号: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(17).transform(value => Math.max(13, Math.min(24, value))),
-        旁白加粗: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(false),
-        旁白行高: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(2.0).transform(value => _.clamp(value, 1.4, 2.6)),
-        /** 旁白段间距(em): 旁白段落之间的垂直距离 */
-        旁白段间距: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(1.15).transform(value => _.clamp(value, 0, 4)),
-        /** 旁白间距(em): 旁白块(含动作)与相邻内容之间的垂直距离 */
-        旁白间距: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(1.6).transform(value => _.clamp(value, 0, 6)),
-        /** 旁白文字色: 空=跟随主题正文色 */
-        旁白文字色: zod__WEBPACK_IMPORTED_MODULE_0__.z.string().default(''),
-        /** 动作文字色: 空=跟随旁白 */
-        动作文字色: zod__WEBPACK_IMPORTED_MODULE_0__.z.string().default(''),
-        /** 对白字体设置 */
-        对白字体: zod__WEBPACK_IMPORTED_MODULE_0__.z.string().default('Noto Serif SC, Source Han Serif SC, Songti SC, STSong, SimSun, serif'),
-        对白字号: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(17).transform(value => Math.max(13, Math.min(24, value))),
-        对白加粗: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(false),
-        对白行高: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(1.9).transform(value => _.clamp(value, 1.3, 2.4)),
-        /** 导入字体: 每行一条 — @font-face 样式 / 字体文件 URL / Google Fonts 样式表链接 */
-        导入字体: zod__WEBPACK_IMPORTED_MODULE_0__.z.string().default(''),
-        /** 杀八股清理: 开启时渲染 AI 附带"杀八股清理规则"(语义清理), 关闭则纯逐字保留解析 */
-        杀八股: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(true),
-        /** 杀八股启用的规则组(与"通用规则集"分组一致): 勾选的组才生效(AI 组进提示词, program 组进代码替换); 选开组默认关 */
-        杀八股规则: zod__WEBPACK_IMPORTED_MODULE_0__.z
-            .record(zod__WEBPACK_IMPORTED_MODULE_0__.z.string(), zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean())
-            .default({
-            '形副词系': true,
-            '形副量词': true,
-            '删陈词滥调': true,
-            '修剪比喻类': true,
-            '修剪复合句': true,
-            '人体词汇': true,
-            'R18词汇': true,
-            '词汇替换': false,
-            '处理——及多种增殖': false,
-            '合并较短段落': false,
-            '分割较长段落': false,
-        }),
-        /** 自定义解析提示词段(非空时替换内置提示词): { role: system/user/assistant, content }[]; 占位符 {{正文}}/{{主角名}}/{{当前时间}} */
-        自定义提示词: zod__WEBPACK_IMPORTED_MODULE_0__.z
-            .array(zod__WEBPACK_IMPORTED_MODULE_0__.z.object({
-            role: zod__WEBPACK_IMPORTED_MODULE_0__.z.enum(['system', 'user', 'assistant']),
-            content: zod__WEBPACK_IMPORTED_MODULE_0__.z.string(),
-        }))
-            .default([]),
-        /** 旁白与对白的间距(em) */
-        对白间距: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(2.0).transform(value => _.clamp(value, 0.5, 5)),
-        /** 旁白与对白对齐: 开启后旁白缩进到与对白文本同一起始列, 形成上下对齐的阅读列 */
-        旁白对齐对白: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(false),
-        /** 动作并入旁白: 开启后 action 不单独渲染(斜体弱化), 直接按旁白样式显示 */
-        动作并入旁白: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(false),
-        动画: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(true),
-        历史播放动画: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(false),
-        /** 情绪驱动动画: 完整(静态表现+一次性 accent)/简化(仅静态表现)/关闭(不输出情绪) */
-        情绪动画: zod__WEBPACK_IMPORTED_MODULE_0__.z.enum(['完整', '简化', '关闭']).default('完整'),
-        /** 动画触发位置: 元素顶部滚到屏幕的这个百分比(从顶部计)处才显示/播放动画; 66=距底1/3, 50=屏幕中间, 100=一进视口就显示 */
-        动画触发位置: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(66).transform(value => Math.max(5, Math.min(100, Math.round(value)))),
     })
         .prefault({}),
 })

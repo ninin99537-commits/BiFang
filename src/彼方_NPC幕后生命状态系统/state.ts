@@ -133,23 +133,6 @@ const useDebugStore = pinia__WEBPACK_IMPORTED_MODULE_1__.defineStore('bifang-deb
     }
     return { log, record, clear };
 });
-const useRenderLogStore = pinia__WEBPACK_IMPORTED_MODULE_1__.defineStore('bifang-render-log', () => {
-    const logs = vue__WEBPACK_IMPORTED_MODULE_2__.ref([]);
-    function add(partial) {
-        const entry = {
-            time: partial.time ?? Date.now(),
-            messageId: partial.messageId ?? 0,
-            request: partial.request ?? '',
-            response: partial.response ?? '',
-            error: partial.error ?? '',
-        };
-        logs.value = [entry, ...logs.value].slice(0, 10);
-    }
-    function clear() {
-        logs.value = [];
-    }
-    return { logs, add, clear };
-});
 /** 记录最近一次主AI实际收到的完整请求（含世界书注入等），供日志页查看 */
 const useMainPromptStore = pinia__WEBPACK_IMPORTED_MODULE_1__.defineStore('bifang-main-prompt', () => {
     const prompt = vue__WEBPACK_IMPORTED_MODULE_2__.ref('');
@@ -323,7 +306,7 @@ function captureConsole() {
         // 忽略
     }
 }
-/** 彼方后台任务状态与中断控制（供界面显示弹窗、取消请求）。支持多个任务并发(如幕后更新 + 正文渲染同时进行): 每个任务独立中断, 互不干扰。 */
+/** 彼方后台任务状态与中断控制（供界面显示弹窗、取消请求）。支持多个任务并发: 每个任务独立中断, 互不干扰。 */
 const useUpdatingStore = pinia__WEBPACK_IMPORTED_MODULE_1__.defineStore('bifang-updating', () => {
     const active = vue__WEBPACK_IMPORTED_MODULE_2__.ref(false);
     const message = vue__WEBPACK_IMPORTED_MODULE_2__.ref('');
@@ -377,4 +360,4 @@ const useUpdatingStore = pinia__WEBPACK_IMPORTED_MODULE_1__.defineStore('bifang-
     return { active, message, start, cancel, stop, isActive, tasks };
 });
 
-export { BIFANG_WORLDBOOK_ENTRY_NAME, CARD_FIELDS, DATA_VERSION, SNAPSHOT_LIMIT, STORAGE_KEY, captureConsole, emptyData, freshClearData, loadData, saveData, startLongTaskObserver, useConsoleStore, useDebugStore, useMainPromptStore, usePerfStore, useRenderLogStore, useStateStore, useUpdatingStore };
+export { BIFANG_WORLDBOOK_ENTRY_NAME, CARD_FIELDS, DATA_VERSION, SNAPSHOT_LIMIT, STORAGE_KEY, captureConsole, emptyData, freshClearData, loadData, saveData, startLongTaskObserver, useConsoleStore, useDebugStore, useMainPromptStore, usePerfStore, useStateStore, useUpdatingStore };

@@ -5,7 +5,6 @@ import * as _settings__WEBPACK_IMPORTED_MODULE_2__ from './settings';
 import * as _state__WEBPACK_IMPORTED_MODULE_3__ from './state';
 import * as _update__WEBPACK_IMPORTED_MODULE_4__ from './update';
 import * as _worldbook_inject__WEBPACK_IMPORTED_MODULE_5__ from './worldbook-inject';
-import * as _dialogue_render__WEBPACK_IMPORTED_MODULE_6__ from './dialogue-render';
 import './悬浮球界面';
 import * as pinia__WEBPACK_IMPORTED_MODULE_8__ from 'pinia';
 
@@ -17,32 +16,6 @@ function handleChatChanged() {
     _state__WEBPACK_IMPORTED_MODULE_3__.useDebugStore().clear();
     if (_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().启用幕后)
         maybeInjectNpcStates();
-}
-/** 渲染指定楼层, 若 3 秒后仍未真正渲染成对话界面(消息 DOM 未就绪/仍为原文)则自动重试一次, 避免偶发"AI输出了但没自动渲染"。
- * 这是"正文产生"路径(新消息/重roll): 允许调 AI 解析(缓存未命中时); 维护/恢复场景不走这里 */
-function renderMessageWithRetry(messageId, label) {
-    const render = () => _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderMessageById(messageId, { allowParse: true, label }).catch(error => console.warn(`[彼方] ${label}失败:`, error));
-    render();
-    window.setTimeout(() => {
-        try {
-            // 渲染/解析仍在进行中(解析可能超过 3 秒): 不重复请求, 避免 abort 前一次请求导致"用户中断"+重复 AI 调用
-            if (_state__WEBPACK_IMPORTED_MODULE_3__.useUpdatingStore().isActive('渲染')) {
-                console.info(`[彼方] ${label}仍在渲染/解析中, 跳过自动重试`);
-                return;
-            }
-            const el = _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.findMessageTextElement(messageId);
-            // 判定是否真正渲染成对话界面: reader 内出现对白行/旁白块; 元素不存在或只回退成原文都算未渲染
-            const hasDialogueUi = !!el && !!(el.querySelector('.bfd-reader .bfd-line') || el.querySelector('.bfd-reader .bfd-narration'));
-            console.info(`[彼方] ${label} #${messageId} 3秒检查: DOM存在=${!!el} 已渲染对话UI=${hasDialogueUi}`);
-            if (!el || !hasDialogueUi) {
-                console.warn(`[彼方] ${label}未完成(消息DOM未就绪或仍为原文), 自动重试`);
-                render();
-            }
-        }
-        catch {
-            render();
-        }
-    }, 3000);
 }
 async function handleMessageReceived(message_id) {
     const settings = _settings__WEBPACK_IMPORTED_MODULE_2__.getSettings();
@@ -123,74 +96,19 @@ $(() => {
         });
     });
     eventOn(tavern_events.MESSAGE_DELETED, message_id => {
-        // 幕后总开关关闭时跳过回滚(避免意外改写状态数据), 但仍清理渲染缓存
+        // 幕后总开关关闭时跳过回滚(避免意外改写状态数据)
         if (_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().启用幕后)
             _update__WEBPACK_IMPORTED_MODULE_4__.maybeRollback();
-        // 清理被删除楼层的正文解析缓存, 避免 localStorage 残留垃圾数据
-        if (message_id != null)
-            _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.clearMessageCache(Number(message_id));
     });
-    eventOn(tavern_events.MESSAGE_SWIPED, message_id => {
-        // 幕后总开关关闭时跳过回滚; 正文渲染独立不受影响
+    eventOn(tavern_events.MESSAGE_SWIPED, () => {
+        // 幕后总开关关闭时跳过回滚
         if (_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().启用幕后)
             _update__WEBPACK_IMPORTED_MODULE_4__.maybeRollback();
-        // 正文渲染: 重roll 后楼层内容变化, 清缓存并重新渲染最新层(避免显示旧渲染/内容错位)
-        if (_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().正文渲染?.启用) {
-            _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.injectDialogueStyles();
-            const id = Number(message_id);
-            if (Number.isFinite(id) && id > 0) {
-                _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.clearMessageCache(id);
-                renderMessageWithRetry(id, '重roll后渲染');
-            }
-            else {
-                _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.reRenderLatestMessage().catch(error => console.warn('[彼方] 重roll后重新渲染失败:', error));
-            }
-        }
     });
     eventOn(tavern_events.GENERATION_AFTER_COMMANDS, () => {
         if (_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().启用幕后)
             maybeInjectNpcStates();
     });
-    // 任何生成结束(含 MVU 等额外模型的变量更新)后, 延迟恢复正文渲染:
-    // MVU 更新时 generatingMessage=true, 彼方在 MESSAGE_UPDATED 里会跳过(避免打断),
-    // 但酒馆会因消息数据变化把楼层 DOM 覆盖回原文(清掉 bfd-reader);
-    // 生成结束后再恢复"有缓存且已被清掉渲染"的楼层, 避免渲染掉落后无人恢复。
-    {
-        let restoreTimer = undefined;
-        eventOn(tavern_events.GENERATION_ENDED, () => {
-            if (!_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().正文渲染?.启用)
-                return;
-            console.info('[彼方渲染] 收到 GENERATION_ENDED, 1.2秒后恢复有缓存的楼层渲染');
-            if (restoreTimer !== undefined)
-                window.clearTimeout(restoreTimer);
-            restoreTimer = window.setTimeout(() => {
-                restoreTimer = undefined;
-                console.info('[彼方渲染] GENERATION_ENDED 延迟结束, 执行 renderCachedMessagesInChat');
-                _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderCachedMessagesInChat().catch(error => console.warn('[彼方] 生成结束后恢复渲染失败:', error));
-            }, 1200);
-        });
-    }
-    // 设置变化时: 处理"正文渲染"开关切换
-    // (酒馆助手的脚本设置界面里改"正文渲染·启用"会触发 SETTINGS_UPDATED;
-    //  关闭→清除已渲染楼层, 开启→重新渲染当前聊天里已渲染过的楼层)
-    {
-        let lastDialogueEnabled = !!_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().正文渲染?.启用;
-        eventOn(tavern_events.SETTINGS_UPDATED, () => {
-            const nowEnabled = !!_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().正文渲染?.启用;
-            if (nowEnabled === lastDialogueEnabled)
-                return;
-            lastDialogueEnabled = nowEnabled;
-            if (nowEnabled) {
-                // 开启: 注入样式并重新渲染已缓存楼层(不触发解析, 复用缓存)
-                _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.injectDialogueStyles();
-                _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderCachedMessagesInChat().catch(error => console.warn('[彼方] 重开渲染后恢复楼层失败:', error));
-            }
-            else {
-                // 关闭: 清除所有已渲染楼层, 恢复原文显示
-                _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.clearDialogueRenders();
-            }
-        });
-    }
     let lastChatId = null;
     try {
         lastChatId = SillyTavern.getCurrentChatId();
@@ -203,122 +121,6 @@ $(() => {
             lastChatId = new_chat_id;
             handleChatChanged();
         }
-        // 正文渲染: 等楼层加载后, 恢复"有缓存"楼层的渲染(不触发解析; 之前渲染过的切回时仍在)
-        // 多跑几轮: 酒馆切换聊天后消息 DOM 是渐进的, 只跑一次可能漏掉晚渲染的楼层
-        for (const delay of [800, 2500, 5000]) {
-            window.setTimeout(() => {
-                _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderCachedMessagesInChat().catch(error => console.warn('[彼方] 恢复已渲染楼层失败:', error));
-            }, delay);
-        }
     });
-    // 正文对白视觉渲染: 新消息完成时解析并渲染(只改显示, 不改原始正文; 不遍历历史楼层, 不打断流式生成)
-    const settings0 = _settings__WEBPACK_IMPORTED_MODULE_2__.getSettings();
-    if (settings0.正文渲染?.启用) {
-        _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.injectDialogueStyles();
-        // 刷新页面/脚本重载后彼方 iframe 重新加载: 先恢复 localStorage 持久化的解析缓存,
-        // 再主动恢复"有缓存"楼层的渲染(CHAT_CHANGED 可能在绑定前已触发, 不能只依赖它)
-        _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.loadParseCache();
-        for (const delay of [1500, 3500]) {
-            window.setTimeout(() => {
-                _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderCachedMessagesInChat().catch(error => console.warn('[彼方] 初始化恢复已渲染楼层失败:', error));
-            }, delay);
-        }
-    }
-    eventOn(tavern_events.MESSAGE_RECEIVED, message_id => {
-        if (_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().正文渲染?.启用) {
-            _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.injectDialogueStyles();
-            renderMessageWithRetry(Number(message_id), '正文渲染');
-        }
-    });
-    // 流式优化: 正文标签一旦闭合就提前解析, 楼层生成完(MESSAGE_RECEIVED)时直接复用, 减少等待
-    // 主AI生成走 tavern_events.STREAM_TOKEN_RECEIVED(带当前完整流式文本); iframe_events.STREAM_TOKEN_RECEIVED_FULLY
-    // 只在酒馆助手自身 generate/generateRaw 流式调用时触发(如幕后更新的生成), 两者都监听以覆盖所有流式来源
-    if (_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().正文渲染?.启用) {
-        const handleStreaming = (full_text) => {
-            if (!_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().正文渲染?.启用)
-                return;
-            _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.preParseStreamingContent(full_text).catch(() => { });
-        };
-        eventOn(tavern_events.STREAM_TOKEN_RECEIVED, handleStreaming);
-        eventOn(iframe_events.STREAM_TOKEN_RECEIVED_FULLY, handleStreaming);
-    }
-    // 编辑正文后重新渲染; 流式生成中(MVU等额外模型更新也会置 generatingMessage)不立即渲染,
-    // 而是挂起待渲染, 由 GENERATION_ENDED 的 renderCachedMessagesInChat 统一补渲染
-    // ——避免直接跳过导致"渲染被酒馆清掉后无人恢复"
-    {
-        let pendingRenderIds = new Set();
-        let updatedTimer = undefined;
-        // 防抖: 流式 aftertalk/变量标签逐 token 触发 MESSAGE_UPDATED, 合并短时间内多次触发为一次
-        const flushUpdated = () => {
-            updatedTimer = undefined;
-            const ids = Array.from(pendingRenderIds);
-            pendingRenderIds = new Set();
-            if (ids.length === 0)
-                return;
-            console.info(`[彼方渲染] flushUpdated 防抖触发, 待渲染楼层=[${ids.join(',')}]`);
-            _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.injectDialogueStyles();
-            // 只处理最近的楼层, 每轮最多 2 层: 切聊天/其他插件批量更新消息时
-            // MESSAGE_UPDATED 可能触发几十上百次, 全部重渲染会卡死页面
-            const sorted = ids.sort((a, b) => b - a).slice(0, 2);
-            for (const id of sorted) {
-                _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderMessageById(id, { label: 'MESSAGE_UPDATED' }).catch(error => console.warn('[彼方] 编辑后重新渲染失败:', error));
-            }
-        };
-        eventOn(tavern_events.MESSAGE_UPDATED, message_id => {
-            if (!_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().正文渲染?.启用)
-                return;
-            const id = Number(message_id);
-            if (!Number.isFinite(id) || id <= 0)
-                return;
-            pendingRenderIds.add(id);
-            try {
-                const ctx = SillyTavern?.getContext?.();
-                if (ctx?.generatingMessage) {
-                    // 生成中(MVU 额外模型更新): 挂起, 等 GENERATION_ENDED 补渲染
-                    console.info(`[彼方渲染] MESSAGE_UPDATED #${id}: generatingMessage=true, 挂起等 GENERATION_ENDED 补渲染 (pending=${pendingRenderIds.size})`);
-                    return;
-                }
-            }
-            catch {
-                // 忽略
-            }
-            // 非生成中: 防抖 400ms 合并连续更新(流式标签每 token 一次)
-            console.info(`[彼方渲染] MESSAGE_UPDATED #${id}: generatingMessage=false, 防抖400ms后渲染 (pending=${pendingRenderIds.size})`);
-            if (updatedTimer !== undefined)
-                window.clearTimeout(updatedTimer);
-            updatedTimer = window.setTimeout(flushUpdated, 400);
-        });
-    }
-    // 重roll(换生成结果)后内容变化, 清掉该楼层缓存并重新渲染, 否则停在旧渲染/原文
-    eventOn(tavern_events.MESSAGE_SWIPED, message_id => {
-        if (!_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().正文渲染?.启用)
-            return;
-        _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.injectDialogueStyles();
-        const id = Number(message_id);
-        if (Number.isFinite(id) && id > 0) {
-            _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.clearMessageCache(id);
-            _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.renderMessageById(id, { allowParse: true, label: '重roll' }).catch(error => console.warn('[彼方] 重roll后渲染失败:', error));
-        }
-        else {
-            _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.reRenderLatestMessage().catch(error => console.warn('[彼方] 重roll后渲染失败:', error));
-        }
-    });
-    // 其他插件(如 MVU 额外模型/幕后更新/st-chatu8)在彼方渲染后往 mes 插入标签时,
-    // 不一定触发 MESSAGE_UPDATED, 但会触发楼层重渲染(CHARACTER/USER_MESSAGE_RENDERED)。
-    // 彼方监听它, 对比彼方记录的 mes hash: 变了说明有外部插入, 重新应用渲染(缓存命中零 AI),
-    // 把新插入的标签外内容并进 display_text——无需手动"编辑再关闭"。
-    {
-        const checkAndReapply = (message_id) => {
-            if (!_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().正文渲染?.启用)
-                return;
-            const id = Number(message_id);
-            if (!Number.isFinite(id) || id <= 0)
-                return;
-            _dialogue_render__WEBPACK_IMPORTED_MODULE_6__.reapplyMessageIfMesChanged(id).catch(error => console.warn('[彼方] 楼层渲染后检查重应用失败:', error));
-        };
-        eventOn(tavern_events.CHARACTER_MESSAGE_RENDERED, checkAndReapply);
-        eventOn(tavern_events.USER_MESSAGE_RENDERED, checkAndReapply);
-    }
     console.info('[彼方] NPC幕后生命状态系统已加载');
 });
-
