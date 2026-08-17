@@ -2050,6 +2050,8 @@ async function renderCachedMessagesInChat() {
         const doc = window.parent?.document;
         if (!doc)
             return;
+        const ctx = SillyTavern?.getContext?.();
+        const chat = ctx?.chat;
         const mesEls = Array.from(doc.querySelectorAll('.mes[mesid]'));
         let restored = 0;
         let skipped = 0;
