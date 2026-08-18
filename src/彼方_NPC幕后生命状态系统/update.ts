@@ -534,8 +534,31 @@ function mergeCard(oldCard, update, storyTimeText = '') {
         const raw = update['可能偶遇'];
         merged['可能偶遇'] = typeof raw === 'boolean' ? raw : raw === 'true' || raw === '是' || raw === '会';
     }
+    // 曾用名: AI 在改名时标注的旧名(如"林姐"其实是"林淑仪"), 保留供彼方识别与合并
+    if (update['曾用名'] && typeof update['曾用名'] === 'string' && update['曾用名'].trim()) {
+        merged['曾用名'] = update['曾用名'].trim();
+    }
     merged['最后更新'] = Date.now();
     return merged;
+}
+
+/**
+ * 处理 NPC 改名合并: AI 输出状态卡时若带「曾用名」, 且该曾用名正好是已建档的旧卡 key,
+ * 说明正文揭示了同一角色的真实姓名(如"林姐"→"林淑仪")。此时:
+ * - 把旧卡内容作为合并基底(mergeCard 的 oldCard), 新卡字段覆盖旧卡 → 状态连续不割裂
+ * - 删除旧卡 key, 名单同步用新名替换旧名, 避免两张卡并存/名单重复
+ * 返回 { name, oldCard } 供调用方 mergeCard 使用; 无改名时返回原 name + 原旧卡。
+ */
+function resolveRenamedNpc(newData, name, card, playerName) {
+    const alias = String(card?.['曾用名'] ?? '').trim();
+    if (alias && alias !== name && alias !== playerName && newData.NPC[alias] && !newData.NPC[name]) {
+        console.info(`[彼方] NPC改名合并: ${alias} → ${name}, 旧卡状态并入新卡`);
+        const oldCard = newData.NPC[alias];
+        delete newData.NPC[alias];
+        newData.名单 = newData.名单.map(n => (n === alias ? name : n));
+        return { name, oldCard };
+    }
+    return { name, oldCard: newData.NPC[name] };
 }
 
 /**
@@ -672,8 +695,9 @@ function applyUpdate(data, parsed, timeJump = null, playerName = null) {
                     if (name && name !== playerName) {
                         if (!inSceneList.includes(name))
                             inSceneList.push(name);
-                        newData.NPC[name] = mergeCard(newData.NPC[name], card, storyTimeText);
-                        inSceneCardNames.push(name);
+                        const resolved = resolveRenamedNpc(newData, name, card, playerName);
+                        newData.NPC[resolved.name] = mergeCard(resolved.oldCard, card, storyTimeText);
+                        inSceneCardNames.push(resolved.name);
                     }
                 }
             }
@@ -706,10 +730,11 @@ function applyUpdate(data, parsed, timeJump = null, playerName = null) {
         // 在场 NPC 只按"在场NPC"数组中的版本合并一次, 顶层(幕后)跳过, 避免同一 NPC 双重更新/互相覆盖
         if (inSceneList.includes(name))
             continue;
-        newData.NPC[name] = mergeCard(newData.NPC[name], card, storyTimeText);
-        updatedNames.push(name);
-        if (!newData.名单.includes(name))
-            newData.名单.push(name);
+        const resolved = resolveRenamedNpc(newData, name, card, playerName);
+        newData.NPC[resolved.name] = mergeCard(resolved.oldCard, card, storyTimeText);
+        updatedNames.push(resolved.name);
+        if (!newData.名单.includes(resolved.name))
+            newData.名单.push(resolved.name);
     }
     for (const name of inSceneCardNames) {
         if (!updatedNames.includes(name))
