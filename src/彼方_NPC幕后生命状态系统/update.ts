@@ -532,9 +532,10 @@ function calcConceptionRate(cycleLen, day, protection) {
 /**
  * 彼方自动受孕判定: AI 报告了"受孕事件"(阴道内射/阴道外射外阴附近)时, 由彼方代码
  * 掷 D100 并判定是否怀孕, 结果写回卡——不依赖 AI 自觉遵守规则。
- * 触发条件: 方式∈{阴道内射, 阴道外射(外阴附近)}, 且该 NPC 未怀孕(孕期不再判定)。
+ * 触发条件: 方式∈{阴道内射, 阴道外射(外阴附近)}, 且该 NPC 未怀孕(孕期不再判定),
+ * 且该事件**发生在本次剧情时间窗口内**(旧事件——如剧情已跨过一晚仍被 AI 沿用的——不再判定)。
  */
-function applyConceptionCheck(merged, oldCard) {
+function applyConceptionCheck(merged, oldCard, storyTimeText = '') {
     const ev = merged['受孕事件'];
     if (!ev || typeof ev !== 'object')
         return;
@@ -542,6 +543,22 @@ function applyConceptionCheck(merged, oldCard) {
     const isConceptive = way.includes('阴道内射') || way.includes('阴道外射');
     if (!isConceptive)
         return; // 口内/肛内/体外不判定
+    // 旧事件过滤(防反复判定): AI 每次更新会把旧卡里的受孕事件原样带上(如剧情已过了一晚),
+    // 若事件时间明显早于本次剧情开始(或晚于剧情结束), 说明不是本次新发生的行为, 跳过判定。
+    const range = parseStoryTimeRange(storyTimeText);
+    const evTs = parsePregnancyEventTime(ev['时间'], storyTimeText);
+    if (evTs !== null && range.startTs !== null && (evTs < range.startTs || (range.endTs !== null && evTs > range.endTs))) {
+        console.info(`[彼方] 受孕事件为旧事件(不在本次剧情时间窗口内), 跳过判定: 事件=${ev['时间']} 剧情=${storyTimeText}`);
+        return;
+    }
+    // 事件时间无法解析时, 若与旧卡里的受孕事件时间完全相同, 视为旧事件被沿用, 同样跳过
+    if (evTs === null && storyTimeText) {
+        const oldEv = oldCard?.['受孕事件'];
+        if (oldEv && oldEv['时间'] && ev['时间'] && String(ev['时间']) === String(oldEv['时间'])) {
+            console.info(`[彼方] 受孕事件时间无法解析且与旧卡相同, 视为旧事件, 跳过判定`);
+            return;
+        }
+    }
     // 已怀孕: 不再判定(孕期无排卵, 不会二次怀孕)
     if (String(merged['是否怀孕'] ?? '') === 'true' || String(merged['是否怀孕']) === '是')
         return;
@@ -569,6 +586,19 @@ function applyConceptionCheck(merged, oldCard) {
     else if (String(merged['是否怀孕'] ?? '') !== 'false') {
         merged['是否怀孕'] = 'false';
     }
+}
+/** 解析受孕事件的"时间"字段为时间戳: 兼容 "0137-06-09 21:40" 与缺年份的 "06-09 21:40"(用剧情时间补年份); 解析失败返回 null */
+function parsePregnancyEventTime(timeText, storyTimeText) {
+    let t = String(timeText ?? '').trim();
+    if (!t)
+        return null;
+    // 缺年份(如 "06-09 21:40")时, 用剧情时间里的年份补全
+    if (!/^\d{4}[-/.]/.test(t)) {
+        const yearMatch = String(storyTimeText ?? '').match(/\d{4}[-/.]\d{1,2}[-/.]\d{1,2}/);
+        const year = yearMatch ? yearMatch[0].slice(0, 4) : String(new Date().getFullYear());
+        t = `${year}-${t}`;
+    }
+    return parseStoryTime(t);
 }
 /** 从"生理周期"孕期文本提取孕周(如 "孕期 孕6周+3天" → 6; 提取不到返回 null) */
 function extractPregnancyWeek(physioText) {
@@ -624,10 +654,10 @@ function mergeCard(oldCard, update, storyTimeText = '') {
         }
     }
     // 受孕判定: 由彼方代码执行(掷D100+算受孕率+更新是否怀孕), AI 只负责报告受孕事件。
-    // **只对 AI 本次新报告的受孕事件判定**——若本次没报告(没发生新的受孕行为), 即使旧事件还在卡里,
-    // 也不重复判定(避免同一事件反复掷骰刷怀孕)。
+    // **只对本次剧情时间窗口内新发生的受孕事件判定**——旧事件(如剧情已跨过一晚仍被 AI 沿用的)
+    // 会被 applyConceptionCheck 按事件时间过滤掉, 避免同一事件反复掷骰刷怀孕。
     if (本次有新受孕事件)
-        applyConceptionCheck(merged, oldCard);
+        applyConceptionCheck(merged, oldCard, storyTimeText);
     // 怀孕知晓: AI 维护的 NPC 自我认知字段(仅孕期角色), 只接受合法取值, 非法/空值忽略(走下方兜底)
     if (update['怀孕知晓'] !== undefined) {
         const known = String(update['怀孕知晓'] ?? '').trim();
