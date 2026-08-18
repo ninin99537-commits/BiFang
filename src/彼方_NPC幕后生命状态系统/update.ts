@@ -549,6 +549,7 @@ function applyConceptionCheck(merged, oldCard, storyTimeText = '') {
     const evTs = parsePregnancyEventTime(ev['时间'], storyTimeText);
     if (evTs !== null && range.startTs !== null && (evTs < range.startTs || (range.endTs !== null && evTs > range.endTs))) {
         console.info(`[彼方] 受孕事件为旧事件(不在本次剧情时间窗口内), 跳过判定: 事件=${ev['时间']} 剧情=${storyTimeText}`);
+        delete merged['受孕事件'];
         return;
     }
     // 事件时间无法解析时, 若与旧卡里的受孕事件时间完全相同, 视为旧事件被沿用, 同样跳过
@@ -556,6 +557,7 @@ function applyConceptionCheck(merged, oldCard, storyTimeText = '') {
         const oldEv = oldCard?.['受孕事件'];
         if (oldEv && oldEv['时间'] && ev['时间'] && String(ev['时间']) === String(oldEv['时间'])) {
             console.info(`[彼方] 受孕事件时间无法解析且与旧卡相同, 视为旧事件, 跳过判定`);
+            delete merged['受孕事件'];
             return;
         }
     }
@@ -586,6 +588,9 @@ function applyConceptionCheck(merged, oldCard, storyTimeText = '') {
     else if (String(merged['是否怀孕'] ?? '') !== 'false') {
         merged['是否怀孕'] = 'false';
     }
+    // 判定完成(无论怀没怀): 从卡中移除受孕事件, 避免下一轮 AI 沿用旧事件再次触发重复投掷
+    // (窗口过滤是兜底, 这里直接清掉事件记录, 双保险)
+    delete merged['受孕事件'];
 }
 /** 解析受孕事件的"时间"字段为时间戳: 兼容 "0137-06-09 21:40" 与缺年份的 "06-09 21:40"(用剧情时间补年份); 解析失败返回 null */
 function parsePregnancyEventTime(timeText, storyTimeText) {
@@ -754,6 +759,14 @@ function fmtStoryTime(ts) {
 function parseStoryTimeRange(raw) {
     if (typeof raw === 'string') {
         const text = raw.trim();
+        // 兼容 "开始 至 结束" 时间段字符串(如 mergeCard 收到的 storyTimeText):
+        // 拆成起止两段分别解析, 否则整串解析失败 → startTs=null, 受孕判定的窗口过滤会失效
+        const parts = text.split(/\s*(?:至|到|~)\s*/);
+        if (parts.length >= 2) {
+            const start = parts[0].trim().replace(/[./]/g, '-');
+            const end = parts[parts.length - 1].trim().replace(/[./]/g, '-');
+            return { text, startTs: parseStoryTime(start), endTs: parseStoryTime(end) };
+        }
         const ts = text ? parseStoryTime(text) : null;
         return { text, startTs: ts, endTs: ts };
     }
