@@ -518,6 +518,14 @@ function mergeCard(oldCard, update, storyTimeText = '') {
             merged['周期长度'] = PHYSIO_CYCLE_MIN + Math.floor(Math.random() * (PHYSIO_CYCLE_MAX - PHYSIO_CYCLE_MIN + 1));
         }
     }
+    // 生理周期字段的分母修正: AI 常惯性写 "Day X/28", 但周期长度是锁定的个体值(21~35)。
+    // 这里用锁定的周期长度自动替换分母, 不依赖 AI 自觉——保证排卵日计算(锁定长度-14)正确。
+    if (merged['周期长度'] && typeof merged['生理周期'] === 'string' && merged['生理周期']) {
+        const lockedLen = merged['周期长度'];
+        // 匹配 "Day X/任意分母" 或 "Day X" 后补分母; 孕期文本不动(没有 Day 结构)
+        merged['生理周期'] = String(merged['生理周期'])
+            .replace(/Day\s*\d+\/\d+/gi, (m) => m.replace(/\/\d+$/, `/${lockedLen}`));
+    }
     // 清理旧版生理字段残留(累计受孕率/受孕率记录/生理结算 已被新系统取代)
     delete merged['累计受孕率'];
     delete merged['受孕率记录'];
@@ -864,8 +872,23 @@ async function updateNpcStates(force = false, fresh = false) {
         const currentCards = {};
         // 无论是否重填都发送现有状态卡: 重填时它们作为"旧卡参考"传给 AI, 保证角色设定连续, 但要求 AI 忽略具体状态从零重填
         for (const name of tracked) {
-            if (data.NPC[name])
-                currentCards[name] = data.NPC[name];
+            const oldCard = data.NPC[name];
+            if (!oldCard)
+                continue;
+            const card = { ...oldCard };
+            // 关键: 周期长度只在 mergeCard(合并后)才生成, 而发给 AI 的是合并前的旧卡——
+            // 若缺周期长度, AI 看不到锁定值就只能写死 28。这里先补上(有生理字段的可怀孕角色),
+            // 并回写 data, 让后续 mergeCard 直接沿用, 不重复随机。
+            if ((card['周期长度'] === undefined || card['周期长度'] === null)
+                && PHYSIO_FIELDS.some(field => card[field] !== undefined && card[field] !== null && String(card[field] ?? '').trim() !== '')) {
+                card['周期长度'] = PHYSIO_CYCLE_MIN + Math.floor(Math.random() * (PHYSIO_CYCLE_MAX - PHYSIO_CYCLE_MIN + 1));
+                oldCard['周期长度'] = card['周期长度'];
+            }
+            // 清理旧版生理字段残留, 避免 AI 继续沿用旧台账逻辑
+            delete card['累计受孕率'];
+            delete card['受孕率记录'];
+            delete card['生理结算'];
+            currentCards[name] = card;
         }
         const messages = _prompts__WEBPACK_IMPORTED_MODULE_2__.buildUpdateMessages({
             reply,
