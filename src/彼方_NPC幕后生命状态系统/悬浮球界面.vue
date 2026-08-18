@@ -1098,7 +1098,7 @@ function npcStatusText(card: NpcStateCard): string {
 const DETAIL_GROUPS: Record<string, string[]> = {
   生活: ['生活状态', '接下来想做', '当前目标', '最近变化', '未完成事项'],
   内心: ['心里惦记', '秘密想法', '隐藏目标'],
-  生理: ['生理周期', '是否怀孕', '累计受孕率', '当前防护', '近期性行为', '生理结算', '受孕率记录'],
+  生理: ['生理周期', '是否怀孕', '周期影响', '当前防护', '近期性行为'],
 };
 
 const detailFields = computed(() =>

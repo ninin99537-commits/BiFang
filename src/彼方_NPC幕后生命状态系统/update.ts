@@ -359,8 +359,8 @@ function extractJsonSnippet(content) {
         return '';
     return text.slice(firstBrace, lastBrace + 1);
 }
-/** 生理字段(仅当某 NPC 卡里出现了任一生理字段、即被判定为女性时, 才要求全部补全) */
-const PHYSIO_FIELDS = ['生理周期', '是否怀孕', '累计受孕率', '当前防护', '近期性行为', '生理结算', '受孕率记录'];
+/** 生理字段(仅当某 NPC 卡里出现了任一生理字段、即被判定为女性/双性等可怀孕角色时, 才要求全部补全) */
+const PHYSIO_FIELDS = ['生理周期', '是否怀孕', '周期影响', '当前防护', '近期性行为'];
 /** 每张被返回的状态卡都必须包含的普通字符串字段(全部字段, 缺一即判定不完整并自动重试) */
 const REQUIRED_CARD_FIELDS = _state__WEBPACK_IMPORTED_MODULE_6__.CARD_FIELDS.filter(field => !PHYSIO_FIELDS.includes(field));
 /** 校验 AI 输出的 JSON 结构是否符合预期; 结构错误、"新增 NPC 字段不全"、"女性 NPC 生理字段不全"抛错重试, 已有 NPC 缺普通字段只警告(保留旧值) */
@@ -493,6 +493,9 @@ function extractCurrentTimeHint(worldbook, reply, context) {
         return fromContext;
     return extractFrom(worldbook);
 }
+/** 周期长度随机范围(可怀孕角色首次建档时确定, 之后锁死, 不随 AI 覆盖变化) */
+const PHYSIO_CYCLE_MIN = 21;
+const PHYSIO_CYCLE_MAX = 35;
 function mergeCard(oldCard, update, storyTimeText = '') {
     const merged = { ...(oldCard ?? {}) };
     // 剧情时间只用于时间轴展示(独立记录), 不再写入状态卡; 顺带清理旧数据残留
@@ -504,6 +507,21 @@ function mergeCard(oldCard, update, storyTimeText = '') {
             merged[key] = key === '生活状态' ? withStoryDate(value.trim(), storyTimeText) : value.trim();
         }
     }
+    // 受孕事件: AI 报告的结构化对象(时间/对象/方式/防护), 整块覆盖; 未报告则保留旧值
+    if (update['受孕事件'] && typeof update['受孕事件'] === 'object' && !Array.isArray(update['受孕事件'])) {
+        merged['受孕事件'] = _.cloneDeep(update['受孕事件']);
+    }
+    // 周期长度: 仅可怀孕角色首次建档时随机一次并锁死; 之后任何 AI 输出都不覆盖(防每轮乱改基准)
+    if (merged['周期长度'] === undefined || merged['周期长度'] === null) {
+        const hasPhysio = PHYSIO_FIELDS.some(field => merged[field] !== undefined && merged[field] !== null && String(merged[field] ?? '').trim() !== '');
+        if (hasPhysio) {
+            merged['周期长度'] = PHYSIO_CYCLE_MIN + Math.floor(Math.random() * (PHYSIO_CYCLE_MAX - PHYSIO_CYCLE_MIN + 1));
+        }
+    }
+    // 清理旧版生理字段残留(累计受孕率/受孕率记录/生理结算 已被新系统取代)
+    delete merged['累计受孕率'];
+    delete merged['受孕率记录'];
+    delete merged['生理结算'];
     if ('可能偶遇' in update) {
         const raw = update['可能偶遇'];
         merged['可能偶遇'] = typeof raw === 'boolean' ? raw : raw === 'true' || raw === '是' || raw === '会';
