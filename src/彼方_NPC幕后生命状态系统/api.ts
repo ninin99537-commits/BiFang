@@ -120,6 +120,8 @@ async function chatCompletion(messages, options) {
             let total = 0;
             for (let i = 0; i < +count; i++)
                 total += 1 + Math.floor(Math.random() * +sides);
+            // 记录骰子结果到彼方日志(供受孕判定等场景回溯"到底投出了多少")
+            console.info(`[彼方] 掷骰: ${count}d${sides} = ${total}`);
             return String(total);
         }),
     }));
