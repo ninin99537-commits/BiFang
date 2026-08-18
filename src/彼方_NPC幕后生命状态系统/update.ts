@@ -227,11 +227,23 @@ function applyRollback(data) {
 }
 function maybeRollback() {
     try {
+        // 重roll/编辑后楼层数不变但内容变了, 必须清掉 allAssistantCache(其按 lastId 缓存),
+        // 否则 applyRollback 里 curLastHash 用旧内容计算, 判定"摘要一致"导致不回滚 NPC 状态
+        allAssistantCache = null;
         const data = _state__WEBPACK_IMPORTED_MODULE_6__.loadData();
         if (!applyRollback(data))
             return false;
         _state__WEBPACK_IMPORTED_MODULE_6__.saveData(data);
         _state__WEBPACK_IMPORTED_MODULE_6__.useStateStore().data = data;
+        // 回滚改了数据, 世界书条目(如已开启注入)也要同步回滚, 否则主AI读到的是旧内容
+        try {
+            const settings = _settings__WEBPACK_IMPORTED_MODULE_3__.getSettings();
+            if (settings.更新.注入世界书条目)
+                _worldbook_inject__WEBPACK_IMPORTED_MODULE_5__.syncNpcStatesWorldbook(data, true).catch(() => { });
+        }
+        catch {
+            // 忽略
+        }
         return true;
     }
     catch {
