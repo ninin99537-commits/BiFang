@@ -868,11 +868,18 @@ async function updateNpcStates(force = false, fresh = false) {
                     },
                 ];
             // 预填充(prefill): 开启时在最后追加一条 assistant 消息, 引导模型直接从 JSON 开头开始输出
-            // (提示词要求"只输出 JSON、不用 markdown 围栏", 所以 prefill 直接用 { 开头而非 ```json)
-            if (settings.更新.预填充 && attemptMessages.length > 0 && attemptMessages[attemptMessages.length - 1].role === 'user') {
-                attemptMessages.push({ role: 'assistant', content: '{\n' });
-            }
+            // (提示词要求"只输出 JSON、不用 markdown 围栏", 所以 prefill 直接用 { 开头而非 ```json)。
+            // 注意: prefill 的 { 只作为提示发给模型, 模型不会在输出里重复它 → 返回后需把 { 拼回开头,
+            // 否则 parseModelResponse 的 indexOf('{') 会切到"剧情时间"的子对象导致 JSON 不完整。
+            const prefill = settings.更新.预填充 && attemptMessages.length > 0 && attemptMessages[attemptMessages.length - 1].role === 'user'
+                ? '{\n'
+                : '';
+            if (prefill)
+                attemptMessages.push({ role: 'assistant', content: prefill });
             content = await _api__WEBPACK_IMPORTED_MODULE_1__.chatCompletion(attemptMessages, { signal: abortSignal });
+            // 拼回 prefill 的 { (仅当模型输出不是以 { 开头, 避免双 { )
+            if (prefill && String(content).trim().charAt(0) !== '{')
+                content = prefill + content;
             debugStore.record({ time: Date.now(), response: content });
             try {
                 parsed = parseModelResponse(content);
