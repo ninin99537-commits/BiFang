@@ -1104,7 +1104,7 @@ function npcStatusText(card: NpcStateCard): string {
 const DETAIL_GROUPS: Record<string, string[]> = {
   生活: ['生活状态', '接下来想做', '当前目标', '最近变化', '未完成事项'],
   内心: ['心里惦记', '秘密想法', '隐藏目标'],
-  生理: ['生理周期', '是否怀孕', '周期影响', '当前防护', '近期性行为'],
+  生理: ['生理周期', '是否怀孕', '怀孕知晓', '周期影响', '当前防护', '近期性行为'],
 };
 
 const detailFields = computed(() =>
@@ -1153,6 +1153,12 @@ function npcTags(card: NpcStateCard, isInScene = false): NpcTag[] {
     const stage = ph.match(/(月经期|卵泡期|排卵期|黄体期|经前期|孕期|哺乳期)/);
     const label = stage ? stage[1] : '生理';
     tags.push({ label, color: PHYSIOLOGY_COLORS[label] ?? 'purple' });
+    // 防全知: 孕期但 NPC 本人尚未确认时, 标注其认知程度(玩家上帝视角能看到幕后, 但要明白她本人不知道)
+    if (stage && stage[1] === '孕期') {
+      const known = String(card['怀孕知晓'] || '').trim();
+      if (known === '疑似') tags.push({ label: '本人疑似', color: 'yellow' });
+      else if (!known || known === '未知') tags.push({ label: '本人未察觉', color: 'gray' });
+    }
   }
   return tags;
 }

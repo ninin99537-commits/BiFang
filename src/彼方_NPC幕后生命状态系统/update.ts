@@ -410,6 +410,11 @@ function validateParsedFormat(parsed, existingNpcNames = new Set(), existingCard
         if (cardHasPhysio && missingPhysio.length > 0) {
             console.warn(`[彼方] NPC「${npcName}」缺失生理字段: ${missingPhysio.join('、')}(保留旧值)`);
         }
+        // 防全知字段: 孕期角色必须有「怀孕知晓」(NPC 本人是否知晓怀孕); 缺失时警告(mergeCard 会按孕周兜底补全)
+        const isPregnantOut = String(card?.['是否怀孕'] ?? '') === 'true' || String(card?.['是否怀孕']) === '是' || String(card?.['生理周期'] ?? '').includes('孕期');
+        if (isPregnantOut && (card?.['怀孕知晓'] === undefined || card?.['怀孕知晓'] === null || !String(card?.['怀孕知晓'] ?? '').trim())) {
+            console.warn(`[彼方] NPC「${npcName}」孕期但缺「怀孕知晓」字段(将按孕周兜底补全)`);
+        }
     };
     for (const [name, card] of Object.entries(parsed)) {
         if (name === '在场NPC' || name === '后台互动' || name === '移除NPC' || name === '剧情时间' || name === '受孕事件')
@@ -557,11 +562,43 @@ function applyConceptionCheck(merged, oldCard) {
         merged['是否怀孕'] = 'true';
         if (!String(phy).includes('孕期'))
             merged['生理周期'] = `孕期 孕0周+0天`;
-        console.info(`[彼方] ${merged['曾用名'] || ''} 判定为怀孕, 生理周期转孕期`);
+        // 防全知: 刚受孕的 NPC 本人完全不知情, 知晓状态固定为"未知"
+        merged['怀孕知晓'] = '未知';
+        console.info(`[彼方] ${merged['曾用名'] || ''} 判定为怀孕, 生理周期转孕期(本人尚不知晓)`);
     }
     else if (String(merged['是否怀孕'] ?? '') !== 'false') {
         merged['是否怀孕'] = 'false';
     }
+}
+/** 从"生理周期"孕期文本提取孕周(如 "孕期 孕6周+3天" → 6; 提取不到返回 null) */
+function extractPregnancyWeek(physioText) {
+    const m = String(physioText ?? '').match(/孕\s*(\d+)\s*周/);
+    return m ? +m[1] : null;
+}
+/** 「怀孕知晓」的合法取值: 反映 NPC 本人对自己怀孕的知晓程度(防全知) */
+const PREGNANCY_KNOWN_UNKNOWN = '未知';
+const PREGNANCY_KNOWN_SUSPECT = '疑似';
+const PREGNANCY_KNOWN_CONFIRMED = '已确认';
+const PREGNANCY_KNOWN_VALUES = [PREGNANCY_KNOWN_UNKNOWN, PREGNANCY_KNOWN_SUSPECT, PREGNANCY_KNOWN_CONFIRMED];
+/**
+ * 防全知兜底: 保证孕期 NPC 一定有「怀孕知晓」字段(该字段只属于怀孕角色)。
+ * - 未怀孕: 清理残留的知晓字段;
+ * - 孕期但缺字段(存量旧卡升级): 按当前孕周推断初始知晓度——孕0~4周本人不知情(未知),
+ *   孕4~6周停经开始怀疑(疑似), 孕6周+早孕反应/验孕早已确认(已确认), 符合现实认知。
+ */
+function ensurePregnancyKnowledge(merged) {
+    const pregnant = String(merged['是否怀孕'] ?? '') === 'true' || String(merged['是否怀孕']) === '是' || String(merged['生理周期'] ?? '').includes('孕期');
+    if (!pregnant) {
+        delete merged['怀孕知晓'];
+        return;
+    }
+    if (typeof merged['怀孕知晓'] === 'string' && merged['怀孕知晓'].trim())
+        return;
+    const week = extractPregnancyWeek(merged['生理周期']);
+    merged['怀孕知晓'] = week === null ? PREGNANCY_KNOWN_UNKNOWN
+        : week < 4 ? PREGNANCY_KNOWN_UNKNOWN
+            : week < 6 ? PREGNANCY_KNOWN_SUSPECT
+                : PREGNANCY_KNOWN_CONFIRMED;
 }
 function mergeCard(oldCard, update, storyTimeText = '') {
     const merged = { ...(oldCard ?? {}) };
@@ -591,6 +628,14 @@ function mergeCard(oldCard, update, storyTimeText = '') {
     // 也不重复判定(避免同一事件反复掷骰刷怀孕)。
     if (本次有新受孕事件)
         applyConceptionCheck(merged, oldCard);
+    // 怀孕知晓: AI 维护的 NPC 自我认知字段(仅孕期角色), 只接受合法取值, 非法/空值忽略(走下方兜底)
+    if (update['怀孕知晓'] !== undefined) {
+        const known = String(update['怀孕知晓'] ?? '').trim();
+        if (PREGNANCY_KNOWN_VALUES.includes(known))
+            merged['怀孕知晓'] = known;
+    }
+    // 防全知兜底: 未怀孕清理该字段; 孕期缺该字段(旧卡升级)按孕周补初始知晓度
+    ensurePregnancyKnowledge(merged);
     // 生理周期字段的分母修正: AI 常惯性写 "Day X/28", 但周期长度是锁定的个体值(21~35)。
     // 这里用锁定的周期长度自动替换分母, 不依赖 AI 自觉——保证排卵日计算(锁定长度-14)正确。
     if (merged['周期长度'] && typeof merged['生理周期'] === 'string' && merged['生理周期']) {
