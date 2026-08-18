@@ -185,6 +185,10 @@ function buildInjectionPrompt(npcEntries, inSceneNames = []) {
             parts.push(`生活状态: ${card['生活状态']}`);
         if (card['接下来想做'])
             parts.push(`将要做: ${card['接下来想做']}`);
+        if (card['当前目标'])
+            parts.push(`目标: ${card['当前目标']}`);
+        if (card['未完成事项'])
+            parts.push(`未完成: ${card['未完成事项']}`);
         if (card['当前状态'])
             parts.push(`状态: ${card['当前状态']}`);
         if (card['位置'])
