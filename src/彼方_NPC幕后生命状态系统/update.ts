@@ -165,6 +165,7 @@ function applyRollback(data) {
         if (curCount === 0) {
             if (data.快照.length === 0 && data.已处理层数 === 0 && Object.keys(data.NPC).length === 0 && !changed)
                 return false;
+            console.warn(`[彼方] 自动回退: 楼层全部删除(当前AI楼层=0), 清空所有NPC数据`);
             data.名单 = [];
             data.NPC = {};
             data.在场NPC = [];
@@ -188,12 +189,16 @@ function applyRollback(data) {
             targetLayer = curCount - 1;
             rollbackReason = `最后一条 AI 回复变化(疑似重roll/编辑): 彼方已处理 ${data.已处理层数} 层, 最后处理摘要与当前不一致`;
         }
-        if (targetLayer === null)
+        if (targetLayer === null) {
+            // 不触发回滚也留个日志, 方便排查"没回滚/回滚错"的情况
+            console.info(`[彼方] 回滚检查: 未触发. 已处理层=${data.已处理层数} 当前AI层=${curCount} lastId=${lastId} 摘要非空=${!!data.最后处理摘要} 摘要一致=${data.最后处理摘要 === curLastHash} 快照层=[${(data.快照 || []).map(s => s.层数).join(',')}]`);
             return changed;
-        console.warn(`[彼方] 自动回退: ${rollbackReason}`);
-        _state__WEBPACK_IMPORTED_MODULE_6__.useDebugStore().record({ time: Date.now(), error: `[自动回退] ${rollbackReason}` });
+        }
+        console.warn(`[彼方] 自动回退: ${rollbackReason} (快照层=${(data.快照 || []).map(s => s.层数).join(',')} 目标层=${targetLayer} 已处理=${data.已处理层数} 当前=${curCount} lastId=${lastId})`);
+        _state__WEBPACK_IMPORTED_MODULE_6__.useDebugStore().record({ time: Date.now(), error: `[自动回退] ${rollbackReason} (目标层=${targetLayer})` });
         const snap = [...data.快照].reverse().find(s => s.层数 <= targetLayer);
         if (snap) {
+            console.info(`[彼方] 回滚执行: 命中快照层=${snap.层数} (目标层=${targetLayer}), 恢复NPC=${Object.keys(snap.NPC ?? {}).length}个 名单=[${(snap.名单 ?? []).join(',')}]`);
             data.名单 = [...snap.名单];
             data.NPC = _.cloneDeep(snap.NPC);
             data.在场NPC = [...(snap.在场NPC ?? [])];
@@ -203,6 +208,7 @@ function applyRollback(data) {
             data.统计 = { ...snap.统计 };
         }
         else if (targetLayer <= 0) {
+            console.warn(`[彼方] 回滚执行: 目标层<=0 且无快照, 清空所有NPC数据`);
             data.名单 = [];
             data.NPC = {};
             data.在场NPC = [];
@@ -213,12 +219,14 @@ function applyRollback(data) {
         }
         else {
             // 目标楼层之前没有快照（通常是升级前就有的历史楼层），保留当前状态避免误清
+            console.warn(`[彼方] 回滚跳过: 目标层=${targetLayer} 之前没有可用快照, 保留当前状态`);
             return changed;
         }
         // 关键: 回滚后同步"已处理层数"到目标层, 并清空摘要——否则下次更新会重复判定"楼层被删"而反复回滚, 永远卡在上一层
         data.已处理层数 = targetLayer;
         data.最后处理摘要 = '';
         data.快照 = data.快照.filter(s => s.层数 <= targetLayer);
+        console.info(`[彼方] 回滚完成: 已处理层数=${data.已处理层数}, 剩余快照层=[${data.快照.map(s => s.层数).join(',')}]`);
         return true;
     }
     catch {
@@ -231,10 +239,18 @@ function maybeRollback() {
         // 否则 applyRollback 里 curLastHash 用旧内容计算, 判定"摘要一致"导致不回滚 NPC 状态
         allAssistantCache = null;
         const data = _state__WEBPACK_IMPORTED_MODULE_6__.loadData();
-        if (!applyRollback(data))
+        const before = {
+            已处理层数: data.已处理层数,
+            NPC数: Object.keys(data.NPC ?? {}).length,
+            快照层: (data.快照 ?? []).map(s => s.层数),
+            摘要: data.最后处理摘要 || '(空)',
+        };
+        if (!applyRollback(data)) {
             return false;
+        }
         _state__WEBPACK_IMPORTED_MODULE_6__.saveData(data);
         _state__WEBPACK_IMPORTED_MODULE_6__.useStateStore().data = data;
+        console.info(`[彼方] 回滚触发完成: 回滚前=${JSON.stringify(before)}, 回滚后已处理层=${data.已处理层数} NPC数=${Object.keys(data.NPC ?? {}).length}`);
         // 回滚改了数据, 世界书条目(如已开启注入)也要同步回滚, 否则主AI读到的是旧内容
         try {
             const settings = _settings__WEBPACK_IMPORTED_MODULE_3__.getSettings();
@@ -299,6 +315,7 @@ function recordSnapshot(data, layer) {
         统计: { ...data.统计 },
     });
     data.快照 = thinSnapshots(data.快照);
+    console.info(`[彼方] 快照记录: 层数=${layer}, NPC=${Object.keys(data.NPC ?? {}).length}个, 快照总览=[${data.快照.map(s => s.层数).join(',')}]`);
 }
 function parseModelResponse(content) {
     let text = content.trim();
@@ -961,6 +978,7 @@ async function updateNpcStates(force = false, fresh = false) {
         recordSnapshot(newData, assistantCount);
         newData.已处理层数 = assistantCount;
         newData.最后处理摘要 = hashString(recent[recent.length - 1].message);
+        console.info(`[彼方] 更新完成: 已处理层数=${assistantCount}, 摘要=${newData.最后处理摘要.slice(0, 12)}, 快照层数=${assistantCount}`);
         // 清空层只在清空后的首次更新生效（防旧NPC复活），之后恢复正常分析最近 N 楼
         newData.清空层 = 0;
         const stateStore = _state__WEBPACK_IMPORTED_MODULE_6__.useStateStore();
