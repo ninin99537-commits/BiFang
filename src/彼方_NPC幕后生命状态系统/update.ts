@@ -58,29 +58,21 @@ function stripLoneClosingBlocks(text, tag) {
 function createTextFilter(settings) {
     const tags = (settings.标签?.列表 ?? []).map(tag => tag.trim().replace(/^<|>$/g, '')).filter(Boolean);
     // 去掉 begin_of_X ... end_of_X 的思维链整块（标记是注释、内容却是纯文本，需连同内容一起删）；再清理剩余 HTML 注释
+    // (正文中的创作注释如 <!-- 模拟段落 -->/<!-- 草稿优化 --> 等一律删除; 无论标签模式是排除还是只读都删)
     const stripComments = (text) => text
         .replace(/<!--\s*begin_of_[a-zA-Z0-9_\u4e00-\u9fa5]+[\s\S]*?end_of_[a-zA-Z0-9_\u4e00-\u9fa5]+\s*-->/gi, '')
         .replace(/<!--[\s\S]*?-->/g, '');
-    // 若消息含 <content> 正文容器(干净正文), 优先只提取其内容: 楼层常同时含草稿段(带创作注释)与
-    // content 干净版, 排除模式会把两份都送进上下文导致正文重复; content 是明确的正文容器, 直接只读提取。
-    const extractContent = (text) => {
-        const parts = extractTagContent(text, 'content');
-        if (parts.length > 0)
-            return stripComments(parts.join('\n\n'));
-        return null;
-    };
     if (tags.length === 0)
-        return text => extractContent(text) ?? stripComments(text);
+        return stripComments;
     if (settings.标签?.模式 === '只读') {
         return text => {
             const parts = [];
             for (const tag of tags)
                 parts.push(...extractTagContent(text, tag));
-            // 只读提取结果为空时: 若消息有 content 则用它, 否则回退整条(去注释)
-            return extractContent(text) ?? stripComments(parts.join('\n\n') || text);
+            return stripComments(parts.join('\n\n') || text);
         };
     }
-    return text => extractContent(text) ?? stripComments(tags.reduce((acc, tag) => stripLoneClosingBlocks(stripTagContent(acc, tag), tag), text));
+    return text => stripComments(tags.reduce((acc, tag) => stripLoneClosingBlocks(stripTagContent(acc, tag), tag), text));
 }
 function isNameMentioned(text, name) {
     const trimmed = name.trim();
