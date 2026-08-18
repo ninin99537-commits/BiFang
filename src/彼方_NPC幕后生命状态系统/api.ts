@@ -111,6 +111,7 @@ async function chatCompletion(messages, options) {
     const 最大token = options?.接口?.最大token ?? baseCfg.最大token;
     const 服务端转发 = options?.接口?.服务端转发 ?? baseCfg.服务端转发;
     const 关闭思维链 = options?.接口?.关闭思维链 ?? baseCfg.关闭思维链;
+    const 流式 = options?.接口?.流式 ?? baseCfg.流式 ?? false;
     // 展开酒馆骰子宏 {{roll 1d100}} → 真实随机数:
     // 彼方直连 API / generateRaw 都不经过酒馆的 substituteParams, 宏不会自动展开,
     // 这里手动替换, 保证受孕判定等需要随机数的场景拿到真实 D100 结果。
@@ -171,7 +172,7 @@ async function chatCompletion(messages, options) {
                     user_input: userInput,
                     should_silence: true,
                     // 流式接收: 上游边生成边返回, 避免长时间无响应触发网关超时(504/499)
-                    should_stream: true,
+                    should_stream: 流式,
                     max_chat_history: 0,
                     custom_api: {
                         apiurl: base,
@@ -214,7 +215,7 @@ async function chatCompletion(messages, options) {
     const body = {
         model: 模型,
         messages,
-        stream: false,
+        stream: 流式,
         temperature: options?.temperature ?? 温度,
         max_tokens: options?.max_tokens ?? 最大token,
         ...(关闭思维链 ? { thinking: { type: 'disabled' } } : {}),
@@ -243,6 +244,50 @@ async function chatCompletion(messages, options) {
             const bodyText = await response.text();
             const errText = readableError(response.status, bodyText);
             throw Error(`请求失败 (${errText})${policyBlockHint(errText)}`);
+        }
+        // 流式: 逐 token 读取 SSE 并拼接 content(边生成边返回, 可实时看到输出进度)
+        if (流式) {
+            if (!response.body) {
+                throw Error('接口不支持流式响应(body 为空), 请关闭「流式」开关后重试');
+            }
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let content = '';
+            let reasoning = '';
+            let buffer = '';
+            for (;;) {
+                const { done, value } = await reader.read();
+                if (done)
+                    break;
+                buffer += decoder.decode(value, { stream: true });
+                // SSE 按行切分: 每个事件以 data: 开头, 空行分隔
+                let nlIdx;
+                while ((nlIdx = buffer.indexOf('\n')) >= 0) {
+                    const line = buffer.slice(0, nlIdx).replace(/\r$/, '');
+                    buffer = buffer.slice(nlIdx + 1);
+                    if (!line.startsWith('data:'))
+                        continue;
+                    const payload = line.slice(5).trim();
+                    if (payload === '[DONE]')
+                        break;
+                    try {
+                        const chunk = JSON.parse(payload);
+                        const delta = chunk?.choices?.[0]?.delta ?? {};
+                        if (typeof delta.content === 'string')
+                            content += delta.content;
+                        if (typeof delta.reasoning_content === 'string')
+                            reasoning += delta.reasoning_content;
+                    }
+                    catch {
+                        // 忽略无法解析的碎片(可能跨行)
+                    }
+                }
+            }
+            if (!content) {
+                const hasReasoning = reasoning.length > 0;
+                throw Error(`响应中没有找到有效的正文内容。${hasReasoning ? `模型只返回了推理内容(${reasoning.length}字)而没有正文。这通常是「最大输出Token」被推理占满, 请调大最大输出Token或关闭「关闭思维链」。` : '请检查模型名是否正确、是否支持当前参数。'}`);
+            }
+            return content;
         }
         const data = await response.json();
         if (data?.error) {

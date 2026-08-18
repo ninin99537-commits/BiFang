@@ -19,6 +19,8 @@ const ApiConfigSchema = zod__WEBPACK_IMPORTED_MODULE_0__.z
     服务端转发: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(false),
     /** 关闭模型思维链(推理/思考), 加快响应并避免正文被推理占满; 通过 thinking.type=disabled 实现(Responses API 风格, 原生支持 Responses API 的模型可用) */
     关闭思维链: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(false),
+    /** 流式输出: 开=逐 token 接收(可实时看到输出进度, 部分模型更稳定); 关=一次性返回完整结果(更简单)。直连走 SSE, 转发走 should_stream */
+    流式: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(false),
     温度: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(0.7).transform(value => _.clamp(value, 0, 2)),
     最大token: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(2048).transform(value => Math.max(1, Math.min(131072, Math.round(value)))),
 })
