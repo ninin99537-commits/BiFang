@@ -111,6 +111,18 @@ async function chatCompletion(messages, options) {
     const 最大token = options?.接口?.最大token ?? baseCfg.最大token;
     const 服务端转发 = options?.接口?.服务端转发 ?? baseCfg.服务端转发;
     const 关闭思维链 = options?.接口?.关闭思维链 ?? baseCfg.关闭思维链;
+    // 展开酒馆骰子宏 {{roll 1d100}} → 真实随机数:
+    // 彼方直连 API / generateRaw 都不经过酒馆的 substituteParams, 宏不会自动展开,
+    // 这里手动替换, 保证受孕判定等需要随机数的场景拿到真实 D100 结果。
+    messages = messages.map(message => ({
+        ...message,
+        content: String(message.content ?? '').replace(/\{\{\s*roll\s+(\d+)d(\d+)\s*\}\}/gi, (_match, count, sides) => {
+            let total = 0;
+            for (let i = 0; i < +count; i++)
+                total += 1 + Math.floor(Math.random() * +sides);
+            return String(total);
+        }),
+    }));
     const base = normalizeBaseUrl(地址);
     if (!base)
         throw Error('请先填写接口地址');
