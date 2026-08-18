@@ -575,8 +575,10 @@ function mergeCard(oldCard, update, storyTimeText = '') {
         }
     }
     // 受孕事件: AI 报告的结构化对象(时间/对象/方式/防护), 整块覆盖; 未报告则保留旧值
+    let 本次有新受孕事件 = false;
     if (update['受孕事件'] && typeof update['受孕事件'] === 'object' && !Array.isArray(update['受孕事件'])) {
         merged['受孕事件'] = _.cloneDeep(update['受孕事件']);
+        本次有新受孕事件 = true;
     }
     if (merged['周期长度'] === undefined || merged['周期长度'] === null) {
         const hasPhysio = PHYSIO_FIELDS.some(field => merged[field] !== undefined && merged[field] !== null && String(merged[field] ?? '').trim() !== '');
@@ -584,8 +586,11 @@ function mergeCard(oldCard, update, storyTimeText = '') {
             merged['周期长度'] = PHYSIO_CYCLE_MIN + Math.floor(Math.random() * (PHYSIO_CYCLE_MAX - PHYSIO_CYCLE_MIN + 1));
         }
     }
-    // 受孕判定: 由彼方代码执行(掷D100+算受孕率+更新是否怀孕), AI 只负责报告受孕事件
-    applyConceptionCheck(merged, oldCard);
+    // 受孕判定: 由彼方代码执行(掷D100+算受孕率+更新是否怀孕), AI 只负责报告受孕事件。
+    // **只对 AI 本次新报告的受孕事件判定**——若本次没报告(没发生新的受孕行为), 即使旧事件还在卡里,
+    // 也不重复判定(避免同一事件反复掷骰刷怀孕)。
+    if (本次有新受孕事件)
+        applyConceptionCheck(merged, oldCard);
     // 生理周期字段的分母修正: AI 常惯性写 "Day X/28", 但周期长度是锁定的个体值(21~35)。
     // 这里用锁定的周期长度自动替换分母, 不依赖 AI 自觉——保证排卵日计算(锁定长度-14)正确。
     if (merged['周期长度'] && typeof merged['生理周期'] === 'string' && merged['生理周期']) {
