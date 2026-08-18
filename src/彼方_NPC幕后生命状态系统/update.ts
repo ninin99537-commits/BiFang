@@ -412,7 +412,7 @@ function validateParsedFormat(parsed, existingNpcNames = new Set(), existingCard
         }
     };
     for (const [name, card] of Object.entries(parsed)) {
-        if (name === '在场NPC' || name === '后台互动' || name === '移除NPC' || name === '剧情时间')
+        if (name === '在场NPC' || name === '后台互动' || name === '移除NPC' || name === '剧情时间' || name === '受孕事件')
             continue;
         if (card && typeof card === 'object' && !Array.isArray(card))
             checkCard(name, card, !existingNpcNames.has(name), false);
@@ -685,7 +685,9 @@ function applyUpdate(data, parsed, timeJump = null, playerName = null) {
     }
     const updatedNames = [];
     for (const [name, card] of Object.entries(npcUpdates)) {
-        if (name === '在场NPC' || name === '后台互动' || typeof card !== 'object' || card === null || Array.isArray(card))
+        // 顶层保留键(防止 AI 误把受孕事件/剧情时间等放顶层被当成 NPC 建档)
+        if (name === '在场NPC' || name === '后台互动' || name === '受孕事件' || name === '剧情时间'
+            || typeof card !== 'object' || card === null || Array.isArray(card))
             continue;
         // 主角: 跳过合并, 并清理误建的主角卡/名单项
         if (playerName && name === playerName) {
