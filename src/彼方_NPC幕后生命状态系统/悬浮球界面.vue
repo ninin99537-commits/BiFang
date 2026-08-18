@@ -689,7 +689,7 @@
                           </button>
                         </div>
                       </div>
-                      <textarea v-model="tagText" class="bf-textarea bf-textarea-short" placeholder="aftertalk&#10;thinking&#10;branches"></textarea>
+                      <textarea v-model="tagDraft" class="bf-textarea bf-textarea-short" placeholder="aftertalk&#10;thinking&#10;branches"></textarea>
                       <div class="bf-hint">
                         <template v-if="settings.标签.模式 === '排除'">排除这些标签内的内容，直接写标签名即可（如 thinking，不用带尖括号）；只出现 &lt;/标签&gt; 没有开头的孤立闭合标签会从楼层开头删到该结尾标签</template>
                         <template v-else>只读取这些标签内的内容；没有这些标签的楼层保留原文</template>
@@ -1184,14 +1184,14 @@ function storyTimeTs(text: string): number | null {
   return Number.isNaN(ts) ? null : ts;
 }
 
-const tagText = computed({
-  get: () => settings.value.标签.列表.join('\n'),
-  set: value => {
-    settings.value.标签.列表 = value
-      .split(/[\n,，;；、]+/)
-      .map(item => item.trim().replace(/^<|>$/g, ''))
-      .filter(Boolean);
-  },
+// 标签过滤草稿: 输入时原样保留(不中途拆分), watch 才把换行/分隔符解析成列表写入设置
+// ——避免用 computed setter 拆分导致"一打字(换行/标点)就消失"
+const tagDraft = ref(settings.value.标签.列表.join('\n'));
+watch(tagDraft, value => {
+  settings.value.标签.列表 = String(value ?? '')
+    .split(/[\n,，;；、]+/)
+    .map(item => item.trim().replace(/^<|>$/g, ''))
+    .filter(Boolean);
 });
 
 // ---- 编辑提示词: 幕后更新自定义提示词段(非空时替换内置) ----
