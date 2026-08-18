@@ -496,6 +496,73 @@ function extractCurrentTimeHint(worldbook, reply, context) {
 /** 周期长度随机范围(可怀孕角色首次建档时确定, 之后锁死, 不随 AI 覆盖变化) */
 const PHYSIO_CYCLE_MIN = 21;
 const PHYSIO_CYCLE_MAX = 35;
+/** 从"生理周期"文本提取当前 Day(如 "排卵期 Day 13/25" → 13; "孕期 孕6周+3天" → null) */
+function extractCycleDay(physioText) {
+    const m = String(physioText ?? '').match(/Day\s*(\d+)/i);
+    return m ? +m[1] : null;
+}
+/** 计算某 NPC 在指定 Day 发生受孕行为的单次受孕率(0~1), 基于锁定周期长度与防护 */
+function calcConceptionRate(cycleLen, day, protection) {
+    if (!cycleLen || !day)
+        return 0;
+    const ovuDay = cycleLen - 14; // 排卵日 = 周期长度-14
+    const dist = day - ovuDay;    // 正=排卵后, 负=排卵前
+    let base = 0.01; // 窗口外(安全期)保底 1%
+    if (dist === 0)
+        base = 0.25;              // 排卵日当天
+    else if (dist >= -1 && dist <= -2)
+        base = 0.20;              // 排卵前1-2天
+    else if (dist >= -5 && dist <= -3)
+        base = 0.10;              // 排卵前3-5天
+    else if (dist === 1)
+        base = 0.05;              // 排卵后1天
+    const prot = String(protection ?? '').trim();
+    const factor = prot.includes('避孕药') ? 0.01
+        : prot.includes('避孕套') ? 0.02
+            : prot.includes('外射') ? 0.05
+                : prot.includes('无') ? 1
+                    : 1;
+    return Math.min(1, base * factor);
+}
+/**
+ * 彼方自动受孕判定: AI 报告了"受孕事件"(阴道内射/阴道外射外阴附近)时, 由彼方代码
+ * 掷 D100 并判定是否怀孕, 结果写回卡——不依赖 AI 自觉遵守规则。
+ * 触发条件: 方式∈{阴道内射, 阴道外射(外阴附近)}, 且该 NPC 未怀孕(孕期不再判定)。
+ */
+function applyConceptionCheck(merged, oldCard) {
+    const ev = merged['受孕事件'];
+    if (!ev || typeof ev !== 'object')
+        return;
+    const way = String(ev['方式'] ?? '').trim();
+    const isConceptive = way.includes('阴道内射') || way.includes('阴道外射');
+    if (!isConceptive)
+        return; // 口内/肛内/体外不判定
+    // 已怀孕: 不再判定(孕期无排卵, 不会二次怀孕)
+    if (String(merged['是否怀孕'] ?? '') === 'true' || String(merged['是否怀孕']) === '是')
+        return;
+    const phy = merged['生理周期'] || '';
+    if (String(phy).includes('孕期'))
+        return;
+    const day = extractCycleDay(phy);
+    const cycleLen = merged['周期长度'];
+    if (!day || !cycleLen)
+        return;
+    const rate = calcConceptionRate(cycleLen, day, ev['防护']);
+    // 彼方掷骰 D100(1~100)
+    const roll = 1 + Math.floor(Math.random() * 100);
+    const ovuDay = cycleLen - 14;
+    const pregnant = roll <= Math.round(rate * 100);
+    console.info(`[彼方] 受孕判定: ${merged['是否怀孕'] !== undefined ? 'AI输出=' + merged['是否怀孕'] : '新卡'} 周期=${cycleLen} Day=${day}(排卵日${ovuDay}) 方式=${way} 防护=${ev['防护'] || '无'} 受孕率=${(rate * 100).toFixed(1)}% 掷骰=${roll} → ${pregnant ? '怀孕!' : '未怀'}`);
+    if (pregnant) {
+        merged['是否怀孕'] = 'true';
+        if (!String(phy).includes('孕期'))
+            merged['生理周期'] = `孕期 孕0周+0天`;
+        console.info(`[彼方] ${merged['曾用名'] || ''} 判定为怀孕, 生理周期转孕期`);
+    }
+    else if (String(merged['是否怀孕'] ?? '') !== 'false') {
+        merged['是否怀孕'] = 'false';
+    }
+}
 function mergeCard(oldCard, update, storyTimeText = '') {
     const merged = { ...(oldCard ?? {}) };
     // 剧情时间只用于时间轴展示(独立记录), 不再写入状态卡; 顺带清理旧数据残留
@@ -511,13 +578,14 @@ function mergeCard(oldCard, update, storyTimeText = '') {
     if (update['受孕事件'] && typeof update['受孕事件'] === 'object' && !Array.isArray(update['受孕事件'])) {
         merged['受孕事件'] = _.cloneDeep(update['受孕事件']);
     }
-    // 周期长度: 仅可怀孕角色首次建档时随机一次并锁死; 之后任何 AI 输出都不覆盖(防每轮乱改基准)
     if (merged['周期长度'] === undefined || merged['周期长度'] === null) {
         const hasPhysio = PHYSIO_FIELDS.some(field => merged[field] !== undefined && merged[field] !== null && String(merged[field] ?? '').trim() !== '');
         if (hasPhysio) {
             merged['周期长度'] = PHYSIO_CYCLE_MIN + Math.floor(Math.random() * (PHYSIO_CYCLE_MAX - PHYSIO_CYCLE_MIN + 1));
         }
     }
+    // 受孕判定: 由彼方代码执行(掷D100+算受孕率+更新是否怀孕), AI 只负责报告受孕事件
+    applyConceptionCheck(merged, oldCard);
     // 生理周期字段的分母修正: AI 常惯性写 "Day X/28", 但周期长度是锁定的个体值(21~35)。
     // 这里用锁定的周期长度自动替换分母, 不依赖 AI 自觉——保证排卵日计算(锁定长度-14)正确。
     if (merged['周期长度'] && typeof merged['生理周期'] === 'string' && merged['生理周期']) {
