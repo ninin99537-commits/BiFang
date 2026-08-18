@@ -649,6 +649,12 @@
                         <span class="bf-label">世界书条数上限</span>
                         <input v-model.number="settings.更新.注入世界书条数" class="bf-input bf-input-num" type="number" min="1" max="200" step="1" />
                       </div>
+                      <label class="bf-toggle">
+                        <input v-model="settings.更新.预填充" type="checkbox" />
+                        <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                        <span class="bf-toggle-text">预填充(prefill)</span>
+                      </label>
+                      <div class="bf-hint">开启后追加一条 assistant 消息引导模型直接从 JSON 开头输出，减少格式失败与废话；DeepSeek/GLM/Qwen/Claude 等大多支持，若接口报错或输出异常请关闭</div>
                       <div class="bf-row-pair">
                         <div class="bf-pair">
                           <span class="bf-label">更新频率</span>

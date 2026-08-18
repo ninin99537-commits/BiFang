@@ -44,6 +44,8 @@ const Settings = zod__WEBPACK_IMPORTED_MODULE_0__.z
         注入世界书: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(true),
         注入世界书上限: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(8000).transform(value => Math.max(500, Math.min(200000, Math.round(value)))),
         注入世界书条数: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(40).transform(value => Math.max(1, Math.min(200, Math.round(value)))),
+        /** 预填充(prefill): 在最后追加一条 assistant 消息引导模型直接从 JSON 开头开始输出, 减少格式失败/废话; 依赖模型是否支持(DeepSeek/GLM/Qwen/Claude 大多支持) */
+        预填充: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(false),
         /** 自定义更新提示词段(非空时替换内置幕后提示词): { role: system/user/assistant, content }[]; 占位符 {{正文}}/{{上下文}}/{{追踪名单}}/{{现有状态卡}}/{{互动记录}}/{{当前剧情时间}}/{{主角名}}/{{当前时间}} */
         自定义提示词: zod__WEBPACK_IMPORTED_MODULE_0__.z
             .array(zod__WEBPACK_IMPORTED_MODULE_0__.z.object({

@@ -858,6 +858,11 @@ async function updateNpcStates(force = false, fresh = false) {
                         content: `${messages[messages.length - 1].content}\n\n【上次输出不符合要求, 请根据错误原因修正后重新输出】\n错误原因: ${lastErrorReason}\n上次输出(仅 JSON 部分):\n\`\`\`json\n${lastErrorOutput}\n\`\`\``,
                     },
                 ];
+            // 预填充(prefill): 开启时在最后追加一条 assistant 消息, 引导模型直接从 JSON 开头开始输出
+            // (提示词要求"只输出 JSON、不用 markdown 围栏", 所以 prefill 直接用 { 开头而非 ```json)
+            if (settings.更新.预填充 && attemptMessages.length > 0 && attemptMessages[attemptMessages.length - 1].role === 'user') {
+                attemptMessages.push({ role: 'assistant', content: '{\n' });
+            }
             content = await _api__WEBPACK_IMPORTED_MODULE_1__.chatCompletion(attemptMessages, { signal: abortSignal });
             debugStore.record({ time: Date.now(), response: content });
             try {
