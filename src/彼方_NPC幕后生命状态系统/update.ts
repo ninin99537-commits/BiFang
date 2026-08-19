@@ -368,6 +368,20 @@ function validateParsedFormat(parsed, existingNpcNames = new Set(), existingCard
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
         throw Error('AI 返回的 JSON 结构不符合预期(顶层不是对象)');
     }
+    // 剧情时间格式校验: 生理周期日期/受孕判定/时间轴都依赖它解析, 必须为标准
+    // "YYYY-MM-DD HH:mm"(年份4位补零如 0004/0025/0137), 否则自动重试让 AI 修正格式
+    const storyTime = parsed['剧情时间'];
+    if (storyTime && typeof storyTime === 'object' && !Array.isArray(storyTime)) {
+        const bad = [];
+        for (const key of ['开始', '结束']) {
+            const value = String(storyTime[key] ?? '').trim();
+            if (value && parseStoryTime(value) === null)
+                bad.push(`${key}="${value}"`);
+        }
+        if (bad.length > 0) {
+            throw Error(`"剧情时间"格式不正确(${bad.join('、')}): 必须为 "YYYY-MM-DD HH:mm", 年份固定4位补零(如 0004、0025、0137), 月/日/时/分2位补零, 重新输出`);
+        }
+    }
     const raw = parsed['在场NPC'];
     if (typeof raw !== 'undefined' && raw !== null) {
         if (!Array.isArray(raw)) {
@@ -729,24 +743,17 @@ function mergeCard(oldCard, update, storyTimeText = '') {
     if (update['曾用名'] && typeof update['曾用名'] === 'string' && update['曾用名'].trim()) {
         merged['曾用名'] = update['曾用名'].trim();
     }
-    // 生理周期日期: 由 AI 维护——每次剧情跨时间(跨天/多天/周/月/年)时更新为当前剧情日期,
-    // AI 据此判断 Day/孕周变不变、变多少。彼方只做两件事:
-    // 1) 仅接受合法日期格式(YYYY-MM-DD[ HH:mm]), 非法输入保留旧值;
-    // 2) 新卡/历史卡缺基准时, 用本次剧情结束时刻兜底补一个初始日期。
+    // 生理周期日期: 由彼方代码维护的只读参考字段(每次更新覆盖, 不信任 AI 输出)——记录本次剧情
+    // 结束时刻, 供 AI 按真实天数差推进 Day/孕周(防跳天), 也供 correctPhysioByStoryTime 校正。
+    // AI 的"剧情时间"被校验强制为 YYYY-MM-DD HH:mm(年份4位补零), 因此这里解析可靠。
     const hasPhysioNow = PHYSIO_FIELDS.some(field => merged[field] !== undefined && merged[field] !== null && String(merged[field] ?? '').trim() !== '');
-    if (!hasPhysioNow) {
-        delete merged['生理周期日期'];
+    if (hasPhysioNow) {
+        const physioRange = parseStoryTimeRange(storyTimeText);
+        if (physioRange.endTs)
+            merged['生理周期日期'] = fmtStoryTime(physioRange.endTs);
     }
     else {
-        const rawDate = String(update['生理周期日期'] ?? '').trim();
-        if (rawDate && parseStoryTime(rawDate) !== null) {
-            merged['生理周期日期'] = rawDate.replace(/[./]/g, '-');
-        }
-        else if (!merged['生理周期日期']) {
-            const physioRange = parseStoryTimeRange(storyTimeText);
-            if (physioRange.endTs)
-                merged['生理周期日期'] = fmtStoryTime(physioRange.endTs);
-        }
+        delete merged['生理周期日期'];
     }
     merged['最后更新'] = Date.now();
     return merged;
