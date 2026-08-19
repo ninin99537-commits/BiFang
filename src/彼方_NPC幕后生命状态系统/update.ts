@@ -392,10 +392,12 @@ function validateParsedFormat(parsed, existingNpcNames = new Set(), existingCard
         if (missingNormal.length > 0) {
             console.warn(`[彼方] NPC「${npcName}」缺失字段: ${missingNormal.join('、')}(保留旧值)`);
         }
-        if ((isNew || isInScene) && !('可能偶遇' in (card ?? {}))) {
+        // 「可能偶遇」是仅不在场 NPC 需要的扩展字段(在场 NPC 已在场景中, 不需要偶遇标记):
+        // 只强制不在场的新 NPC 返回它; 在场 NPC 一律不要求、不警告
+        if (isNew && !isInScene && !('可能偶遇' in (card ?? {}))) {
             throw Error(`NPC「${npcName}」缺少字段「可能偶遇」, 必须补全所有字段后重新输出`);
         }
-        if (!('可能偶遇' in (card ?? {}))) {
+        if (!isInScene && !('可能偶遇' in (card ?? {}))) {
             console.warn(`[彼方] NPC「${npcName}」缺失「可能偶遇」(保留旧值)`);
         }
         // 生理字段: 生理监测开启且判定为女性(本卡或旧卡出现过生理字段)时, 全部生理字段缺失即抛错重试
