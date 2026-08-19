@@ -392,11 +392,8 @@ function validateParsedFormat(parsed, existingNpcNames = new Set(), existingCard
         if (missingNormal.length > 0) {
             console.warn(`[彼方] NPC「${npcName}」缺失字段: ${missingNormal.join('、')}(保留旧值)`);
         }
-        // 「可能偶遇」是仅不在场 NPC 需要的扩展字段(在场 NPC 已在场景中, 不需要偶遇标记):
-        // 只强制不在场的新 NPC 返回它; 在场 NPC 一律不要求、不警告
-        if (isNew && !isInScene && !('可能偶遇' in (card ?? {}))) {
-            throw Error(`NPC「${npcName}」缺少字段「可能偶遇」, 必须补全所有字段后重新输出`);
-        }
+        // 「可能偶遇」是扩展字段(仅不在场 NPC 需要; 在场 NPC 已在场景中, 不需要偶遇标记)。
+        // 缺失一律不抛错(避免频繁重试), 只对不在场 NPC 保留警告, 让 AI 有机会补上
         if (!isInScene && !('可能偶遇' in (card ?? {}))) {
             console.warn(`[彼方] NPC「${npcName}」缺失「可能偶遇」(保留旧值)`);
         }
@@ -612,6 +609,42 @@ function extractPregnancyWeek(physioText) {
     const m = String(physioText ?? '').match(/孕\s*(\d+)\s*周/);
     return m ? +m[1] : null;
 }
+/**
+ * 生理周期按剧情时间校正: 以"上次生理周期日期"(彼方记录的旧卡字段)到本次剧情结束时刻的
+ * **真实天数差**推进 Day/孕周, 修正 AI 凭轮次惯性乱跳的问题(同一天/过一晚就 +1~+2 天)。
+ * - 不足一天(同一天/几小时内): 强制 Day/孕周保持与旧卡一致(不改动)
+ * - 超过一天: Day = 旧Day + 天数差, 超过锁定周期长度归零进入新周期; 孕期按总天数推进
+ * - 旧卡无"生理周期日期"、剧情时间不可解析或时间倒退时跳过(以 AI 输出为准)
+ */
+function correctPhysioByStoryTime(merged, oldCard, storyTimeText) {
+    const oldDate = oldCard?.['生理周期日期'];
+    if (!oldDate)
+        return;
+    const range = parseStoryTimeRange(storyTimeText);
+    const endTs = range.endTs;
+    const oldTs = parseStoryTime(String(oldDate).trim());
+    if (endTs === null || oldTs === null || endTs <= oldTs)
+        return;
+    const days = Math.max(0, Math.floor((endTs - oldTs) / 86400000));
+    const oldPhy = String(oldCard?.['生理周期'] ?? '').trim();
+    if (!oldPhy)
+        return;
+    // 孕期: 以旧卡孕周为基准按天数推进(生理事实不倒退)
+    const oldPreg = oldPhy.match(/孕期\s*孕(\d+)\s*周\s*\+\s*(\d+)\s*天/);
+    if (oldPreg) {
+        const total = (+oldPreg[1]) * 7 + (+oldPreg[2]) + days;
+        merged['生理周期'] = `孕期 孕${Math.floor(total / 7)}周+${total % 7}天`;
+        return;
+    }
+    // 普通周期: 以旧卡 Day 为基准推进, 超过周期长度归零进入新周期
+    const oldDay = extractCycleDay(oldPhy);
+    const cycleLen = merged['周期长度'];
+    if (oldDay === null || !cycleLen || typeof merged['生理周期'] !== 'string' || !merged['生理周期'])
+        return;
+    const newDay = ((oldDay - 1 + days) % cycleLen) + 1;
+    merged['生理周期'] = String(merged['生理周期'])
+        .replace(/Day\s*\d+(?:\/\d+)?/i, `Day ${newDay}/${cycleLen}`);
+}
 /** 「怀孕知晓」的合法取值: 反映 NPC 本人对自己怀孕的知晓程度(防全知) */
 const PREGNANCY_KNOWN_UNKNOWN = '未知';
 const PREGNANCY_KNOWN_SUSPECT = '疑似';
@@ -660,6 +693,9 @@ function mergeCard(oldCard, update, storyTimeText = '') {
             merged['周期长度'] = PHYSIO_CYCLE_MIN + Math.floor(Math.random() * (PHYSIO_CYCLE_MAX - PHYSIO_CYCLE_MIN + 1));
         }
     }
+    // 生理周期按剧情时间校正: 以"生理周期日期"到本次剧情时间的真实天数差强制修正 Day/孕周,
+    // 防止 AI 凭轮次惯性乱跳(同一天多次变、过一晚+2)。放在受孕判定前, 让判定使用校正后的 Day。
+    correctPhysioByStoryTime(merged, oldCard, storyTimeText);
     // 受孕判定: 由彼方代码执行(掷D100+算受孕率+更新是否怀孕), AI 只负责报告受孕事件。
     // **只对本次剧情时间窗口内新发生的受孕事件判定**——旧事件(如剧情已跨过一晚仍被 AI 沿用的)
     // 会被 applyConceptionCheck 按事件时间过滤掉, 避免同一事件反复掷骰刷怀孕。
@@ -692,6 +728,17 @@ function mergeCard(oldCard, update, storyTimeText = '') {
     // 曾用名: AI 在改名时标注的旧名(如"林姐"其实是"林淑仪"), 保留供彼方识别与合并
     if (update['曾用名'] && typeof update['曾用名'] === 'string' && update['曾用名'].trim()) {
         merged['曾用名'] = update['曾用名'].trim();
+    }
+    // 生理周期日期: 由彼方维护的只读参考字段(每次更新覆盖, 不信任 AI 输出)——记录本次剧情
+    // 结束时刻, 供 AI 按真实天数差推进 Day/孕周(防跳天), 也供 correctPhysioByStoryTime 校正。
+    const hasPhysioNow = PHYSIO_FIELDS.some(field => merged[field] !== undefined && merged[field] !== null && String(merged[field] ?? '').trim() !== '');
+    if (hasPhysioNow) {
+        const physioRange = parseStoryTimeRange(storyTimeText);
+        if (physioRange.endTs)
+            merged['生理周期日期'] = fmtStoryTime(physioRange.endTs);
+    }
+    else {
+        delete merged['生理周期日期'];
     }
     merged['最后更新'] = Date.now();
     return merged;
