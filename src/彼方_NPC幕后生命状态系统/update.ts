@@ -610,11 +610,11 @@ function extractPregnancyWeek(physioText) {
     return m ? +m[1] : null;
 }
 /**
- * 生理周期按剧情时间校正: 以"上次生理周期日期"(彼方记录的旧卡字段)到本次剧情结束时刻的
- * **真实天数差**推进 Day/孕周, 修正 AI 凭轮次惯性乱跳的问题(同一天/过一晚就 +1~+2 天)。
+ * 生理周期兜底校正: 以旧卡中(AI 维护的)"生理周期日期"到本次剧情结束时刻的
+ * **真实天数差**推进 Day/孕周, 纠正 AI 偶发失误(同一天/过一晚就 +1~+2 天)。
+ * 仅供兜底——AI 自行正确推进时不冲突; 旧卡无基准/剧情时间不可解析/时间倒退时跳过。
  * - 不足一天(同一天/几小时内): 强制 Day/孕周保持与旧卡一致(不改动)
  * - 超过一天: Day = 旧Day + 天数差, 超过锁定周期长度归零进入新周期; 孕期按总天数推进
- * - 旧卡无"生理周期日期"、剧情时间不可解析或时间倒退时跳过(以 AI 输出为准)
  */
 function correctPhysioByStoryTime(merged, oldCard, storyTimeText) {
     const oldDate = oldCard?.['生理周期日期'];
@@ -729,16 +729,24 @@ function mergeCard(oldCard, update, storyTimeText = '') {
     if (update['曾用名'] && typeof update['曾用名'] === 'string' && update['曾用名'].trim()) {
         merged['曾用名'] = update['曾用名'].trim();
     }
-    // 生理周期日期: 由彼方维护的只读参考字段(每次更新覆盖, 不信任 AI 输出)——记录本次剧情
-    // 结束时刻, 供 AI 按真实天数差推进 Day/孕周(防跳天), 也供 correctPhysioByStoryTime 校正。
+    // 生理周期日期: 由 AI 维护——每次剧情跨时间(跨天/多天/周/月/年)时更新为当前剧情日期,
+    // AI 据此判断 Day/孕周变不变、变多少。彼方只做两件事:
+    // 1) 仅接受合法日期格式(YYYY-MM-DD[ HH:mm]), 非法输入保留旧值;
+    // 2) 新卡/历史卡缺基准时, 用本次剧情结束时刻兜底补一个初始日期。
     const hasPhysioNow = PHYSIO_FIELDS.some(field => merged[field] !== undefined && merged[field] !== null && String(merged[field] ?? '').trim() !== '');
-    if (hasPhysioNow) {
-        const physioRange = parseStoryTimeRange(storyTimeText);
-        if (physioRange.endTs)
-            merged['生理周期日期'] = fmtStoryTime(physioRange.endTs);
+    if (!hasPhysioNow) {
+        delete merged['生理周期日期'];
     }
     else {
-        delete merged['生理周期日期'];
+        const rawDate = String(update['生理周期日期'] ?? '').trim();
+        if (rawDate && parseStoryTime(rawDate) !== null) {
+            merged['生理周期日期'] = rawDate.replace(/[./]/g, '-');
+        }
+        else if (!merged['生理周期日期']) {
+            const physioRange = parseStoryTimeRange(storyTimeText);
+            if (physioRange.endTs)
+                merged['生理周期日期'] = fmtStoryTime(physioRange.endTs);
+        }
     }
     merged['最后更新'] = Date.now();
     return merged;
