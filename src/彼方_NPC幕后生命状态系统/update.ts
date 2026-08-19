@@ -623,6 +623,18 @@ function extractPregnancyWeek(physioText) {
     const m = String(physioText ?? '').match(/孕\s*(\d+)\s*周/);
     return m ? +m[1] : null;
 }
+/** 由 Day 与锁定周期长度推算阶段名(与提示词规则一致): 排卵日 = 周期长度 - 14;
+ *  月经期 Day1~5, 卵泡期 Day6~排卵日-2, 排卵期 排卵日±1, 黄体期 排卵日+2~周期长度 */
+function cycleStageName(day, cycleLen) {
+    const ovuDay = cycleLen - 14;
+    if (day >= 1 && day <= 5)
+        return '月经期';
+    if (day >= 6 && day <= ovuDay - 2)
+        return '卵泡期';
+    if (day >= ovuDay - 1 && day <= ovuDay + 1)
+        return '排卵期';
+    return '黄体期';
+}
 /**
  * 生理周期兜底校正: 以旧卡中(AI 维护的)"生理周期日期"到本次剧情结束时刻的
  * **真实天数差**推进 Day/孕周, 纠正 AI 偶发失误(同一天/过一晚就 +1~+2 天)。
@@ -751,6 +763,20 @@ function mergeCard(oldCard, update, storyTimeText = '') {
         // 匹配 "Day X/任意分母" 或 "Day X" 后补分母; 孕期文本不动(没有 Day 结构)
         merged['生理周期'] = String(merged['生理周期'])
             .replace(/Day\s*\d+\/\d+/gi, (m) => m.replace(/\/\d+$/, `/${lockedLen}`));
+    }
+    // 阶段名重算(与提示词阶段判定规则一致, 排卵日=周期长度-14): 阶段由 Day 决定,
+    // 防止 AI 惯性写错阶段名——如 "Day 22/22" 却被写成排卵期(实际排卵期只有排卵日±1)。
+    // 放在分母修正之后, 此时 Day 为最终值。孕期文本没有 Day 结构, 不受影响。
+    {
+        const finalPhy = typeof merged['生理周期'] === 'string' ? merged['生理周期'] : '';
+        const dayOnly = finalPhy.match(/Day\s*(\d+)/i);
+        if (dayOnly && merged['周期长度']) {
+            const stage = cycleStageName(+dayOnly[1], merged['周期长度']);
+            const hasStage = /^(月经期|卵泡期|排卵期|黄体期|经前期|孕期|哺乳期)\s*/.test(finalPhy);
+            merged['生理周期'] = hasStage
+                ? finalPhy.replace(/^(月经期|卵泡期|排卵期|黄体期|经前期|孕期|哺乳期)\s*/, `${stage} `)
+                : `${stage} ${finalPhy}`;
+        }
     }
     // 清理旧版生理字段残留(累计受孕率/受孕率记录/生理结算 已被新系统取代)
     delete merged['累计受孕率'];
