@@ -636,7 +636,14 @@ function correctPhysioByStoryTime(merged, oldCard, storyTimeText) {
         return;
     const range = parseStoryTimeRange(storyTimeText);
     const endTs = range.endTs;
-    const oldTs = parseStoryTime(String(oldDate).trim());
+    // 兼容旧数据: 早期 fmtStoryTime 年份没补零(如 "137-06-12 07:45"), 补零到4位再解析
+    const rawDate = String(oldDate).trim();
+    let oldTs = parseStoryTime(rawDate);
+    if (oldTs === null) {
+        const m = rawDate.match(/^(\d{1,3})([-/.]\d)/);
+        if (m)
+            oldTs = parseStoryTime(m[1].padStart(4, '0') + m[2] + rawDate.slice(m[0].length));
+    }
     if (endTs === null || oldTs === null || endTs <= oldTs)
         return;
     const days = Math.max(0, Math.floor((endTs - oldTs) / 86400000));
@@ -715,6 +722,20 @@ function mergeCard(oldCard, update, storyTimeText = '') {
     // 会被 applyConceptionCheck 按事件时间过滤掉, 避免同一事件反复掷骰刷怀孕。
     if (本次有新受孕事件)
         applyConceptionCheck(merged, oldCard, storyTimeText);
+    // 一致性兜底(防孕期丢失): "是否怀孕=true"的角色, 生理周期必须是孕期文本——
+    // 若 AI 误把孕期写成普通周期(如"排卵期 Day 12/25"), 强制改回孕期; 孕周优先从旧卡恢复。
+    // 反向: 生理周期已是孕期但"是否怀孕"未标记, 补标记为 true。
+    const isPregnantNow = String(merged['是否怀孕'] ?? '') === 'true' || String(merged['是否怀孕']) === '是';
+    const phyNow = typeof merged['生理周期'] === 'string' ? merged['生理周期'] : '';
+    if (isPregnantNow && !phyNow.includes('孕期')) {
+        const oldWeek = extractPregnancyWeek(String(oldCard?.['生理周期'] ?? ''));
+        merged['生理周期'] = oldWeek !== null ? `孕期 孕${oldWeek}周+0天` : `孕期 孕0周+0天`;
+        console.warn(`[彼方] ${merged['曾用名'] || ''} 生理周期被AI写回普通周期, 已强制恢复为孕期`);
+    }
+    else if (!isPregnantNow && phyNow.includes('孕期')) {
+        merged['是否怀孕'] = 'true';
+        console.warn(`[彼方] ${merged['曾用名'] || ''} 生理周期为孕期但"是否怀孕"未标记, 已补标记`);
+    }
     // 怀孕知晓: AI 维护的 NPC 自我认知字段(仅孕期角色), 只接受合法取值, 非法/空值忽略(走下方兜底)
     if (update['怀孕知晓'] !== undefined) {
         const known = String(update['怀孕知晓'] ?? '').trim();
@@ -803,21 +824,25 @@ function withStoryDate(text, storyTimeText) {
         .replace(/昨天\s*(\d{1,2})\s*[:：]\s*(\d{1,2})/g, `${yesterday} $1:$2`)
         .replace(/昨天\s*(\d{1,2})\s*点\s*(\d{1,2})?\s*分?/g, (_, h, m) => `${yesterday} ${h}:${m ? m.padStart(2, '0') : '00'}`);
 }
-/** 解析剧情时间为时间戳（支持 YYYY-MM-DD HH:mm、YYYY.MM.DD HH:mm、YYYY/MM/DD 等，分钟可省略） */
+/** 解析剧情时间为时间戳（支持 YYYY-MM-DD HH:mm、YYYY.MM.DD HH:mm、YYYY/MM/DD 等，分钟可省略）。
+ * 年份固定 4 位数字(如 0004/0025/0137); 用 setFullYear 构造, 避免 JS 对 0~99 年份自动映射到 1900+ */
 function parseStoryTime(text) {
     const t = text.trim().replace(/[./]/g, '-');
     const match = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{1,2}))?$/);
     if (!match)
         return null;
     const [, year, month, day, hour, minute] = match;
-    const ts = new Date(+year, +month - 1, +day, +(hour ?? 0), +(minute ?? 0)).getTime();
+    const d = new Date(0);
+    d.setFullYear(+year, +month - 1, +day);
+    d.setHours(+(hour ?? 0), +(minute ?? 0), 0, 0);
+    const ts = d.getTime();
     return Number.isNaN(ts) ? null : ts;
 }
-/** 时间戳格式化为 "YYYY-MM-DD HH:mm" */
+/** 时间戳格式化为 "YYYY-MM-DD HH:mm"（年份固定 4 位补零, 如 0137-06-12 07:45） */
 function fmtStoryTime(ts) {
     const date = new Date(ts);
     const pad = (n) => String(n).padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    return `${String(date.getFullYear()).padStart(4, '0')}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 /** 解析 AI 返回的"剧情时间"（兼容字符串或 {开始, 结束} 对象）为起止时间戳 */
 function parseStoryTimeRange(raw) {
