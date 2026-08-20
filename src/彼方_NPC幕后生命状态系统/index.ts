@@ -35,7 +35,7 @@ async function handleMessageReceived(message_id) {
         return;
     // 正文回复过短(疑似被截断/内容太少、没有足够剧情)时跳过自动更新, 避免浪费一次更新请求
     const replyText = String(latest.message || '').replace(/\s+/g, '').trim();
-    if (replyText.length < 100) {
+    if (replyText.length < 300) {
         console.warn(`[彼方] 最新正文回复过短(${replyText.length}字), 疑似被截断, 已跳过本次自动更新`);
         return;
     }
