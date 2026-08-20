@@ -690,9 +690,12 @@ function correctPhysioByStoryTime(merged, oldCard, storyTimeText) {
         if (m)
             oldTs = parseStoryTime(m[1].padStart(4, '0') + m[2] + rawDate.slice(m[0].length));
     }
-    if (endTs === null || oldTs === null || endTs <= oldTs)
+    if (endTs === null || oldTs === null)
         return;
-    // 按日历日差推进(忽略时分): 跨午夜(23:45→00:20)算 1 天, 同日算 0 天
+    // 按日历日差推进(忽略时分): 跨午夜(23:45→00:20)算 1 天, 同日算 0 天。
+    // 注意: 剧情时间与上次同刻或倒退(endTs <= oldTs)时**不跳过**——days 会被
+    // Math.max(0) 压成 0, 强制把 Day/孕周拉回旧卡值, 防止 AI 乱写(如手动重更时
+    // AI 把 Day6 又写成 Day20, 却因 endTs==oldTs 而跳过校正直接入库)。
     const days = Math.max(0, Math.round((dateOnlyTs(endTs) - dateOnlyTs(oldTs)) / 86400000));
     const oldPhy = String(oldCard?.['生理周期'] ?? '').trim();
     if (!oldPhy)
