@@ -1056,6 +1056,15 @@ function saveEditNpc() {
       else delete card[field];
     }
   }
+  // 额外可编辑字段(不在 CARD_FIELDS 中, 由彼方/AI 维护, 但允许玩家手动调整):
+  // 受孕日期——修改它即可调整孕周时间线, 彼方会按 (当前剧情日期-受孕日期) 重算孕周
+  for (const field of ['受孕日期']) {
+    const v = editDraft.value[field];
+    if (typeof v === 'string') {
+      if (v.trim()) card[field] = v.trim();
+      else delete card[field];
+    }
+  }
   if ('可能偶遇' in editDraft.value) {
     const raw = editDraft.value['可能偶遇'];
     card['可能偶遇'] = typeof raw === 'boolean' ? raw : raw === 'true' || raw === '是' || raw === '会';
@@ -1104,7 +1113,7 @@ function npcStatusText(card: NpcStateCard): string {
 const DETAIL_GROUPS: Record<string, string[]> = {
   生活: ['生活状态', '接下来想做', '当前目标', '最近变化', '未完成事项'],
   内心: ['心里惦记', '秘密想法', '隐藏目标'],
-  生理: ['生理周期', '生理周期日期', '是否怀孕', '怀孕知晓', '周期影响', '当前防护', '近期性行为'],
+  生理: ['生理周期', '生理周期日期', '受孕日期', '是否怀孕', '怀孕知晓', '周期影响', '当前防护', '近期性行为'],
 };
 
 const detailFields = computed(() =>
