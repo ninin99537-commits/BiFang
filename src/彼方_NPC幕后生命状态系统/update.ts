@@ -705,6 +705,12 @@ function correctPhysioByStoryTime(merged, oldCard, storyTimeText) {
     // 彻底不依赖 AI/旧卡孕周(它们可能被 AI 写快后越推越快)。
     // 无受孕日期(存量旧卡)时退回: 旧卡孕周 + 天数差。
     const oldPreg = oldPhy.match(/孕期\s*孕(\d+)\s*周\s*\+\s*(\d+)\s*天/);
+    // 关键: 旧卡是孕期, 但 AI 已把生理周期改为**非孕期**(哺乳期/普通周期) = AI 明确结束
+    // 孕期(剧情写了分娩/孩子出生)。此时**不强制改回孕期**——否则 AI 输出哺乳期会被
+    // 下面的孕期分支(受孕日期重算/旧卡孕周推进)覆盖回孕期, 导致"分娩了还显示孕期"。
+    if (oldPreg && !String(merged['生理周期'] ?? '').includes('孕期')) {
+        return;
+    }
     const pregDate = merged['受孕日期'] || oldCard?.['受孕日期'];
     if (pregDate) {
         const pregTs = parseStoryTime(String(pregDate).trim());
@@ -801,12 +807,19 @@ function mergeCard(oldCard, update, storyTimeText = '') {
     // 会被 applyConceptionCheck 按事件时间过滤掉, 避免同一事件反复掷骰刷怀孕。
     if (本次有新受孕事件)
         applyConceptionCheck(merged, oldCard, storyTimeText);
-    // 一致性兜底(防孕期丢失): "是否怀孕=true"的角色, 生理周期必须是孕期文本——
-    // 若 AI 误把孕期写成普通周期(如"排卵期 Day 12/25"), 强制改回孕期; 孕周优先从旧卡恢复。
+    // 一致性兜底: "是否怀孕=true"的角色, 生理周期必须是孕期文本——
+    // 若 AI 误把孕期写成普通周期(如"排卵期 Day 12/25", 非哺乳期), 强制改回孕期; 孕周优先从旧卡恢复。
     // 反向: 生理周期已是孕期但"是否怀孕"未标记, 补标记为 true。
+    // 例外: 生理周期为「哺乳期」= AI 明确结束孕期(剧情已分娩), 强制补 是否怀孕=false 并清残留,
+    // 不得恢复孕期——否则"分娩了还显示孕期"。
     const isPregnantNow = String(merged['是否怀孕'] ?? '') === 'true' || String(merged['是否怀孕']) === '是';
     const phyNow = typeof merged['生理周期'] === 'string' ? merged['生理周期'] : '';
-    if (isPregnantNow && !phyNow.includes('孕期')) {
+    if (phyNow.includes('哺乳期')) {
+        merged['是否怀孕'] = 'false';
+        delete merged['受孕日期'];
+        delete merged['怀孕知晓'];
+    }
+    else if (isPregnantNow && !phyNow.includes('孕期')) {
         const oldWeek = extractPregnancyWeek(String(oldCard?.['生理周期'] ?? ''));
         merged['生理周期'] = oldWeek !== null ? `孕期 孕${oldWeek}周+0天` : `孕期 孕0周+0天`;
         console.warn(`[彼方] ${merged['曾用名'] || ''} 生理周期被AI写回普通周期, 已强制恢复为孕期`);
