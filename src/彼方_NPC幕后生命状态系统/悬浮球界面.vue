@@ -642,6 +642,12 @@
                       </label>
                       <div class="bf-hint">开启后，彼方更新时会为女性NPC维护「生理监测」字段（周期/受孕率/结算规则），并随状态注入主AI提示词</div>
                       <label class="bf-toggle">
+                        <input v-model="settings.更新.gemini3.7f破限" type="checkbox" />
+                        <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                        <span class="bf-toggle-text">gemini3.7f破限</span>
+                      </label>
+                      <div class="bf-hint">开启后向更新提示词注入 Dramatron 身份强化（陨落的天才）与 THINKING TOKEN BUDGET: NONE 防截断段（牢大防截断），适合 Gemini 3.7 Flash；该模型 3.6F 起不支持预填充，可配合关闭"预填充"使用</div>
+                      <label class="bf-toggle">
                         <input v-model="settings.更新.注入世界书" type="checkbox" />
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">给彼方接口注入世界书内容</span>
