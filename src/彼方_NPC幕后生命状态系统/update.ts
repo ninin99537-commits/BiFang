@@ -431,8 +431,11 @@ function validateParsedFormat(parsed, existingNpcNames = new Set(), existingCard
         const oldHasPhysio = !!oldCard && PHYSIO_FIELDS.some(field => oldCard[field] !== undefined && oldCard[field] !== null && String(oldCard[field] ?? '').trim() !== '');
         const isFemale = cardHasPhysio || (physioEnabled && oldHasPhysio);
         const missingPhysio = PHYSIO_FIELDS.filter(field => card?.[field] === undefined || card?.[field] === null || (typeof card?.[field] === 'string' && !card[field].trim()));
-        if (physioEnabled && isFemale && missingPhysio.length > 0) {
-            throw Error(`NPC「${npcName}」缺少生理字段: ${missingPhysio.join('、')}, 必须补全后重新输出`);
+        // 「是否怀孕」由彼方代码掷骰判定并写回(AI 只负责报告受孕事件), AI 漏写不抛错,
+        // 代码会兜底(mergeCard 保留旧值 / 受孕判定写值); 其余生理字段缺失仍抛错重试
+        const missingPhysioStrict = missingPhysio.filter(field => field !== '是否怀孕');
+        if (physioEnabled && isFemale && missingPhysioStrict.length > 0) {
+            throw Error(`NPC「${npcName}」缺少生理字段: ${missingPhysioStrict.join('、')}, 必须补全后重新输出`);
         }
         if (cardHasPhysio && missingPhysio.length > 0) {
             console.warn(`[彼方] NPC「${npcName}」缺失生理字段: ${missingPhysio.join('、')}(保留旧值)`);
