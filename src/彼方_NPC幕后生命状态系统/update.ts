@@ -818,6 +818,19 @@ function mergeCard(oldCard, update, storyTimeText = '') {
         merged['是否怀孕'] = 'false';
         delete merged['受孕日期'];
         delete merged['怀孕知晓'];
+        // 记录哺乳期开始日期(首次进入时, 供后续判断哺乳期是否超期): 哺乳期是产后约6个月的
+        // 短期状态, 超过后应恢复普通周期(由 AI 按提示词处理), 代码在超期时只告警不强制
+        const physioEndNow = parseStoryTimeRange(storyTimeText).endTs;
+        if (!merged['哺乳期开始日期'] && physioEndNow !== null)
+            merged['哺乳期开始日期'] = fmtStoryTime(physioEndNow);
+        // 哺乳期超期告警(>180天): 提示 AI 按提示词恢复普通周期(不强制改, 尊重剧情)
+        const lactStartRaw = String(merged['哺乳期开始日期'] ?? '').trim();
+        if (lactStartRaw && physioEndNow !== null) {
+            const lactStartTs = parseStoryTime(lactStartRaw);
+            if (lactStartTs !== null && physioEndNow - lactStartTs > 180 * 86400000) {
+                console.warn(`[彼方] ${merged['曾用名'] || ''} 哺乳期已超过6个月(自${lactStartRaw}), 应按提示词恢复普通周期(剧情已断奶/孩子长大)`);
+            }
+        }
     }
     else if (isPregnantNow && !phyNow.includes('孕期')) {
         const oldWeek = extractPregnancyWeek(String(oldCard?.['生理周期'] ?? ''));
@@ -836,6 +849,9 @@ function mergeCard(oldCard, update, storyTimeText = '') {
     }
     // 防全知兜底: 未怀孕清理该字段; 孕期缺该字段(旧卡升级)按孕周补初始知晓度
     ensurePregnancyKnowledge(merged);
+    // 哺乳期开始日期清理: 不再处于哺乳期时清除(哺乳期已结束/从未进入)
+    if (!String(merged['生理周期'] ?? '').includes('哺乳期'))
+        delete merged['哺乳期开始日期'];
     // 生理周期字段的分母修正: AI 常惯性写 "Day X/28", 但周期长度是锁定的个体值(21~35)。
     // 这里用锁定的周期长度自动替换分母, 不依赖 AI 自觉——保证排卵日计算(锁定长度-14)正确。
     if (merged['周期长度'] && typeof merged['生理周期'] === 'string' && merged['生理周期']) {
