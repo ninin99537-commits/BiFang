@@ -857,14 +857,25 @@ function mergeCard(oldCard, update, storyTimeText = '') {
     if (update['曾用名'] && typeof update['曾用名'] === 'string' && update['曾用名'].trim()) {
         merged['曾用名'] = update['曾用名'].trim();
     }
-    // 生理周期日期: 由彼方代码维护的只读参考字段(每次更新覆盖, 不信任 AI 输出)——记录本次剧情
-    // 结束时刻, 供 AI 按真实天数差推进 Day/孕周(防跳天), 也供 correctPhysioByStoryTime 校正。
-    // AI 的"剧情时间"被校验强制为 YYYY-MM-DD HH:mm(年份4位补零), 因此这里解析可靠。
+    // 生理周期日期: 由彼方代码维护的只读参考字段——记录"上次推进到哪一天"的剧情结束时刻,
+    // 供 AI 按真实天数差推进 Day/孕周(防跳天), 也供 correctPhysioByStoryTime 校正。
+    // 关键: **剧情时间倒退/同刻时保留旧基准, 不回退**——否则重roll/删楼层后基准变小,
+    // 之后 days 从倒退日期算起会虚增, Day 越推越快。
     const hasPhysioNow = PHYSIO_FIELDS.some(field => merged[field] !== undefined && merged[field] !== null && String(merged[field] ?? '').trim() !== '');
     if (hasPhysioNow) {
         const physioRange = parseStoryTimeRange(storyTimeText);
-        if (physioRange.endTs)
-            merged['生理周期日期'] = fmtStoryTime(physioRange.endTs);
+        if (physioRange.endTs) {
+            const curPhysioTs = physioRange.endTs;
+            const oldPhysioRaw = merged['生理周期日期'] ? String(merged['生理周期日期']).trim() : '';
+            let oldPhysioTs = oldPhysioRaw ? parseStoryTime(oldPhysioRaw) : null;
+            if (oldPhysioTs === null) {
+                const m = oldPhysioRaw.match(/^(\d{1,3})([-/.]\d)/);
+                if (m)
+                    oldPhysioTs = parseStoryTime(m[1].padStart(4, '0') + m[2] + oldPhysioRaw.slice(m[0].length));
+            }
+            if (oldPhysioTs === null || curPhysioTs >= oldPhysioTs)
+                merged['生理周期日期'] = fmtStoryTime(curPhysioTs);
+        }
     }
     else {
         delete merged['生理周期日期'];
