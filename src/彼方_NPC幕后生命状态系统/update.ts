@@ -25,15 +25,17 @@ function escapeRegExp(text) {
 }
 function stripTagContent(text, tag) {
     const escaped = escapeRegExp(tag);
-    // \b 只对 ASCII 有效, 中文标签用 (?![a-zA-Z0-9]) 作边界(后面不是 ASCII 字母数字即可)
-    const boundary = '(?![a-zA-Z0-9])';
+    // 边界排除 ASCII 字母/数字/下划线/连字符: \b 只对 ASCII 有效, 中文标签需自定边界;
+    // 必须排除 _ 和 -, 否则标签 "summary" 会误匹配 "<summary_format>"(下划线不算字母数字),
+    // 导致 summary_format 块被当作 summary 误删
+    const boundary = '(?![a-zA-Z0-9_-])';
     let result = text.replace(new RegExp(`<${escaped}${boundary}[^>]*>[\\s\\S]*?<\\/${escaped}>`, 'gi'), '');
     result = result.replace(new RegExp(`<${escaped}${boundary}[^>]*\\/?>`, 'gi'), '');
     return result;
 }
 function extractTagContent(text, tag) {
     const escaped = escapeRegExp(tag);
-    const boundary = '(?![a-zA-Z0-9])';
+    const boundary = '(?![a-zA-Z0-9_-])';
     const matches = [];
     const re = new RegExp(`<${escaped}${boundary}[^>]*>([\\s\\S]*?)<\\/${escaped}>`, 'gi');
     let match;
@@ -42,18 +44,17 @@ function extractTagContent(text, tag) {
     }
     return matches;
 }
+/**
+ * 清除"孤立闭合标签"(只有 </tag> 没有配对 <tag> 的残留)。
+ * **只删除闭合标签本身, 绝不从文本开头删到它**——否则正文里若出现某个过滤标签的
+ * 孤立闭合(如模型残留 </summary_format> 或正文合法出现的 </xxx>), 会把整段正文删光。
+ * (旧逻辑"从楼层开头删到闭合标签"针对无开标签的思维链, 但误伤正文, 已废弃)
+ */
 function stripLoneClosingBlocks(text, tag) {
     const escaped = escapeRegExp(tag);
-    const boundary = '(?![a-zA-Z0-9])';
+    const boundary = '(?![a-zA-Z0-9_-])';
     const closeRe = new RegExp(`</${escaped}${boundary}[^>]*>`, 'gi');
-    let result = text;
-    let match;
-    while ((match = closeRe.exec(result)) !== null) {
-        const closeEnd = match.index + match[0].length;
-        result = result.slice(closeEnd);
-        closeRe.lastIndex = 0;
-    }
-    return result;
+    return text.replace(closeRe, '');
 }
 function createTextFilter(settings) {
     const tags = (settings.标签?.列表 ?? []).map(tag => tag.trim().replace(/^<|>$/g, '')).filter(Boolean);
