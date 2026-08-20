@@ -613,7 +613,13 @@ function applyConceptionCheck(merged, oldCard, storyTimeText = '') {
             merged['生理周期'] = `孕期 孕0周+0天`;
         // 防全知: 刚受孕的 NPC 本人完全不知情, 知晓状态固定为"未知"
         merged['怀孕知晓'] = '未知';
-        console.info(`[彼方] ${merged['曾用名'] || ''} 判定为怀孕, 生理周期转孕期(本人尚不知晓)`);
+        // 记录受孕日期(剧情时间): 优先用受孕事件时间, 解析失败用剧情结束时刻。
+        // 这是孕周推进的**绝对基准**——之后孕周一律按"当前剧情日期 - 受孕日期"重算,
+        // 彻底摆脱 AI/旧卡孕周被写快后越推越快的问题。
+        const pregTs = evTs !== null ? evTs : range.endTs;
+        if (pregTs !== null)
+            merged['受孕日期'] = fmtStoryTime(pregTs);
+        console.info(`[彼方] ${merged['曾用名'] || ''} 判定为怀孕, 生理周期转孕期(本人尚不知晓), 受孕日期=${merged['受孕日期'] || '(未知)'}`);
     }
     else if (String(merged['是否怀孕'] ?? '') !== 'false') {
         merged['是否怀孕'] = 'false';
@@ -691,8 +697,19 @@ function correctPhysioByStoryTime(merged, oldCard, storyTimeText) {
     const oldPhy = String(oldCard?.['生理周期'] ?? '').trim();
     if (!oldPhy)
         return;
-    // 孕期: 以旧卡孕周为基准按天数推进(生理事实不倒退)
+    // 孕期: 优先按「受孕日期」重算孕周 = (当前剧情结束日期 - 受孕日期)的天数,
+    // 彻底不依赖 AI/旧卡孕周(它们可能被 AI 写快后越推越快)。
+    // 无受孕日期(存量旧卡)时退回: 旧卡孕周 + 天数差。
     const oldPreg = oldPhy.match(/孕期\s*孕(\d+)\s*周\s*\+\s*(\d+)\s*天/);
+    const pregDate = merged['受孕日期'] || oldCard?.['受孕日期'];
+    if (pregDate) {
+        const pregTs = parseStoryTime(String(pregDate).trim());
+        if (pregTs !== null && endTs !== null && endTs > pregTs) {
+            const totalDays = Math.max(0, Math.round((dateOnlyTs(endTs) - dateOnlyTs(pregTs)) / 86400000));
+            merged['生理周期'] = `孕期 孕${Math.floor(totalDays / 7)}周+${totalDays % 7}天`;
+            return;
+        }
+    }
     if (oldPreg) {
         const total = (+oldPreg[1]) * 7 + (+oldPreg[2]) + days;
         merged['生理周期'] = `孕期 孕${Math.floor(total / 7)}周+${total % 7}天`;
@@ -753,6 +770,23 @@ function mergeCard(oldCard, update, storyTimeText = '') {
         const hasPhysio = PHYSIO_FIELDS.some(field => merged[field] !== undefined && merged[field] !== null && String(merged[field] ?? '').trim() !== '');
         if (hasPhysio) {
             merged['周期长度'] = PHYSIO_CYCLE_MIN + Math.floor(Math.random() * (PHYSIO_CYCLE_MAX - PHYSIO_CYCLE_MIN + 1));
+        }
+    }
+    // 受孕日期兜底(存量孕期卡): 孕期但缺「受孕日期」(旧版本受孕的卡)时, 用旧卡孕周反推
+    // 受孕日 = 本次剧情结束时刻 - 孕周总天数, 作为后续孕周推进的绝对基准。
+    // 必须放在 correctPhysioByStoryTime 之前, 让本次更新就能按受孕日期重算孕周。
+    {
+        const phyForPregDate = typeof merged['生理周期'] === 'string' ? merged['生理周期'] : '';
+        if (phyForPregDate.includes('孕期') && !merged['受孕日期']) {
+            const oldPhyStr = String(oldCard?.['生理周期'] ?? '');
+            const oldWeekNum = extractPregnancyWeek(oldPhyStr);
+            const oldDaysNum = oldPhyStr.match(/孕\s*\d+\s*周\s*\+\s*(\d+)\s*天/);
+            const physioEndTs = parseStoryTimeRange(storyTimeText).endTs;
+            if (physioEndTs !== null) {
+                const totalDays = (oldWeekNum !== null ? oldWeekNum * 7 : 0) + (oldDaysNum ? +oldDaysNum[1] : 0);
+                merged['受孕日期'] = fmtStoryTime(physioEndTs - totalDays * 86400000);
+                console.info(`[彼方] ${merged['曾用名'] || ''} 孕期旧卡补记受孕日期=${merged['受孕日期']}`);
+            }
         }
     }
     // 生理周期按剧情时间校正: 以"生理周期日期"到本次剧情时间的真实天数差强制修正 Day/孕周,
