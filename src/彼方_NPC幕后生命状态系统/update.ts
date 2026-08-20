@@ -371,6 +371,7 @@ function validateParsedFormat(parsed, existingNpcNames = new Set(), existingCard
     // 剧情时间格式校验: 生理周期日期/受孕判定/时间轴都依赖它解析, 必须为标准
     // "YYYY-MM-DD HH:mm"(年份4位补零如 0004/0025/0137), 否则自动重试让 AI 修正格式
     const storyTime = parsed['剧情时间'];
+    let storyEndTs = null;
     if (storyTime && typeof storyTime === 'object' && !Array.isArray(storyTime)) {
         const bad = [];
         for (const key of ['开始', '结束']) {
@@ -381,6 +382,8 @@ function validateParsedFormat(parsed, existingNpcNames = new Set(), existingCard
         if (bad.length > 0) {
             throw Error(`"剧情时间"格式不正确(${bad.join('、')}): 必须为 "YYYY-MM-DD HH:mm", 年份固定4位补零(如 0004、0025、0137), 月/日/时/分2位补零, 重新输出`);
         }
+        const endStr = String(storyTime['结束'] ?? '').trim();
+        storyEndTs = endStr ? parseStoryTime(endStr) : null;
     }
     const raw = parsed['在场NPC'];
     if (typeof raw !== 'undefined' && raw !== null) {
@@ -410,6 +413,17 @@ function validateParsedFormat(parsed, existingNpcNames = new Set(), existingCard
         // 缺失一律不抛错(避免频繁重试), 只对不在场 NPC 保留警告, 让 AI 有机会补上
         if (!isInScene && !('可能偶遇' in (card ?? {}))) {
             console.warn(`[彼方] NPC「${npcName}」缺失「可能偶遇」(保留旧值)`);
+        }
+        // 睡眠时间合理性告警(仅不在场 NPC): 剧情结束时刻已到白天(约07:00~21:00),
+        // 但"当前在做/当前状态"仍停留在过夜睡眠(睡觉/入睡/就寝/赖床), 提示 AI 按时间推进
+        if (!isInScene && storyEndTs !== null) {
+            const hour = new Date(storyEndTs).getHours();
+            if (hour >= 7 && hour <= 21) {
+                const sleepText = `${String(card?.['当前在做'] ?? '')} ${String(card?.['当前状态'] ?? '')}`;
+                if (/睡觉|就寝|入睡|睡着|赖床|睡觉中|仍在睡/.test(sleepText) && !/午休|打盹|小憩|补觉|夜班|熬夜|守夜|病床|卧床/.test(sleepText)) {
+                    console.warn(`[彼方] NPC「${npcName}」剧情已到 ${String(hour).padStart(2, '0')}:00 仍在过夜睡眠状态, 应按时间推进(起床/洗漱/做事等), 除非剧情明确其在补觉/值夜班/卧床`);
+                }
+            }
         }
         // 生理字段: 生理监测开启且判定为女性(本卡或旧卡出现过生理字段)时, 全部生理字段缺失即抛错重试
         const cardHasPhysio = PHYSIO_FIELDS.some(field => card?.[field] !== undefined && card?.[field] !== null && String(card?.[field] ?? '').trim() !== '');
