@@ -823,12 +823,16 @@ function mergeCard(oldCard, update, storyTimeText = '') {
         const physioEndNow = parseStoryTimeRange(storyTimeText).endTs;
         if (!merged['哺乳期开始日期'] && physioEndNow !== null)
             merged['哺乳期开始日期'] = fmtStoryTime(physioEndNow);
-        // 哺乳期超期告警(>180天): 提示 AI 按提示词恢复普通周期(不强制改, 尊重剧情)
+        // 哺乳期超期处理(>180天): 哺乳期是产后约6个月的短期状态, 剧情大跳跃(如3年后)后
+        // 早已断奶, AI 若不推进, 这里强制恢复普通周期(月经期 Day 1, 产后月经恢复的合理起点),
+        // 之后由校正/AI 按"生理周期日期"正常推进。
         const lactStartRaw = String(merged['哺乳期开始日期'] ?? '').trim();
         if (lactStartRaw && physioEndNow !== null) {
             const lactStartTs = parseStoryTime(lactStartRaw);
             if (lactStartTs !== null && physioEndNow - lactStartTs > 180 * 86400000) {
-                console.warn(`[彼方] ${merged['曾用名'] || ''} 哺乳期已超过6个月(自${lactStartRaw}), 应按提示词恢复普通周期(剧情已断奶/孩子长大)`);
+                merged['生理周期'] = `月经期 Day 1/${merged['周期长度'] || 28}`;
+                delete merged['哺乳期开始日期'];
+                console.warn(`[彼方] ${merged['曾用名'] || ''} 哺乳期已超过6个月(自${lactStartRaw}), 已恢复普通周期(月经期 Day 1)`);
             }
         }
     }
