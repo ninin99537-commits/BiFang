@@ -845,6 +845,10 @@ function mergeCard(oldCard, update, storyTimeText = '') {
         merged['是否怀孕'] = 'true';
         console.warn(`[彼方] ${merged['曾用名'] || ''} 生理周期为孕期但"是否怀孕"未标记, 已补标记`);
     }
+    // 结束孕期后的清理: 生理周期既非孕期也非哺乳期(已结束孕期/恢复普通周期)时,
+    // 受孕日期不应残留——否则旧卡会带着过期的受孕日期(如三年后已分娩却还留着三年前的受孕日期)
+    if (!phyNow.includes('孕期') && !phyNow.includes('哺乳期'))
+        delete merged['受孕日期'];
     // 怀孕知晓: AI 维护的 NPC 自我认知字段(仅孕期角色), 只接受合法取值, 非法/空值忽略(走下方兜底)
     if (update['怀孕知晓'] !== undefined) {
         const known = String(update['怀孕知晓'] ?? '').trim();
@@ -1144,6 +1148,12 @@ function applyUpdate(data, parsed, timeJump = null, playerName = null) {
     }
     if (removedNpcs.length > 0) {
         newData.名单 = newData.名单.filter(name => !removedNpcs.includes(name));
+    }
+    // 已追踪但本次未被 AI 返回的 NPC: 警告(状态保持旧值, 可能漏更新——如大幅时间跳跃时
+    // AI 只更新了部分 NPC, 其余卡会停留在上次日期, 生理周期/状态不推进)
+    const notUpdatedNpcs = newData.名单.filter(name => !updatedNames.includes(name) && !removedNpcs.includes(name));
+    if (notUpdatedNpcs.length > 0) {
+        console.warn(`[彼方] 以下已追踪NPC本次未被AI返回(状态保持旧值, 可能漏更新): ${notUpdatedNpcs.join('、')}`);
     }
     // 后台互动按"当前仍在进行"整体替换：AI 返回的清单即当前有效互动，已结束的自然消失；返回空数组则清空
     if (Array.isArray(parsed['后台互动'])) {
