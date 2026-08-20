@@ -835,9 +835,10 @@ function mergeCard(oldCard, update, storyTimeText = '') {
         const dayOnly = finalPhy.match(/Day\s*(\d+)/i);
         if (dayOnly && merged['周期长度']) {
             const stage = cycleStageName(+dayOnly[1], merged['周期长度']);
-            const hasStage = /^(月经期|卵泡期|排卵期|黄体期|经前期|孕期|哺乳期)\s*/.test(finalPhy);
+            const stageRe = /^(月经期|卵泡期|排卵期|黄体期|经前期|孕期|哺乳期)\s*/;
+            const hasStage = stageRe.test(finalPhy);
             merged['生理周期'] = hasStage
-                ? finalPhy.replace(/^(月经期|卵泡期|排卵期|黄体期|经前期|孕期|哺乳期)\s*/, `${stage} `)
+                ? finalPhy.replace(stageRe, `${stage} `)
                 : `${stage} ${finalPhy}`;
         }
     }
