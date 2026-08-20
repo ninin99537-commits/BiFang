@@ -636,11 +636,22 @@ function cycleStageName(day, cycleLen) {
     return '黄体期';
 }
 /**
+ * 时间戳的"日期"部分时间戳(忽略时分, 用于按**日历日**计算天数差)。
+ * 用 setFullYear 构造, 避免 JS 对 0~99 年份自动映射到 1900+。
+ */
+function dateOnlyTs(ts) {
+    const d = new Date(ts);
+    const t = new Date(0);
+    t.setFullYear(d.getFullYear(), d.getMonth(), d.getDate());
+    return t.getTime();
+}
+/**
  * 生理周期兜底校正: 以旧卡中(AI 维护的)"生理周期日期"到本次剧情结束时刻的
- * **真实天数差**推进 Day/孕周, 纠正 AI 偶发失误(同一天/过一晚就 +1~+2 天)。
+ * **日历日差**推进 Day/孕周, 纠正 AI 偶发失误(同一天/过一晚就 +1~+2 天)。
  * 仅供兜底——AI 自行正确推进时不冲突; 旧卡无基准/剧情时间不可解析/时间倒退时跳过。
- * - 不足一天(同一天/几小时内): 强制 Day/孕周保持与旧卡一致(不改动)
- * - 超过一天: Day = 旧Day + 天数差, 超过锁定周期长度归零进入新周期; 孕期按总天数推进
+ * - 同一日历日(未跨午夜): 强制 Day/孕周保持与旧卡一致(不改动)
+ * - 跨过午夜进入新的一天(即使只差几分钟, 如 23:45 → 00:20): Day+1
+ * - 过了几个日历日: Day = 旧Day + 日历日差, 超过锁定周期长度归零进入新周期; 孕期按总天数推进
  */
 function correctPhysioByStoryTime(merged, oldCard, storyTimeText) {
     const oldDate = oldCard?.['生理周期日期'];
@@ -658,7 +669,8 @@ function correctPhysioByStoryTime(merged, oldCard, storyTimeText) {
     }
     if (endTs === null || oldTs === null || endTs <= oldTs)
         return;
-    const days = Math.max(0, Math.floor((endTs - oldTs) / 86400000));
+    // 按日历日差推进(忽略时分): 跨午夜(23:45→00:20)算 1 天, 同日算 0 天
+    const days = Math.max(0, Math.round((dateOnlyTs(endTs) - dateOnlyTs(oldTs)) / 86400000));
     const oldPhy = String(oldCard?.['生理周期'] ?? '').trim();
     if (!oldPhy)
         return;
