@@ -801,6 +801,19 @@ function mergeCard(oldCard, update, storyTimeText = '') {
     // 会被 applyConceptionCheck 按事件时间过滤掉, 避免同一事件反复掷骰刷怀孕。
     if (本次有新受孕事件)
         applyConceptionCheck(merged, oldCard, storyTimeText);
+    // 孕期超期兜底: 孕周超过 42 周(294天, 医学过期妊娠上限)仍未结束, 说明剧情早已
+    // 分娩(孩子已出生)而孕期状态没被收尾——强制结束孕期: 是否怀孕=false, 生理周期=哺乳期,
+    // 清除受孕日期/怀孕知晓。防止剧情跳几年后妈妈还顶着"孕175周"的荒谬状态。
+    {
+        const pregWeekNow = extractPregnancyWeek(String(merged['生理周期'] ?? ''));
+        if (pregWeekNow !== null && pregWeekNow > 42) {
+            merged['是否怀孕'] = 'false';
+            merged['生理周期'] = '哺乳期';
+            delete merged['受孕日期'];
+            delete merged['怀孕知晓'];
+            console.warn(`[彼方] ${merged['曾用名'] || ''} 孕期超过42周(孕${pregWeekNow}周)仍未结束, 视为剧情已分娩, 已结束孕期进入哺乳期`);
+        }
+    }
     // 一致性兜底(防孕期丢失): "是否怀孕=true"的角色, 生理周期必须是孕期文本——
     // 若 AI 误把孕期写成普通周期(如"排卵期 Day 12/25"), 强制改回孕期; 孕周优先从旧卡恢复。
     // 反向: 生理周期已是孕期但"是否怀孕"未标记, 补标记为 true。
