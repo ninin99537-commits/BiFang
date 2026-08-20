@@ -642,7 +642,7 @@
                       </label>
                       <div class="bf-hint">开启后，彼方更新时会为女性NPC维护「生理监测」字段（周期/受孕率/结算规则），并随状态注入主AI提示词</div>
                       <label class="bf-toggle">
-                        <input v-model="settings.更新.gemini3.7f破限" type="checkbox" />
+                        <input v-model="settings.更新.gemini37f破限" type="checkbox" />
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">gemini3.7f破限</span>
                       </label>

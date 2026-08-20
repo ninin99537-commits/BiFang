@@ -44,7 +44,7 @@ const Settings = zod__WEBPACK_IMPORTED_MODULE_0__.z
         注入世界书条目: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(false),
         生理监测: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(false),
         /** gemini3.7f 破限: 开启后向提示词注入 Dramatron 身份强化(陨落的天才)与 THINKING TOKEN BUDGET: NONE 防截断段(牢大防截断)——适合 Gemini 3.7 Flash; 该模型 3.6F 起不支持预填充, 可配合关闭"预填充"使用 */
-        gemini3.7f破限: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(false),
+        gemini37f破限: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(false),
         注入世界书: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(true),
         注入世界书上限: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(8000).transform(value => Math.max(500, Math.min(200000, Math.round(value)))),
         注入世界书条数: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(40).transform(value => Math.max(1, Math.min(200, Math.round(value)))),

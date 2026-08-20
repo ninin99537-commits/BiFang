@@ -1324,7 +1324,7 @@ async function updateNpcStates(force = false, fresh = false) {
             interactions: data.后台互动 ?? [],
             interactionsEnabled: settings.更新.后台互动,
             physioEnabled: settings.更新.生理监测,
-            gemini3FJB: !!settings.更新.gemini3.7f破限,
+            gemini3FJB: !!settings.更新.gemini37f破限,
             worldbook,
             currentStoryTime: data.剧情时间,
             storyTimeHint,
