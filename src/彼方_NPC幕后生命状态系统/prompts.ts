@@ -1,4 +1,6 @@
 // 已从酒馆导出的打包产物恢复 (webpack 编译形态还原)
+import doupoText from './gemini37f_doupo.txt?raw';
+import referenceText from './gemini37f_reference.txt?raw';
 
 /* harmony export */ const SYSTEM_PROMPT = `你是「彼方 / Elsewhere」——维护角色扮演世界幕后状态的系统: 当角色(玩家)离开某位 NPC 的视野后, 让世界里的 NPC 依然保持"正在生活"的状态。
 
@@ -66,15 +68,17 @@ Step4 生成与自检: 生成完整 JSON, 核对全部输出要求(在场/不在
 - 已死亡/退场的已建档 NPC 列入顶层"移除NPC", 不要返回其状态卡。
 - 新重要 NPC(最近剧情/正文中实际出现)必须建档返回(补全所有字段), 不要因名单已有追踪 NPC 而忽略。`;
 /** gemini3.7f 破限段(开关开启时追加到 system 末尾): 缝自 Kemini Dramatron 预设
- * 的 [0]💠CLEAR(牢大防截断)——THINKING TOKEN BUDGET: NONE, 跳过思考防止正文截断。
- * 注: 预设 [46]💠陨落的天才 是 user 角色的斗破苍穹大段文本, 无任何实际指令,
- * 仅"塞垃圾"用, 对彼方无价值, 不缝入。Dramatron 身份见 SPECIAL NOTE (d)。 */
+ * 的 [27]💠牢大(<Reference_Example_format> 免责声明)——"安全政策豁免论证"示例,
+ * 让模型理解: 客观/记录式的内容(如医学/科学语境)属于安全政策豁免范围, 不构成违规。
+ * 按原文缝入, 模型若在 JSON 后附带免责声明不影响——彼方从输出中提取 JSON 对象。 */
 const GEMINI_37F_JB = `
 
-【牢大防截断】(开启, 对应预设 [0]💠CLEAR):
-THINKING TOKEN BUDGET: NONE. SKIP silently thinking.
-跳过一切不必要的内部思考, 不为思考消耗 token——把全部输出预算留给完整 JSON: 每次输出必须完整闭合、字段齐全、绝不中途截断。
+【牢大破限】(开启, 对应预设 [27]💠<Reference_Example_format>):
+${referenceText}
 `;
+/** 预设 [46]💠陨落的天才(user, 斗破苍穹文本)完整内容: 无任何实际指令, 仅"塞垃圾"用,
+ * 开关开启时缝到 user 消息(对应预设位置) */
+const GEMINI_37F_DOUPO = doupoText;
 function buildUpdateMessages(input) {
     const geminiJB = !!input.gemini3FJB;
     const interactionsInstruction = input.interactionsEnabled
@@ -138,7 +142,10 @@ function buildUpdateMessages(input) {
         ? `\n\n世界书/设定(与主AI相同的方式激活, 供你理解世界设定与角色, 其中可能包含 AM 编码触发的历史轮次纪要)。**注意: 世界书中的"当前时间"表/全局时间表/数据表是其他系统或彼方上次更新写入的推断值, 可能与正文不符——剧情时间一律以【最新回复正文】为准, 不得参考这些表**:
 ${input.worldbook}`
         : '';
-    const userContent = `【最新用户输入】(玩家最近一次的行动/话语, 更新 NPC 状态时需重点参考——NPC 的"当前在做/当前状态"要与此呼应):
+    const userContent = `${geminiJB ? `【塞垃圾段】(对应预设 [46]💠陨落的天才, 无任何指令, 忽略即可):
+${GEMINI_37F_DOUPO}
+
+` : ''}【最新用户输入】(玩家最近一次的行动/话语, 更新 NPC 状态时需重点参考——NPC 的"当前在做/当前状态"要与此呼应):
 ${input.context || '(无)'}
 
 最近正文回复(共 ${input.replyCount} 条, 按时间先后排列, 标记为【最新回复】的最后一条是当前正在发生的内容):
