@@ -76,21 +76,56 @@ function maybeInjectNpcStates() {
         },
     ], { once: true });
 }
-$(() => {
+$(function () {
+    // 重roll/重新生成(regenerate)时会触发 MESSAGE_DELETED(删旧回复)再 MESSAGE_RECEIVED(新回复)。
+    // 若彼方已处理过该层, 直接回滚会把状态回退一层(重roll一次滚一层)。因此:
+    // - MESSAGE_DELETED 只"延迟"执行回滚, 若 2 秒内收到新消息(regenerate/重roll)则取消;
+    //   手动删除楼层(无后续新消息)才真正回滚。
+    // - MESSAGE_SWIPED(切分支)不回滚数据, 只重置"最后处理摘要", 让下次更新按新内容重新处理当前层。
+    let rollbackTimer = null;
+    function clearPendingRollback() {
+        if (rollbackTimer) {
+            clearTimeout(rollbackTimer);
+            rollbackTimer = null;
+        }
+    }
+    function resetSummaryForSwipe() {
+        try {
+            const data = _state__WEBPACK_IMPORTED_MODULE_3__.loadData();
+            if (data.最后处理摘要) {
+                data.最后处理摘要 = '';
+                _state__WEBPACK_IMPORTED_MODULE_3__.saveData(data);
+                _state__WEBPACK_IMPORTED_MODULE_3__.useStateStore().data = data;
+                console.warn('[彼方] 检测到重roll/切分支, 已重置"最后处理摘要"(不回滚NPC数据)——下次更新将按新回复重新处理当前层');
+            }
+        }
+        catch {
+            // 忽略
+        }
+    }
     eventOn(tavern_events.MESSAGE_RECEIVED, message_id => {
+        // 重roll/regenerate 的新消息到达: 取消待处理的删除回滚, 避免误回滚
+        clearPendingRollback();
         handleMessageReceived(message_id).catch(error => {
             console.error('[彼方] 消息处理失败:', error);
         });
     });
     eventOn(tavern_events.MESSAGE_DELETED, message_id => {
         // 幕后总开关关闭时跳过回滚(避免意外改写状态数据)
-        if (_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().启用幕后)
+        if (!_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().启用幕后)
+            return;
+        clearPendingRollback();
+        // 延迟执行: 若是重roll/regenerate 的"删旧", 新消息到达时会 clearPendingRollback 取消;
+        // 手动删除楼层(无后续新消息)才真正回滚
+        rollbackTimer = setTimeout(function () {
+            rollbackTimer = null;
             _update__WEBPACK_IMPORTED_MODULE_4__.maybeRollback();
+        }, 2000);
     });
     eventOn(tavern_events.MESSAGE_SWIPED, () => {
-        // 幕后总开关关闭时跳过回滚
+        // 幕后总开关关闭时跳过
         if (_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().启用幕后)
-            _update__WEBPACK_IMPORTED_MODULE_4__.maybeRollback();
+            resetSummaryForSwipe();
     });
     eventOn(tavern_events.GENERATION_AFTER_COMMANDS, () => {
         if (_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().启用幕后)
