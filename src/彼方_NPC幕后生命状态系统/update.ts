@@ -565,64 +565,66 @@ function applyConceptionCheck(merged, oldCard, storyTimeText = '') {
     const ev = merged['受孕事件'];
     if (!ev || typeof ev !== 'object')
         return;
-    const way = String(ev['方式'] ?? '').trim();
-    const isConceptive = way.includes('阴道内射') || way.includes('阴道外射');
-    if (!isConceptive)
-        return; // 口内/肛内/体外不判定
-    // 旧事件过滤(防反复判定): AI 每次更新会把旧卡里的受孕事件原样带上(如剧情已过了一晚),
-    // 若事件时间明显早于本次剧情开始(或晚于剧情结束), 说明不是本次新发生的行为, 跳过判定。
-    const range = parseStoryTimeRange(storyTimeText);
-    const evTs = parsePregnancyEventTime(ev['时间'], storyTimeText);
-    if (evTs !== null && range.startTs !== null && (evTs < range.startTs || (range.endTs !== null && evTs > range.endTs))) {
-        console.info(`[彼方] 受孕事件为旧事件(不在本次剧情时间窗口内), 跳过判定: 事件=${ev['时间']} 剧情=${storyTimeText}`);
-        delete merged['受孕事件'];
-        return;
-    }
-    // 事件时间无法解析时, 若与旧卡里的受孕事件时间完全相同, 视为旧事件被沿用, 同样跳过
-    if (evTs === null && storyTimeText) {
-        const oldEv = oldCard?.['受孕事件'];
-        if (oldEv && oldEv['时间'] && ev['时间'] && String(ev['时间']) === String(oldEv['时间'])) {
-            console.info(`[彼方] 受孕事件时间无法解析且与旧卡相同, 视为旧事件, 跳过判定`);
-            delete merged['受孕事件'];
+    try {
+        const way = String(ev['方式'] ?? '').trim();
+        const isConceptive = way.includes('阴道内射') || way.includes('阴道外射');
+        if (!isConceptive)
+            return; // 口内/肛内/体外不判定
+        // 旧事件过滤(防反复判定): AI 每次更新会把旧卡里的受孕事件原样带上(如剧情已过了一晚),
+        // 若事件时间明显早于本次剧情开始(或晚于剧情结束), 说明不是本次新发生的行为, 跳过判定。
+        const range = parseStoryTimeRange(storyTimeText);
+        const evTs = parsePregnancyEventTime(ev['时间'], storyTimeText);
+        if (evTs !== null && range.startTs !== null && (evTs < range.startTs || (range.endTs !== null && evTs > range.endTs))) {
+            console.info(`[彼方] 受孕事件为旧事件(不在本次剧情时间窗口内), 跳过判定: 事件=${ev['时间']} 剧情=${storyTimeText}`);
             return;
         }
+        // 事件时间无法解析时, 若与旧卡里的受孕事件时间完全相同, 视为旧事件被沿用, 同样跳过
+        if (evTs === null && storyTimeText) {
+            const oldEv = oldCard?.['受孕事件'];
+            if (oldEv && oldEv['时间'] && ev['时间'] && String(ev['时间']) === String(oldEv['时间'])) {
+                console.info(`[彼方] 受孕事件时间无法解析且与旧卡相同, 视为旧事件, 跳过判定`);
+                return;
+            }
+        }
+        // 已怀孕: 不再判定(孕期无排卵, 不会二次怀孕)
+        if (String(merged['是否怀孕'] ?? '') === 'true' || String(merged['是否怀孕']) === '是')
+            return;
+        const phy = merged['生理周期'] || '';
+        if (String(phy).includes('孕期'))
+            return;
+        const day = extractCycleDay(phy);
+        const cycleLen = merged['周期长度'];
+        if (!day || !cycleLen)
+            return;
+        const rate = calcConceptionRate(cycleLen, day, ev['防护']);
+        // 彼方掷骰 D100(1~100)
+        const roll = 1 + Math.floor(Math.random() * 100);
+        const ovuDay = cycleLen - 14;
+        const pregnant = roll <= Math.round(rate * 100);
+        console.info(`[彼方] 受孕判定: ${merged['是否怀孕'] !== undefined ? 'AI输出=' + merged['是否怀孕'] : '新卡'} 周期=${cycleLen} Day=${day}(排卵日${ovuDay}) 方式=${way} 防护=${ev['防护'] || '无'} 受孕率=${(rate * 100).toFixed(1)}% 掷骰=${roll} → ${pregnant ? '怀孕!' : '未怀'}`);
+        if (pregnant) {
+            merged['是否怀孕'] = 'true';
+            if (!String(phy).includes('孕期'))
+                merged['生理周期'] = `孕期 孕0周+0天`;
+            // 防全知: 刚受孕的 NPC 本人完全不知情, 知晓状态固定为"未知"
+            merged['怀孕知晓'] = '未知';
+            // 记录受孕日期(剧情时间): 优先用受孕事件时间, 解析失败用剧情结束时刻。
+            // 这是孕周推进的**绝对基准**——之后孕周一律按"当前剧情日期 - 受孕日期"重算,
+            // 彻底摆脱 AI/旧卡孕周被写快后越推越快的问题。
+            const pregTs = evTs !== null ? evTs : range.endTs;
+            if (pregTs !== null)
+                merged['受孕日期'] = fmtStoryTime(pregTs);
+            console.info(`[彼方] ${merged['曾用名'] || ''} 判定为怀孕, 生理周期转孕期(本人尚不知晓), 受孕日期=${merged['受孕日期'] || '(未知)'}`);
+        }
+        else if (String(merged['是否怀孕'] ?? '') !== 'false') {
+            merged['是否怀孕'] = 'false';
+        }
     }
-    // 已怀孕: 不再判定(孕期无排卵, 不会二次怀孕)
-    if (String(merged['是否怀孕'] ?? '') === 'true' || String(merged['是否怀孕']) === '是')
-        return;
-    const phy = merged['生理周期'] || '';
-    if (String(phy).includes('孕期'))
-        return;
-    const day = extractCycleDay(phy);
-    const cycleLen = merged['周期长度'];
-    if (!day || !cycleLen)
-        return;
-    const rate = calcConceptionRate(cycleLen, day, ev['防护']);
-    // 彼方掷骰 D100(1~100)
-    const roll = 1 + Math.floor(Math.random() * 100);
-    const ovuDay = cycleLen - 14;
-    const pregnant = roll <= Math.round(rate * 100);
-    console.info(`[彼方] 受孕判定: ${merged['是否怀孕'] !== undefined ? 'AI输出=' + merged['是否怀孕'] : '新卡'} 周期=${cycleLen} Day=${day}(排卵日${ovuDay}) 方式=${way} 防护=${ev['防护'] || '无'} 受孕率=${(rate * 100).toFixed(1)}% 掷骰=${roll} → ${pregnant ? '怀孕!' : '未怀'}`);
-    if (pregnant) {
-        merged['是否怀孕'] = 'true';
-        if (!String(phy).includes('孕期'))
-            merged['生理周期'] = `孕期 孕0周+0天`;
-        // 防全知: 刚受孕的 NPC 本人完全不知情, 知晓状态固定为"未知"
-        merged['怀孕知晓'] = '未知';
-        // 记录受孕日期(剧情时间): 优先用受孕事件时间, 解析失败用剧情结束时刻。
-        // 这是孕周推进的**绝对基准**——之后孕周一律按"当前剧情日期 - 受孕日期"重算,
-        // 彻底摆脱 AI/旧卡孕周被写快后越推越快的问题。
-        const pregTs = evTs !== null ? evTs : range.endTs;
-        if (pregTs !== null)
-            merged['受孕日期'] = fmtStoryTime(pregTs);
-        console.info(`[彼方] ${merged['曾用名'] || ''} 判定为怀孕, 生理周期转孕期(本人尚不知晓), 受孕日期=${merged['受孕日期'] || '(未知)'}`);
+    finally {
+        // 无论是否判定(已怀孕/孕期/方式非受孕/数据缺失/旧事件), 都从卡中清空受孕事件——
+        // 避免残留后下一轮 AI 沿用旧事件再次触发重复判定/怀孕。
+        delete merged['受孕事件'];
     }
-    else if (String(merged['是否怀孕'] ?? '') !== 'false') {
-        merged['是否怀孕'] = 'false';
-    }
-    // 判定完成(无论怀没怀): 从卡中移除受孕事件, 避免下一轮 AI 沿用旧事件再次触发重复投掷
-    // (窗口过滤是兜底, 这里直接清掉事件记录, 双保险)
-    delete merged['受孕事件'];
 }
 /** 解析受孕事件的"时间"字段为时间戳: 兼容 "0137-06-09 21:40" 与缺年份的 "06-09 21:40"(用剧情时间补年份); 解析失败返回 null */
 function parsePregnancyEventTime(timeText, storyTimeText) {
@@ -832,9 +834,18 @@ function mergeCard(oldCard, update, storyTimeText = '') {
         }
     }
     else if (isPregnantNow && !phyNow.includes('孕期')) {
-        const oldWeek = extractPregnancyWeek(String(oldCard?.['生理周期'] ?? ''));
-        merged['生理周期'] = oldWeek !== null ? `孕期 孕${oldWeek}周+0天` : `孕期 孕0周+0天`;
-        console.warn(`[彼方] ${merged['曾用名'] || ''} 生理周期被AI写回普通周期, 已强制恢复为孕期`);
+        // 旧卡是否孕期: 是 → AI 误把孕期改成普通周期, 强制恢复; 否 → AI 无受孕判定
+        // 依据凭空写"是否怀孕=true", 纠正回 false(防止"之前怀孕的角色又怀孕")
+        const oldCardIsPreg = String(oldCard?.['是否怀孕'] ?? '') === 'true' || String(oldCard?.['是否怀孕']) === '是' || String(oldCard?.['生理周期'] ?? '').includes('孕期');
+        if (oldCardIsPreg) {
+            const oldWeek = extractPregnancyWeek(String(oldCard?.['生理周期'] ?? ''));
+            merged['生理周期'] = oldWeek !== null ? `孕期 孕${oldWeek}周+0天` : `孕期 孕0周+0天`;
+            console.warn(`[彼方] ${merged['曾用名'] || ''} 生理周期被AI写回普通周期, 已强制恢复为孕期`);
+        }
+        else {
+            merged['是否怀孕'] = 'false';
+            console.warn(`[彼方] ${merged['曾用名'] || ''} AI 无受孕判定依据把"是否怀孕"写成 true, 已纠正为 false`);
+        }
     }
     else if (!isPregnantNow && phyNow.includes('孕期')) {
         merged['是否怀孕'] = 'true';
