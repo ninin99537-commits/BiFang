@@ -402,11 +402,8 @@ function validateParsedFormat(parsed, existingNpcNames = new Set(), existingCard
         }
     }
     const checkCard = (npcName, card, isNew, isInScene) => {
-        // 普通字段: 新增 NPC 或 在场 NPC 必须全部补全(抛错重试); 不在场的已有 NPC 缺失只警告(保留旧值)
+        // 普通字段: 缺失一律只警告(保留旧值), 不抛错重试——避免频繁重试失败浪费请求
         const missingNormal = REQUIRED_CARD_FIELDS.filter(field => typeof card?.[field] !== 'string' || !String(card?.[field] ?? '').trim());
-        if ((isNew || isInScene) && missingNormal.length > 0) {
-            throw Error(`NPC「${npcName}」缺少字段: ${missingNormal.join('、')}, 必须补全所有字段后重新输出`);
-        }
         if (missingNormal.length > 0) {
             console.warn(`[彼方] NPC「${npcName}」缺失字段: ${missingNormal.join('、')}(保留旧值)`);
         }
@@ -426,19 +423,17 @@ function validateParsedFormat(parsed, existingNpcNames = new Set(), existingCard
                 }
             }
         }
-        // 生理字段: 生理监测开启且判定为女性(本卡或旧卡出现过生理字段)时, 全部生理字段缺失即抛错重试
+        // 生理字段: 生理监测开启且判定为女性(本卡或旧卡出现过生理字段)时, 缺失一律只警告(保留旧值),
+        // 不抛错重试——「是否怀孕」由代码掷骰写回, 其余字段缺失由 mergeCard 保留旧值/提示词约束
         const cardHasPhysio = PHYSIO_FIELDS.some(field => card?.[field] !== undefined && card?.[field] !== null && String(card?.[field] ?? '').trim() !== '');
         const oldCard = (existingCards ?? {})[npcName];
         const oldHasPhysio = !!oldCard && PHYSIO_FIELDS.some(field => oldCard[field] !== undefined && oldCard[field] !== null && String(oldCard[field] ?? '').trim() !== '');
         const isFemale = cardHasPhysio || (physioEnabled && oldHasPhysio);
         const missingPhysio = PHYSIO_FIELDS.filter(field => card?.[field] === undefined || card?.[field] === null || (typeof card?.[field] === 'string' && !card[field].trim()));
-        // 「是否怀孕」由彼方代码掷骰判定并写回(AI 只负责报告受孕事件), AI 漏写不抛错,
-        // 代码会兜底(mergeCard 保留旧值 / 受孕判定写值); 其余生理字段缺失仍抛错重试
-        const missingPhysioStrict = missingPhysio.filter(field => field !== '是否怀孕');
-        if (physioEnabled && isFemale && missingPhysioStrict.length > 0) {
-            throw Error(`NPC「${npcName}」缺少生理字段: ${missingPhysioStrict.join('、')}, 必须补全后重新输出`);
+        if (physioEnabled && isFemale && missingPhysio.length > 0) {
+            console.warn(`[彼方] NPC「${npcName}」缺少生理字段: ${missingPhysio.join('、')}(保留旧值)`);
         }
-        if (cardHasPhysio && missingPhysio.length > 0) {
+        else if (cardHasPhysio && missingPhysio.length > 0) {
             console.warn(`[彼方] NPC「${npcName}」缺失生理字段: ${missingPhysio.join('、')}(保留旧值)`);
         }
         // 防全知字段: 孕期角色必须有「怀孕知晓」(NPC 本人是否知晓怀孕); 缺失时警告(mergeCard 会按孕周兜底补全)
