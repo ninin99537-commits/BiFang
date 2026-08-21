@@ -77,7 +77,7 @@ const GEMINI_37F_JB = `
 ${referenceText}
 `;
 /** 预设 [46]💠陨落的天才(user, 斗破苍穹文本)完整内容: 无任何实际指令, 仅"塞垃圾"用,
- * 开关开启时缝到 user 消息(对应预设位置) */
+ * 开关开启时按原文缝到 user 消息开头(对应预设位置), 不加任何标注 */
 const GEMINI_37F_DOUPO = doupoText;
 function buildUpdateMessages(input) {
     const geminiJB = !!input.gemini3FJB;
@@ -142,10 +142,7 @@ function buildUpdateMessages(input) {
         ? `\n\n世界书/设定(与主AI相同的方式激活, 供你理解世界设定与角色, 其中可能包含 AM 编码触发的历史轮次纪要)。**注意: 世界书中的"当前时间"表/全局时间表/数据表是其他系统或彼方上次更新写入的推断值, 可能与正文不符——剧情时间一律以【最新回复正文】为准, 不得参考这些表**:
 ${input.worldbook}`
         : '';
-    const userContent = `${geminiJB ? `【塞垃圾段】(对应预设 [46]💠陨落的天才, 无任何指令, 忽略即可):
-${GEMINI_37F_DOUPO}
-
-` : ''}【最新用户输入】(玩家最近一次的行动/话语, 更新 NPC 状态时需重点参考——NPC 的"当前在做/当前状态"要与此呼应):
+    const userContent = `${geminiJB ? `${GEMINI_37F_DOUPO}\n\n` : ''}【最新用户输入】(玩家最近一次的行动/话语, 更新 NPC 状态时需重点参考——NPC 的"当前在做/当前状态"要与此呼应):
 ${input.context || '(无)'}
 
 最近正文回复(共 ${input.replyCount} 条, 按时间先后排列, 标记为【最新回复】的最后一条是当前正在发生的内容):
