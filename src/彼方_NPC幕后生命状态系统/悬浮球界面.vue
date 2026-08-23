@@ -578,9 +578,9 @@
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">流式输出（逐 token 接收）</span>
                       </label>
-                      <div class="bf-hint">跨域(CORS)不支持的接口(如 tokenrhythm.studio)开启；「关闭思维链」仅原生支持 Responses API 的模型可用(如 deepseek-v4-flash-0731)，其余遇 Bad Request 请关闭；「最大输出Token」参考模型页上限(deepseek-v4-flash 支持 384K)</div>
-                      <div class="bf-hint">「流式输出」开启后逐 token 接收(可实时看到进度, 部分模型更稳定); 关闭则一次性返回完整结果。若接口不支持流式报错, 请关闭它</div>
-                      <div class="bf-hint">支持任何 /v1/models 与 /v1/chat/completions 服务；最大输出Token 是模型返回状态卡的最大长度，NPC 多时建议调大</div>
+                      <div class="bf-hint">跨域(CORS)不支持的接口开启(如 tokenrhythm.studio)；「关闭思维链」仅 Responses API 原生模型可用(如 deepseek-v4-flash-0731)，其余遇 Bad Request 请关；「最大输出Token」参考模型页上限(deepseek-v4-flash 384K)</div>
+                      <div class="bf-hint">逐 token 接收(可实时看进度, 部分模型更稳)；关闭则一次性返回；接口不支持流式报错就关</div>
+                      <div class="bf-hint">支持任意 /v1/models 与 /v1/chat/completions 服务；最大输出Token 是状态卡最大长度，NPC 多时调大</div>
                       <div class="bf-row">
                         <span class="bf-label">配置预设</span>
                         <input v-model="presetName" class="bf-input" placeholder="预设名，如 DeepSeek" @keyup.enter="saveApiPreset" />
@@ -594,7 +594,7 @@
                         <button class="bf-btn bf-btn-mini" @click="loadApiPreset">加载</button>
                         <button class="bf-btn bf-btn-mini" @click="deleteApiPreset">删除</button>
                       </div>
-                      <div class="bf-hint">把当前接口配置保存为预设，下次想用别的 AI 时一键加载切换，不用重新填写</div>
+                      <div class="bf-hint">保存当前接口配置为预设，可一键切换</div>
                     </div>
                   </div>
 
@@ -618,7 +618,7 @@
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">追踪当前角色卡角色</span>
                       </label>
-                      <div class="bf-hint">仅群聊时角色卡名才是角色；若角色名只是卡片标题、角色写在世界书里，请保持关闭</div>
+                      <div class="bf-hint">仅群聊时角色卡名才是角色；角色写在世界书里则保持关闭</div>
                       <label class="bf-toggle">
                         <input v-model="settings.更新.后台互动" type="checkbox" />
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
@@ -634,25 +634,25 @@
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">写入世界书条目（蓝灯常开）</span>
                       </label>
-                      <div class="bf-hint">写入当前角色卡主世界书常驻条目(蓝灯常开, 禁递归)；切换聊天自动重写当前聊天内容</div>
+                      <div class="bf-hint">写入角色卡主世界书常驻条目(蓝灯常开)；切换聊天自动重写</div>
                       <label class="bf-toggle">
                         <input v-model="settings.更新.生理监测" type="checkbox" />
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">女性NPC生理监测</span>
                       </label>
-                      <div class="bf-hint">开启后，彼方更新时会为女性NPC维护「生理监测」字段（周期/受孕率/结算规则），并随状态注入主AI提示词</div>
+                      <div class="bf-hint">为女性NPC维护生理字段(周期/受孕/结算)，并随状态注入主AI</div>
                       <label class="bf-toggle">
                         <input v-model="settings.更新.gemini37f破限" type="checkbox" />
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">gemini3.7f破限</span>
                       </label>
-                      <div class="bf-hint">注入 Dramatron 破限(陨落的天才/牢大防截断)，适合 Gemini 3.7 Flash；3.6F 起不支持预填充，可关闭「预填充」配合</div>
+                      <div class="bf-hint">注入 Dramatron 破限(陨落的天才/牢大)，适合 Gemini 3.7 Flash；3.6F 起不支持预填充，可关「预填充」配合</div>
                       <label class="bf-toggle">
                         <input v-model="settings.更新.注入世界书" type="checkbox" />
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">给彼方接口注入世界书内容</span>
                       </label>
-                      <div class="bf-hint">按主AI的方式激活世界书条目（蓝灯常驻，绿灯关键字匹配最近回复），让更新AI理解世界设定与角色；不读全局世界书</div>
+                      <div class="bf-hint">按主AI方式激活世界书条目，让更新AI理解世界设定；不读全局世界书</div>
                       <div class="bf-row">
                         <span class="bf-label">世界书内容上限</span>
                         <input v-model.number="settings.更新.注入世界书上限" class="bf-input bf-input-num" type="number" min="500" max="200000" step="500" />
@@ -666,7 +666,7 @@
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">预填充(prefill)</span>
                       </label>
-                      <div class="bf-hint">开启后追加一条 assistant 消息引导模型直接从 JSON 开头输出，减少格式失败与废话；DeepSeek/GLM/Qwen/Claude 等大多支持，若接口报错或输出异常请关闭</div>
+                      <div class="bf-hint">追加 assistant 消息引导直接从 JSON 输出，减少格式失败；DeepSeek/GLM/Qwen/Claude 大多支持，报错就关</div>
                       <div class="bf-row-pair">
                         <div class="bf-pair">
                           <span class="bf-label">更新频率</span>
@@ -703,7 +703,7 @@
                       </div>
                       <textarea v-model="tagDraft" class="bf-textarea bf-textarea-short" placeholder="aftertalk&#10;thinking&#10;branches"></textarea>
                       <div class="bf-hint">
-                        <template v-if="settings.标签.模式 === '排除'">排除这些标签内的内容，直接写标签名即可（如 thinking，不用带尖括号）；只出现 &lt;/标签&gt; 没有开头的孤立闭合标签会从楼层开头删到该结尾标签</template>
+                        <template v-if="settings.标签.模式 === '排除'">排除这些标签内的内容，直接写标签名(如 thinking，不用尖括号)；只出现 &lt;/标签&gt; 的孤立闭合会从楼层开头删到该标签</template>
                         <template v-else>只读取这些标签内的内容；没有这些标签的楼层保留原文</template>
                       </div>
                     </div>
