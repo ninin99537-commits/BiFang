@@ -578,7 +578,7 @@
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">流式输出（逐 token 接收）</span>
                       </label>
-                      <div class="bf-hint">接口不支持浏览器跨域(CORS)时开启(如 tokenrhythm.studio)；「关闭思维链」通过 thinking.type=disabled 生效，仅原生支持 Responses API 的模型可用(如 deepseek-v4-flash-0731)，其余模型遇到 Bad Request 请关闭它；最大输出Token 上限参考模型页最大输出长度(deepseek-v4-flash 支持 384K)</div>
+                      <div class="bf-hint">跨域(CORS)不支持的接口(如 tokenrhythm.studio)开启；「关闭思维链」仅原生支持 Responses API 的模型可用(如 deepseek-v4-flash-0731)，其余遇 Bad Request 请关闭；「最大输出Token」参考模型页上限(deepseek-v4-flash 支持 384K)</div>
                       <div class="bf-hint">「流式输出」开启后逐 token 接收(可实时看到进度, 部分模型更稳定); 关闭则一次性返回完整结果。若接口不支持流式报错, 请关闭它</div>
                       <div class="bf-hint">支持任何 /v1/models 与 /v1/chat/completions 服务；最大输出Token 是模型返回状态卡的最大长度，NPC 多时建议调大</div>
                       <div class="bf-row">
@@ -634,7 +634,7 @@
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">写入世界书条目（蓝灯常开）</span>
                       </label>
-                      <div class="bf-hint">把幕后状态写入当前角色卡主世界书的常驻条目（蓝灯常开，禁递归），任何读取该世界书的环节都能看到；切换聊天时会自动重新写入当前聊天的内容（同一角色卡同时多开聊天时，以最后切换的聊天为准）</div>
+                      <div class="bf-hint">写入当前角色卡主世界书常驻条目(蓝灯常开, 禁递归)；切换聊天自动重写当前聊天内容</div>
                       <label class="bf-toggle">
                         <input v-model="settings.更新.生理监测" type="checkbox" />
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
@@ -646,7 +646,7 @@
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">gemini3.7f破限</span>
                       </label>
-                      <div class="bf-hint">开启后向更新提示词注入 Dramatron 身份强化（陨落的天才）与 THINKING TOKEN BUDGET: NONE 防截断段（牢大防截断），适合 Gemini 3.7 Flash；该模型 3.6F 起不支持预填充，可配合关闭"预填充"使用</div>
+                      <div class="bf-hint">注入 Dramatron 破限(陨落的天才/牢大防截断)，适合 Gemini 3.7 Flash；3.6F 起不支持预填充，可关闭「预填充」配合</div>
                       <label class="bf-toggle">
                         <input v-model="settings.更新.注入世界书" type="checkbox" />
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
@@ -2989,7 +2989,8 @@ function clearAll() {
   color: var(--bf-faint);
   line-height: 1.55;
   margin: 0 0 12px;
-  max-width: 54ch;
+  width: 100%;
+  box-sizing: border-box;
 }
 .bf-toggle {
   display: flex;
