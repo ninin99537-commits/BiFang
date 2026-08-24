@@ -1295,7 +1295,7 @@ async function updateNpcStates(force = false, fresh = false) {
         // 「最近剧情」上下文只取最新 1 层用户输入（正文仍按「读取最近 N 条」）
         const context = buildContext(recent[recent.length - 1].message_id, filter, 1, replyIds, force ? 0 : clearLayer);
         const worldbook = settings.更新.注入世界书
-            ? await _worldbook__WEBPACK_IMPORTED_MODULE_4__.getActiveWorldbookText([context, reply].filter(Boolean).join('\n\n'), settings.更新.注入世界书上限, settings.更新.注入世界书条数)
+            ? await _worldbook__WEBPACK_IMPORTED_MODULE_4__.getActiveWorldbookText([context, reply].filter(Boolean).join('\n\n'), settings.更新.注入世界书上限, settings.更新.注入世界书条数, settings.更新.注入世界书排除 ?? [])
             : '';
         const storyTimeHint = extractCurrentTimeHint(worldbook, reply, context);
         const currentCards = {};

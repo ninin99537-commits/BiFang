@@ -433,9 +433,26 @@ async function getEjsContext() {
  * @param maxChars 注入内容的字数上限（设置项），默认 8000
  * @param maxEntries 注入的条目数上限（设置项），默认 40
  */
-async function getActiveWorldbookText(scanText, maxChars = MAX_CHARS, maxEntries = 40) {
+async function getActiveWorldbookText(scanText, maxChars = MAX_CHARS, maxEntries = 40, excludeNames = []) {
     const charsLimit = Math.max(500, Math.round(maxChars || MAX_CHARS));
     const entriesLimit = Math.max(1, Math.round(maxEntries || 40));
+    // 排除名单: 条目名/comment 与排除项相等或包含即不注入(如填 "【彼方】NPC幕后生活" 排除该条目);
+    // 名字在激活数据里可能不可靠(可能只在 comment), 故内容开头(如 "[彼方 · 幕后NPC状态]")也参与匹配
+    const excludes = (excludeNames || []).map(s => String(s).trim()).filter(Boolean);
+    const isExcluded = (entry) => {
+        if (excludes.length === 0 || !entry)
+            return false;
+        const name = String(entry.name ?? '').trim();
+        const comment = String(entry.comment ?? '').trim();
+        const content = String(entry.content ?? '').trim();
+        return excludes.some(item => {
+            if (!item)
+                return false;
+            return name === item || comment === item
+                || (name && name.includes(item)) || (comment && comment.includes(item))
+                || (content && content.startsWith(item));
+        });
+    };
     const names = [];
     try {
         const charWorldbooks = getCharWorldbookNames('current');
@@ -485,7 +502,7 @@ async function getActiveWorldbookText(scanText, maxChars = MAX_CHARS, maxEntries
                     entry?.name === _state__WEBPACK_IMPORTED_MODULE_0__.BIFANG_WORLDBOOK_ENTRY_NAME ||
                     entry?.comment === _state__WEBPACK_IMPORTED_MODULE_0__.BIFANG_WORLDBOOK_ENTRY_NAME ||
                     entry?.extra?.bifang === true;
-                if (entry && !entry.disable && entry.content && !isSelfEntry) {
+                if (entry && !entry.disable && entry.content && !isSelfEntry && !isExcluded(entry)) {
                     activatedAll.push({ entry });
                 }
             }

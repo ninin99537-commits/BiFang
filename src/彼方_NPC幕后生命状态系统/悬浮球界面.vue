@@ -653,6 +653,8 @@
                         <span class="bf-toggle-text">给彼方接口注入世界书内容</span>
                       </label>
                       <div class="bf-hint">按主AI方式激活世界书条目，让更新AI理解世界设定；不读全局世界书</div>
+                      <textarea v-model="worldbookExcludeDraft" class="bf-textarea bf-textarea-short" placeholder="【彼方】NPC幕后生活"></textarea>
+                      <div class="bf-hint">排除不注入的世界书条目，每行一个条目名(或其关键词)，如「【彼方】NPC幕后生活」</div>
                       <div class="bf-row">
                         <span class="bf-label">世界书内容上限</span>
                         <input v-model.number="settings.更新.注入世界书上限" class="bf-input bf-input-num" type="number" min="500" max="200000" step="500" />
@@ -1218,6 +1220,14 @@ watch(tagDraft, value => {
   settings.value.标签.列表 = String(value ?? '')
     .split(/[\n,，;；、]+/)
     .map(item => item.trim().replace(/^<|>$/g, ''))
+    .filter(Boolean);
+});
+// 注入世界书排除草稿: 每行一个条目名, watch 解析成列表写入设置
+const worldbookExcludeDraft = ref((settings.value.更新.注入世界书排除 || []).join('\n'));
+watch(worldbookExcludeDraft, value => {
+  settings.value.更新.注入世界书排除 = String(value ?? '')
+    .split(/[\n,，;；、]+/)
+    .map(item => item.trim())
     .filter(Boolean);
 });
 
