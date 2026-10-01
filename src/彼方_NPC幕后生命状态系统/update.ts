@@ -1162,15 +1162,11 @@ async function updateNpcStates(force = false) {    if (isUpdating) {
                 if (prefill && String(content).trim().charAt(0) !== '{')
                     content = prefill + content;
                 debugStore.record({ time: Date.now(), response: content });
-                parsed = parseModelResponse(content);
             }
             catch (error) {
-                // 接口调用失败(网络/网关/超时/政策拦): 不回喂错误输出(没有有效输出), 等待加长后直接重试
+                // 接口调用失败(网络/网关/超时/政策拦): 没有有效输出可回喂, 等待加长后直接重试
                 if (abortSignal.aborted)
                     throw Error('用户已中断本次更新', { cause: error });
-                const isRequestError = !(error instanceof Error && /没有返回 JSON 对象|不完整|格式错误/.test(error.message));
-                if (!isRequestError)
-                    throw error;
                 parsed = null;
                 parseError = error instanceof Error ? error : Error(String(error));
                 content = '';
@@ -1185,6 +1181,8 @@ async function updateNpcStates(force = false) {    if (isUpdating) {
                 continue;
             }
             try {
+                // 解析与校验放在同一处: 这两类失败都"有输出可以回喂", 统一走下面的错误反馈重试
+                parsed = parseModelResponse(content);
                 // 自动建档关闭: 构造将被跳过的新角色名单(未追踪且不在已有卡中), 校验时不按新建口径要求全字段
                 let skipCheckNames = null;
                 if (settings.更新.自动建档 === false) {

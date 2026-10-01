@@ -224,12 +224,9 @@ console.log('\n[2] 接口出错(网络/超时) → 自动重试, 第二次成功
   check('数据照常更新', (取状态() as any).NPC['爱丽丝']['当前在做'], '整理书架');
 }
 
-console.log('\n[3] 模型输出根本不是 JSON → 报错, 数据一个字段都不许动');
+console.log('\n[3] 输出不是 JSON → 带着错误原因重试, 第二次成功');
 {
-  // 这里钉的是**当前行为**: 输出不是 JSON 时立刻失败, 不会带着错误原因重试。
-  // (循环上方的注释写的是"JSON 解析失败或结构不符合预期时自动重试(最多 3 次)", 与实际不符 ——
-  //  实际会重试的只有"接口出错"那一路。这条已经记在 README 与候选清单里, 等确认后再决定改注释还是改行为。)
-  const p = 造平台({ 生成序列: ['爱丽丝在整理书架, 但我没有输出 JSON'] });
+  const p = 造平台({ 生成序列: ['爱丽丝在整理书架, 但我没有输出 JSON', 正常输出] });
   injectHostForTest(p.host);
   setActivePinia(createPinia());
   await 播种();
@@ -237,7 +234,23 @@ console.log('\n[3] 模型输出根本不是 JSON → 报错, 数据一个字段�
 
   await updateNpcStates(true);
 
-  check('只调一次模型(解析失败不重试)', p.记录.raw.length, 1);
+  check('调了两次模型', p.记录.raw.length, 2);
+  ok('第二次请求带上了错误原因与上次输出', JSON.stringify(p.记录.raw[1] ?? '').includes('上次输出不符合要求'));
+  check('这次成功', 取日志().updatedNpcs, ['爱丽丝']);
+  check('数据照常更新', (取状态() as any).NPC['爱丽丝']['当前在做'], '整理书架');
+}
+
+console.log('\n[3b] 三次都不是 JSON → 报错, 数据一个字段都不许动');
+{
+  const p = 造平台({ 生成序列: ['不是 JSON 一', '不是 JSON 二', '不是 JSON 三'] });
+  injectHostForTest(p.host);
+  setActivePinia(createPinia());
+  await 播种();
+  p.addFloor(3, '第三楼正文');
+
+  await updateNpcStates(true);
+
+  check('调了三次模型', p.记录.raw.length, 3);
   ok('日志页记下这次失败, 并说明是 JSON 的问题', /JSON|解析/.test(String(取日志().error ?? '')));
   check('没有"已更新"的计数', 取日志().updatedNpcs, []);
   ok('日志页这一条是失败记录', Boolean(取日志().error));
