@@ -14,10 +14,6 @@ import { useHost } from './host';
 
 const STORAGE_KEY = '彼方';
 const DATA_VERSION = 3;
-/** 彼方写入角色卡主世界书的常驻条目名（用于识别、更新与排除）。
- * 注意: 数据库脚本(ACU)剧情推进会屏蔽名字含"状态/规则/变量/检定/叙事"等关键词的条目,
- * 因此条目名必须避开这些词, 否则剧情推进读不到。 */
-const BIFANG_WORLDBOOK_ENTRY_NAME = '【彼方】NPC幕后生活';
 /** 楼层快照最多保留的份数: 写入新快照时把更早楼层的快照物理删除, 防止聊天文件随楼层无限膨胀 */
 const SNAPSHOT_LIMIT = 10;
 
@@ -413,4 +409,4 @@ function clearAllData() {
     return fresh.清空层;
 }
 
-export { BIFANG_WORLDBOOK_ENTRY_NAME, DATA_VERSION, SNAPSHOT_LIMIT, STORAGE_KEY, clearAllData, discardSnapshotAt, emptyData, loadData, saveData, updateClearLayer, writeStateSnapshot };
+export { DATA_VERSION, SNAPSHOT_LIMIT, STORAGE_KEY, clearAllData, discardSnapshotAt, emptyData, loadData, saveData, updateClearLayer, writeStateSnapshot };

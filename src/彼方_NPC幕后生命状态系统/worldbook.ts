@@ -1,5 +1,5 @@
 // 已从酒馆导出的打包产物恢复 (webpack 编译形态还原)
-import * as _state__WEBPACK_IMPORTED_MODULE_0__ from './快照';
+import { isBifangEntry } from './彼方条目';
 import * as vue__WEBPACK_IMPORTED_MODULE_1__ from 'vue';
 import { useHost } from './host';
 
@@ -501,16 +501,9 @@ async function getActiveWorldbookText(scanText, excludeNames = [], alwaysInclude
         console.warn('[彼方] 模板环境不可用，跳过世界书注入');
         return '';
     }
-    /** 彼方自己写入的常驻条目: 不把自身输出当设定。激活数据里名字可能在 comment 而非 name, extra 也可能缺失, 因此用内容开头作最强特征 */
-    const isSelfEntry = (entry) => {
-        const selfText = String(entry?.content || '').trim();
-        return selfText.startsWith('[彼方 · 幕后NPC状态]')
-            || entry?.name === _state__WEBPACK_IMPORTED_MODULE_0__.BIFANG_WORLDBOOK_ENTRY_NAME
-            || entry?.comment === _state__WEBPACK_IMPORTED_MODULE_0__.BIFANG_WORLDBOOK_ENTRY_NAME
-            || entry?.extra?.bifang === true;
-    };
+    /** 彼方自己写入的常驻条目: 不把自身输出当设定(判定见 彼方条目.ts —— 名字、备注、正文开头、标记四样都认) */
     // 兼容两种条目形状的启用字段: 激活数据用 disable, getWorldbook 用 enabled(不显式启用=false 的排除)
-    const acceptsEntry = (entry) => Boolean(entry && entry.disable !== true && entry.enabled !== false && entry.content && !isSelfEntry(entry) && !isExcluded(entry));
+    const acceptsEntry = (entry) => Boolean(entry && entry.disable !== true && entry.enabled !== false && entry.content && !isBifangEntry(entry) && !isExcluded(entry));
     // 1. 收集各世界书的激活条目（用酒馆主 AI 的激活机制）
     const activatedAll = [];
     {
@@ -745,14 +738,7 @@ async function getPersonaTextForNpc(npcName, alias = '', excludeNames = []) {
                 || (entryName && entryName.includes(item)) || (comment && comment.includes(item))
                 || (content && content.startsWith(item))));
     };
-    /** 彼方自己写入的常驻条目: 排除(否则人设参考会包含上一轮的 NPC 状态卡, 造成自我反馈) */
-    const isSelfEntry = (entry) => {
-        const selfText = String(entry?.content || '').trim();
-        return selfText.startsWith('[彼方 · 幕后NPC状态]')
-            || entry?.name === _state__WEBPACK_IMPORTED_MODULE_0__.BIFANG_WORLDBOOK_ENTRY_NAME
-            || entry?.comment === _state__WEBPACK_IMPORTED_MODULE_0__.BIFANG_WORLDBOOK_ENTRY_NAME
-            || entry?.extra?.bifang === true;
-    };
+    /** 彼方自己写入的常驻条目: 排除(否则人设参考会包含上一轮的 NPC 状态卡, 造成自我反馈); 判定见 彼方条目.ts */
     /** 关键词匹配: 条目 keys 数组里是否有任意一个 key 等于/包含 NPC 名字(或曾用名)。
      *  只对字符串 key 做匹配; RegExp key 用 .test() 测试 NPC 名。 */
     const entryMatchesNpc = (entry) => {
@@ -804,7 +790,7 @@ async function getPersonaTextForNpc(npcName, alias = '', excludeNames = []) {
         for (const entry of entries) {
             if (!entry || entry.enabled === false || !entry.content)
                 continue;
-            if (isSelfEntry(entry) || isExcluded(entry))
+            if (isBifangEntry(entry) || isExcluded(entry))
                 continue;
             if (!entryMatchesNpc(entry))
                 continue;

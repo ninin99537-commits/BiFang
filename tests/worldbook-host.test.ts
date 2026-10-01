@@ -6,7 +6,7 @@
 import { createPinia, setActivePinia } from 'pinia';
 import {
   BIFANG_WORLDBOOK_ENTRY_NAME,
-} from '../src/彼方_NPC幕后生命状态系统/快照';
+} from '../src/彼方_NPC幕后生命状态系统/彼方条目';
 import { useMainPromptStore } from '../src/彼方_NPC幕后生命状态系统/日志仓';
 import { syncNpcStatesWorldbook } from '../src/彼方_NPC幕后生命状态系统/worldbook-inject';
 
@@ -182,6 +182,32 @@ console.log('\n[7] 世界书操作抛错 → 不冒泡(只会 console.error)');
     抛了 = true;
   }
   check('没有异常冒出来', 抛了, false);
+}
+
+console.log('\n[8] 既有条目只靠「备注」或「正文开头」认得出来 → 原地更新, 不再多建一条');
+{
+  // 名字被改到 comment 上(用户/插件改名), name 与 extra 都认不出来 ——
+  // 以前注入侧认不出这种条目, 于是找不到既有的那条, 又新建一条重复的。
+  const 初始 = [
+    { name: '被改过的名字', comment: BIFANG_WORLDBOOK_ENTRY_NAME, content: '旧内容' },
+  ];
+  const a = makeFakeWorldbook(初始);
+  await syncNpcStatesWorldbook(a.host, 数据({ 爱丽丝: 卡() }), true);
+  check('条目数仍是 1(没多建)', a.state.条目.length, 1);
+  check('没有新建', a.state.新建.length, 0);
+  ok('原地更新过', a.state.更新次数 >= 1);
+  check('用户改的名字保留', a.state.条目[0].name, '被改过的名字');
+  ok('内容已换成这一轮的', String(a.state.条目[0].content).startsWith('[彼方 · 幕后NPC状态]'));
+
+  // 只剩正文开头能认(名字、备注、标记都不像) —— 同样必须认出来, 否则也会多一条
+  const b = makeFakeWorldbook([{ name: '别人给的名字', content: '[彼方 · 幕后NPC状态]\n旧内容' }]);
+  await syncNpcStatesWorldbook(b.host, 数据({ 爱丽丝: 卡() }), true);
+  check('只剩正文开头 → 也是原地更新', [b.state.条目.length, b.state.新建.length], [1, 0]);
+
+  // extra 标记那条本来就能认, 一起钉住别退化
+  const c = makeFakeWorldbook([{ name: '第三方名字', extra: { bifang: true }, content: '旧内容' }]);
+  await syncNpcStatesWorldbook(c.host, 数据({ 爱丽丝: 卡() }), true);
+  check('extra 标记 → 也是原地更新', [c.state.条目.length, c.state.新建.length], [1, 0]);
 }
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);

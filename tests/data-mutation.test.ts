@@ -16,6 +16,8 @@ import {
 } from '../src/彼方_NPC幕后生命状态系统/数据变更';
 import {
   BIFANG_WORLDBOOK_ENTRY_NAME,
+} from '../src/彼方_NPC幕后生命状态系统/彼方条目';
+import {
   clearAllData,
   emptyData,
   loadData,

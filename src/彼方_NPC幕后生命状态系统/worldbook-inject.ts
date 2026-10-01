@@ -1,21 +1,11 @@
 // 已从酒馆导出的打包产物恢复 (webpack 编译形态还原)
 import type { Host } from './host';
 import * as _prompts__WEBPACK_IMPORTED_MODULE_0__ from './prompts';
-import { BIFANG_WORLDBOOK_ENTRY_NAME } from './快照';
+import { BIFANG_WORLDBOOK_ENTRY_NAME, isBifangEntry, sanitizeBifangEntryName } from './彼方条目';
 import { useMainPromptStore } from './日志仓';
 
 /* harmony export */ 
 
-function isBifangEntry(entry) {
-    return entry?.name === BIFANG_WORLDBOOK_ENTRY_NAME || entry?.extra?.bifang === true;
-}
-/** 数据库脚本(ACU)剧情推进的"条目屏蔽"关键词：命中则条目不进剧情推进上下文 */
-const ACU_BLOCKED_KEYWORDS = ['规则', '思维链', 'cot', 'MVU', 'mvu', '变量', '状态', 'Status', 'Rule', 'rule', '检定', '判断', '叙事', '文风', 'InitVar', '格式'];
-/** 若条目名命中 ACU 屏蔽词(如旧名"…幕后NPC状态"含"状态"), 改回安全条目名, 否则保留用户自定义名 */
-function sanitizeBifangEntryName(currentName) {
-    const name = String(currentName || '').trim();
-    return ACU_BLOCKED_KEYWORDS.some(keyword => name.includes(keyword)) ? BIFANG_WORLDBOOK_ENTRY_NAME : name;
-}
 /**
  * 把彼方幕后状态写入**当前角色卡主世界书**里的常驻条目(蓝灯常开):
  * - 主AI读取激活世界书时读到; 数据库剧情推进读取角色绑定世界书(主世界书)时也读到;

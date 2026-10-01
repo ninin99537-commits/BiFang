@@ -4,7 +4,7 @@
 // 自写条目不当作设定、关掉的条目跳过、排除名单生效、EJS 走宿主渲染(失败时移除模板块)、
 // 酒馆宏走宿主展开、常驻名单绕过关键词激活并与激活条目去重、多条内容用空行连接、模板环境不可用时安全返回。
 import { injectHostForTest } from '../src/彼方_NPC幕后生命状态系统/host';
-import { BIFANG_WORLDBOOK_ENTRY_NAME } from '../src/彼方_NPC幕后生命状态系统/快照';
+import { BIFANG_WORLDBOOK_ENTRY_NAME } from '../src/彼方_NPC幕后生命状态系统/彼方条目';
 import { getActiveWorldbookText, resetWorldbookCaches } from '../src/彼方_NPC幕后生命状态系统/worldbook';
 
 let pass = 0;
