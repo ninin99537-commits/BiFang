@@ -1,5 +1,4 @@
 // 已从酒馆导出的打包产物恢复 (webpack 编译形态还原)
-import * as json5__WEBPACK_IMPORTED_MODULE_0__ from 'json5';
 import * as _api__WEBPACK_IMPORTED_MODULE_1__ from './api';
 import * as _prompts__WEBPACK_IMPORTED_MODULE_2__ from './prompts';
 import * as _settings__WEBPACK_IMPORTED_MODULE_3__ from './settings';
@@ -14,6 +13,7 @@ import * as _toast__WEBPACK_IMPORTED_MODULE_7__ from './toast';
 import { applyConceptionCheck, CYCLE_STAGE_INFLUENCE, correctPhysioByStoryTime, ensurePregnancyKnowledge, extractLactationMonths, extractPregnancyWeek, cycleStageName, lactationExpired, normalizeRaceScale, PHYSIO_CYCLE_MAX, PHYSIO_CYCLE_MIN, PHYSIO_FIELDS, PREGNANCY_KNOWN_CONFIRMED, PREGNANCY_KNOWN_SUSPECT, PREGNANCY_KNOWN_UNKNOWN, PREGNANCY_KNOWN_VALUES, RACE_SCALE_FIELDS } from './生理规则';
 import { fmtStoryTime, parseStoryTime, parseStoryTimeRange, withStoryDate } from './剧情时间';
 import { useHost } from './host';
+import { isReservedTopLevelKey, THINKING_FIELD_KEYS, 请求并校验 } from './模型请求';
 
 /* harmony export */ 
 
@@ -167,263 +167,6 @@ function getAllAssistantMessages() {
 /** 供 index.ts 等外部调用(更新频率判定): 带缓存的全部可见 AI 楼层 */
 function getAllAssistantMessagesCached() {
     return getAllAssistantMessages();
-}
-function parseModelResponse(content) {
-    let text = content.trim();
-    const fence = text.match(/^```(?:json|yaml)?\s*([\s\S]*?)\s*```$/);
-    if (fence)
-        text = fence[1].trim();
-    // 括号配平+候选轮验截取 JSON——不能用"第一个{到最后一个}"的粗切:
-    // 模型受世界书格式影响时, 彼方的 JSON 前后可能跟着自带 { } 的其他格式块(UpdateVariable/思维链里的伪示例),
-    // 粗切会拼出坏串, 固定取第一个 { 又可能抓到前文的示例小对象。
-    // 候选轮验: 逐个 { 起配平切出候选串, 含彼方核心字段且能通过解析的第一个完整对象胜出
-    const sliceBalancedJson = (text) => {
-        let start = text.indexOf('{');
-        while (start !== -1) {
-            let depth = 0;
-            let inString = false;
-            let escaped = false;
-            for (let i = start; i < text.length; i++) {
-                const ch = text[i];
-                if (inString) {
-                    if (escaped)
-                        escaped = false;
-                    else if (ch === '\\')
-                        escaped = true;
-                    else if (ch === '"')
-                        inString = false;
-                    continue;
-                }
-                if (ch === '"')
-                    inString = true;
-                else if (ch === '{')
-                    depth++;
-                else if (ch === '}') {
-                    depth--;
-                    if (depth === 0) {
-                        const candidate = text.slice(start, i + 1);
-                        // 候选必须含彼方的核心字段才算目标对象(排除前文伪 JSON 示例/其他格式块的小对象)
-                        if (candidate.includes('"剧情时间"') || candidate.includes("'剧情时间'") || candidate.includes('"移除NPC"')) return candidate;
-                        start = text.indexOf('{', i + 1); // 不是目标, 从这个候选之后继续找
-                        break;
-                    }
-                }
-            }
-            if (depth !== 0)
-                break; // 扫到文本末尾括号都没配平(截断), 无更多候选
-        }
-        return null;
-    };
-    const sliced = sliceBalancedJson(text);
-    if (!sliced) {
-        throw Error(`AI 没有返回 JSON 对象（只输出了文字/推理内容, 或大括号不配平可能被截断）。\n原始内容: ${content.slice(0, 400)}`);
-    }
-    text = sliced;
-    // 思考内容不是数据, 直接无视: 模型偶尔把内部思考当顶层字段输出(如 "静默思考流程": "Step1 ..."),
-    // 其中的裸换行/未转义引号会让 JSON 与 JSON5 全部解析失败。优先剥离该字段再解析。
-    const stripped = stripThinkingFields(text);
-    // 字符串内的裸控制字符(换行/制表符)转义: 模型把多行文本写进数据字段时(思考之外的字段也可能出现)
-    const candidates = [];
-    if (stripped !== text) {
-        candidates.push(escapeRawControlCharsInStrings(stripped), stripped);
-    }
-    candidates.push(escapeRawControlCharsInStrings(text), text);
-    // 逐个候选尝试: JSON 严格解析 → JSON5 宽松解析; 全部失败时用最后一次的错误报错
-    let lastError;
-    for (const candidate of candidates) {
-        // 剥离/修复后必须仍是彼方 JSON(含数据键), 否则说明切坏了, 换下一候选
-        if (!candidate.includes('"剧情时间"') && !candidate.includes("'剧情时间'") && !candidate.includes('"移除NPC"'))
-            continue;
-        for (const parse of [(t) => JSON.parse(t), (t) => json5__WEBPACK_IMPORTED_MODULE_0__["default"].parse(t)]) {
-            try {
-                return parse(candidate);
-            }
-            catch (e) {
-                lastError = e;
-            }
-        }
-    }
-    if (stripped !== text)
-        console.warn('[彼方] JSON 解析失败后已剥离"思考流程"字段重试(提示词已要求不要把思考写进 JSON)');
-    const jsonError = lastError;
-    throw Error(`AI 返回的 JSON 不完整或格式错误（已自动重试，多次失败请调大「最大输出Token」或检查模型）。解析错误: ${jsonError instanceof Error ? jsonError.message : String(jsonError)}\n原始内容: ${content.slice(0, 600)}`, { cause: jsonError ?? undefined });
-}
-/** 字符串内的裸控制字符(换行/回车/制表符等)转义为合法 JSON 转义序列。
- *  模型把多行文本直接写进 JSON 字符串时会产生裸换行, JSON.parse 与 json5 都会拒绝。
- *  只在字符串内部做转义, 不改动结构字符。 */
-function escapeRawControlCharsInStrings(text) {
-    const src = String(text ?? '');
-    let out = '';
-    let inString = false;
-    let escaped = false;
-    for (let i = 0; i < src.length; i++) {
-        const ch = src[i];
-        if (inString) {
-            if (escaped) {
-                out += ch;
-                escaped = false;
-                continue;
-            }
-            if (ch === '\\') {
-                out += ch;
-                escaped = true;
-                continue;
-            }
-            if (ch === '"') {
-                out += ch;
-                inString = false;
-                continue;
-            }
-            const code = ch.charCodeAt(0);
-            if (code === 0x0A)
-                out += '\\n';
-            else if (code === 0x0D)
-                out += '\\r';
-            else if (code === 0x09)
-                out += '\\t';
-            else if (code < 0x20)
-                out += `\\u${code.toString(16).padStart(4, '0')}`;
-            else
-                out += ch;
-            continue;
-        }
-        if (ch === '"')
-            inString = true;
-        out += ch;
-    }
-    return out;
-}
-/** 剥离顶层"静默思考流程"等思考字段(非彼方数据, 直接无视)。
- *  优先按"下一个顶层键"定位值结尾(`,` + 换行 + `"键名"`), 找不到再退回对象结尾 `}`;
- *  切完立即由调用方用真实解析验证, 切坏则自动降级到原始文本。找不到思考键时原样返回。 */
-function stripThinkingFields(text) {
-    let result = String(text ?? '');
-    for (const key of THINKING_FIELD_KEYS) {
-        const keyRe = new RegExp(`"${key}"\\s*:`, 'g');
-        let match = keyRe.exec(result);
-        while (match) {
-            const valueStart = keyRe.lastIndex;
-            let end = -1;
-            let endWithComma = false;
-            // ① 优先: 顶层键分隔符 `,` + 换行 + `"键名"`
-            for (let i = valueStart; i < result.length; i++) {
-                if (result[i] === ',') {
-                    const rest = result.slice(i + 1);
-                    if (/^\s*\n\s*"/.test(rest)) {
-                        end = i;
-                        break;
-                    }
-                }
-            }
-            // ② 退回: 顶层对象结尾 `}`(此时候选框会缺数据键, 由调用方判定作废)
-            if (end === -1) {
-                const closeIdx = result.lastIndexOf('}');
-                if (closeIdx > valueStart) {
-                    end = closeIdx;
-                    endWithComma = true;
-                }
-            }
-            if (end === -1)
-                break;
-            const before = result.slice(0, match.index);
-            const after = result.slice(end + (endWithComma ? 0 : 1));
-            result = before + after.replace(/^\s*/, '');
-            // 重建后必须重置 lastIndex: 全局正则否则会从旧位置继续, 漏掉重复出现的思考字段
-            keyRe.lastIndex = 0;
-            match = keyRe.exec(result);
-        }
-    }
-    return result;
-}
-/** 从 AI 原始输出中提取 JSON 部分(去思维链/正文等杂质), 供重试时回喂给 AI 指明格式错误 */
-function extractJsonSnippet(content) {
-    let text = String(content || '').trim();
-    const fence = text.match(/^```(?:json|yaml)?\s*([\s\S]*?)\s*```$/);
-    if (fence)
-        text = fence[1].trim();
-    const firstBrace = text.indexOf('{');
-    const lastBrace = text.lastIndexOf('}');
-    if (firstBrace === -1 || lastBrace <= firstBrace)
-        return '';
-    // 剥离思考字段: 思考超长(数十KB)会挤掉真正需要回喂的格式错误信息
-    const snippet = stripThinkingFields(text.slice(firstBrace, lastBrace + 1));
-    return snippet.trim() || text.slice(firstBrace, lastBrace + 1);
-}
-/** 模型可能把内部思考当成顶层字段输出的键名(非彼方数据): 解析兜底时剥离, 也作为保留键不参与 NPC 建档 */
-const THINKING_FIELD_KEYS = ['静默思考流程', '思考流程', '思考过程', '思维链', '推理过程'];
-/** 顶层保留键(非 NPC 名字): 元数据/思考字段/旧格式分组键, 不参与状态卡合并与校验 */
-function isReservedTopLevelKey(name) {
-    return name === '在场NPC' || name === '后台互动' || name === '移除NPC'
-        || name === '剧情时间' || name === '受孕事件' || name === '人设参考'
-        || THINKING_FIELD_KEYS.includes(name);
-}
-/** 每张被返回的状态卡都必须包含的普通字符串字段(全部字段, 新建 NPC 建档时使用) */
-const REQUIRED_CARD_FIELDS = CARD_FIELDS.filter(field => !PHYSIO_FIELDS.includes(field));
-/** 增量更新下已有 NPC 每次必返的核心字段(其余字段未返回=沿用旧值) */
-const CORE_CARD_FIELDS = ['当前在做', '当前状态', '位置'];
-/** 校验 AI 输出的 JSON 结构是否符合预期; 结构错误、"新增 NPC 字段不全"抛错重试, 已有 NPC 缺普通字段只警告(沿用旧值) */
-function validateParsedFormat(parsed, existingCards = {}, skipCheckNames = null) {
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        throw Error('AI 返回的 JSON 结构不符合预期(顶层不是对象)');
-    }
-    // 剧情时间格式校验: 生理周期日期/受孕判定依赖它解析, 必须为标准
-    // "YYYY-MM-DD HH:mm"(年份4位补零如 0004/0025/0137), 否则自动重试让 AI 修正格式
-    const storyTime = parsed['剧情时间'];
-    let storyEndTs = null;
-    if (storyTime && typeof storyTime === 'object' && !Array.isArray(storyTime)) {
-        const bad = [];
-        for (const key of ['开始', '结束']) {
-            const value = String(storyTime[key] ?? '').trim();
-            if (value && parseStoryTime(value) === null)
-                bad.push(`${key}="${value}"`);
-        }
-        if (bad.length > 0) {
-            throw Error(`"剧情时间"格式不正确(${bad.join('、')}): 必须为 "YYYY-MM-DD HH:mm", 年份固定4位补零(如 0004、0025、0137), 月/日/时/分2位补零, 重新输出`);
-        }
-        const endStr = String(storyTime['结束'] ?? '').trim();
-        storyEndTs = endStr ? parseStoryTime(endStr) : null;
-    }
-    const checkCard = (npcName, card, isNew = false) => {
-        // 增量更新: 新建 NPC 要求全字段(建档补全); 已有 NPC 只要求核心三字段——
-        // 其余字段未返回=沿用旧值, 属于合法行为, 不警告
-        const requiredFields = isNew ? REQUIRED_CARD_FIELDS : CORE_CARD_FIELDS;
-        const missingNormal = requiredFields.filter(field => typeof card?.[field] !== 'string' || !String(card?.[field] ?? '').trim());
-        if (missingNormal.length > 0) {
-            console.warn(`[彼方] NPC「${npcName}」缺失字段: ${missingNormal.join('、')}(保留旧值)`);
-        }
-        // 睡眠时间合理性告警: 剧情结束时刻已到白天(约07:00~21:00),
-        // 但"当前在做/当前状态"仍停留在过夜睡眠(睡觉/入睡/就寝/赖床), 提示 AI 按时间推进
-        if (storyEndTs !== null) {
-            const hour = new Date(storyEndTs).getHours();
-            if (hour >= 7 && hour <= 21) {
-                const sleepText = `${String(card?.['当前在做'] ?? '')} ${String(card?.['当前状态'] ?? '')}`;
-                if (/睡觉|就寝|入睡|睡着|赖床|睡觉中|仍在睡/.test(sleepText) && !/午休|打盹|小憩|补觉|夜班|熬夜|守夜|病床|卧床/.test(sleepText)) {
-                    console.warn(`[彼方] NPC「${npcName}」剧情已到 ${String(hour).padStart(2, '0')}:00 仍在过夜睡眠状态, 应按时间推进(起床/洗漱/做事等), 除非剧情明确其在补觉/值夜班/卧床`);
-                }
-            }
-        }
-        // 生理字段齐全性: 只对**本卡实际返回了任一生理字段**的卡要求齐全(增量更新下,
-        // 未返回生理字段=沿用旧值+代码按剧情时间兜底推进, 属于合法行为, 不警告)
-        const cardHasPhysio = PHYSIO_FIELDS.some(field => card?.[field] !== undefined && card?.[field] !== null && String(card?.[field] ?? '').trim() !== '');
-        const missingPhysio = PHYSIO_FIELDS.filter(field => card?.[field] === undefined || card?.[field] === null || (typeof card?.[field] === 'string' && !card[field].trim()));
-        if (cardHasPhysio && missingPhysio.length > 0) {
-            console.warn(`[彼方] NPC「${npcName}」缺失生理字段: ${missingPhysio.join('、')}(保留旧值)`);
-        }
-        // 防全知字段: 孕期角色必须有「怀孕知晓」(NPC 本人是否知晓怀孕); 缺失时警告(mergeCard 会按孕周兜底补全)
-        const isPregnantOut = String(card?.['是否怀孕'] ?? '') === 'true' || String(card?.['是否怀孕']) === '是' || String(card?.['生理周期'] ?? '').includes('孕期');
-        if (isPregnantOut && (card?.['怀孕知晓'] === undefined || card?.['怀孕知晓'] === null || !String(card?.['怀孕知晓'] ?? '').trim())) {
-            console.warn(`[彼方] NPC「${npcName}」孕期但缺「怀孕知晓」字段(将按孕周兜底补全)`);
-        }
-    };
-    for (const [name, card] of Object.entries(parsed)) {
-        if (isReservedTopLevelKey(name))
-            continue;
-        // 自动建档关闭: 即将被跳过(不建档)的新角色不按"新建 NPC 全字段"口径校验, 避免误警告
-        if (skipCheckNames && skipCheckNames.has(name))
-            continue;
-        if (card && typeof card === 'object' && !Array.isArray(card))
-            checkCard(name, card, !(existingCards ?? {})[name]);
-    }
 }
 /** 脱敏接口地址(隐藏地址中可能携带的 token/key 查询参数), 用于错误日志 */
 function maskBaseUrl(url) {
@@ -1105,146 +848,31 @@ async function updateNpcStates(force = false) {    if (isUpdating) {
                 .join('\n\n────────\n\n'),
         });
         console.info(`[彼方] 开始更新幕后NPC状态 (使用最近 ${recent.length} 条回复: #${recent.map(message => message.message_id).join(', #')})`);
-        // JSON 解析失败或结构不符合预期时自动重试（最多 3 次）; 重试时把上次的错误输出和原因回喂给 AI, 让它知道格式错在哪
-        let content = '';
-        let lastErrorReason = '';
-        let lastErrorOutput = '';
-        for (let attempt = 1; attempt <= 3; attempt++) {
-            // 重试: 错误反馈要追加到**任务 user 消息**上, 而非消息数组末尾——
-            // 破限开启时尾部是 system(SPECIAL NOTE)+assistant(承诺), 不能把它们顶掉或改写。
-            // "任务在哪"由提示词形状自己声明(锚点), 这里不再比对收尾文案的字面量。
-            let attemptMessages;
-            if (attempt === 1 || !lastErrorOutput) {
-                attemptMessages = [...messages];
-            }
-            else {
-                const taskIdx = 锚点.任务下标;
-                if (taskIdx >= 0) {
-                    attemptMessages = [
-                        ...messages.slice(0, taskIdx),
-                        {
-                            role: 'user',
-                            content: `${messages[taskIdx].content}\n\n【上次输出不符合要求, 请根据错误原因修正后重新输出】\n错误原因: ${lastErrorReason}\n上次输出(仅 JSON 部分):\n\`\`\`json\n${lastErrorOutput}\n\`\`\``,
-                        },
-                        ...messages.slice(taskIdx + 1), // 保留尾部的 SPECIAL NOTE + 承诺/收尾(若开启)
-                    ];
-                }
-                else {
-                    // 兜底(内置形状必有任务 user, 正常情况下走不到这里; 留着以防以后改形状时越界)
-                    attemptMessages = [
-                        ...messages,
-                        {
-                            role: 'user',
-                            content: `【上次输出不符合要求, 请根据错误原因修正后重新输出】\n错误原因: ${lastErrorReason}\n上次输出(仅 JSON 部分):\n\`\`\`json\n${lastErrorOutput}\n\`\`\``,
-                        },
-                    ];
-                }
-            }
-            // 预填充(prefill): 开启时在最后追加一条 assistant 消息 '{', 引导模型直接从 JSON 开头开始输出
-            // (提示词要求"只输出 JSON、不用 markdown 围栏", 所以 prefill 直接用 { 开头而非 ```json)。
-            // - 末位是 user(无破限): '{' 作为唯一尾 assistant;
-            // - 末位是 assistant 承诺(破限): 连续两条 assistant——OpenAI 兼容接口合法(Anthropic 原生
-            //   Messages API 会自动合并, 效果等同"承诺 + 起手"一条), 模型从承诺与 { 的衔接处开始续写。
-            // 注意: prefill 的 { 只作为提示发给模型, 模型不会在输出里重复它 → 返回后需把 { 拼回开头,
-            // 否则 parseModelResponse 的 indexOf('{') 会切到"剧情时间"的子对象导致 JSON 不完整。
-            const last = attemptMessages[attemptMessages.length - 1];
-            const prefill = settings.更新.预填充 && attemptMessages.length > 0 && (last.role === 'user' || last.role === 'assistant')
-                ? '{\n'
-                : '';
-            if (prefill)
-                attemptMessages.push({ role: 'assistant', content: prefill });
-            try {
-                const requestStart = Date.now();
-                content = await _api__WEBPACK_IMPORTED_MODULE_1__.chatCompletion(attemptMessages, { signal: abortSignal });
-                timing.请求 += Date.now() - requestStart;
-                timing.请求次数 += 1;
-                // 拼回 prefill 的 { (仅当模型输出不是以 { 开头, 避免双 { )
-                if (prefill && String(content).trim().charAt(0) !== '{')
-                    content = prefill + content;
-                debugStore.record({ time: Date.now(), response: content });
-            }
-            catch (error) {
-                // 接口调用失败(网络/网关/超时/政策拦): 没有有效输出可回喂, 等待加长后直接重试
-                if (abortSignal.aborted)
-                    throw Error('用户已中断本次更新', { cause: error });
-                parsed = null;
-                parseError = error instanceof Error ? error : Error(String(error));
-                content = '';
-                lastErrorReason = parseError.message;
-                lastErrorOutput = '';
-                debugStore.record({ time: Date.now(), error: `接口调用失败(第 ${attempt}/3 次): ${parseError.message}` });
-                if (attempt < 3 && !abortSignal.aborted) {
-                    updatingStore.message = `接口调用失败，正在重试（${attempt}/3）…`;
-                    console.warn(`[彼方] 接口调用失败(第 ${attempt} 次), 正在重试…:`, parseError.message);
-                    await new Promise(resolve => setTimeout(resolve, 2000 * attempt));
-                }
-                continue;
-            }
-            try {
-                // 解析与校验放在同一处: 这两类失败都"有输出可以回喂", 统一走下面的错误反馈重试
-                parsed = parseModelResponse(content);
-                // 自动建档关闭: 构造将被跳过的新角色名单(未追踪且不在已有卡中), 校验时不按新建口径要求全字段
-                let skipCheckNames = null;
-                if (settings.更新.自动建档 === false) {
-                    skipCheckNames = new Set();
-                    const collect = (n) => {
-                        const name = String(n ?? '').trim();
-                        if (name && name !== playerName && !(data.名单.includes(name) || data.NPC[name]))
-                            skipCheckNames.add(name);
-                    };
-                    for (const [name, card] of Object.entries(parsed)) {
-                        if (isReservedTopLevelKey(name))
-                            continue;
-                        if (card && typeof card === 'object' && !Array.isArray(card))
-                            collect(name);
-                    }
-                    if (Array.isArray(parsed['在场NPC'])) {
-                        for (const item of parsed['在场NPC']) {
-                            if (!item || typeof item !== 'object' || Array.isArray(item))
-                                continue;
-                            const n = String(item['姓名'] ?? item['名字'] ?? '').trim();
-                            if (n)
-                                collect(n);
-                            else {
-                                const first = Object.entries(item).find(([key, value]) => key !== '姓名' && key !== '名字' && value && typeof value === 'object');
-                                if (first)
-                                    collect(first[0]);
-                            }
-                        }
-                    }
-                }
-                validateParsedFormat(parsed, data.NPC ?? {}, skipCheckNames);
-                break;
-            }
-            catch (error) {
-                parsed = null;
-                parseError = error instanceof Error ? error : Error(String(error));
-                lastErrorReason = parseError.message;
-                // 每次失败都记录原因到日志页, 便于排查(不再等 3 次都失败才输出)
-                debugStore.record({ time: Date.now(), error: `更新失败(第 ${attempt}/3 次): ${parseError.message}` });
-                // 只回喂 JSON 部分, 不带思维链/正文等杂质
-                const jsonSnippet = extractJsonSnippet(content);
-                lastErrorOutput = jsonSnippet
-                    ? jsonSnippet.length > 3000
-                        ? `${jsonSnippet.slice(0, 3000)}\n…(过长已截断)`
-                        : jsonSnippet
-                    : '（上次输出中未找到可解析的 JSON 结构）';
-                if (attempt < 3 && !abortSignal.aborted) {
-                    const errMsg = parseError.message ?? '';
-                    const reason = errMsg.includes('JSON') || errMsg.includes('解析')
-                        ? 'AI 返回的 JSON 不完整'
-                        : errMsg.includes('格式不正确')
-                            ? 'AI 输出格式不符合要求(如剧情时间格式)'
-                            : 'AI 返回格式不符合要求';
-                    updatingStore.message = `正在重试（${attempt}/3）：${reason}`;
-                    console.warn(`[彼方] ${reason}(第 ${attempt} 次)，正在重试…`);
-                    await new Promise(resolve => setTimeout(resolve, 600));
-                }
-            }
+        let 请求结果;
+        try {
+            // 取模型输出这一段已独立成模块(模型请求.ts): 发请求 → 解析 → 校验, 不合格就带着错误原因重试
+            请求结果 = await 请求并校验({
+                messages,
+                锚点,
+                预填充: settings.更新.预填充,
+                现有卡: data.NPC ?? {},
+                名单: data.名单 ?? [],
+                玩家名: playerName,
+                自动建档: settings.更新.自动建档 !== false,
+                signal: abortSignal,
+                发请求: _api__WEBPACK_IMPORTED_MODULE_1__.chatCompletion,
+                记日志: (partial) => debugStore.record(partial),
+                报进度: (文字) => { updatingStore.message = 文字; },
+            });
         }
-        if (parsed === null) {
-            throw parseError ?? Error('解析失败');
+        catch (error) {
+            // 记下来给外层 catch 判定失败阶段用(与拆分前口径一致: 取模型输出这步失败就记作 JSON 解析)
+            parseError = error instanceof Error ? error : Error(String(error));
+            throw error;
         }
+        timing.请求 += 请求结果.请求耗时;
+        timing.请求次数 += 请求结果.请求次数;
+        parsed = 请求结果.parsed;
         const applyStart = Date.now();
         const autoTrack = settings.更新.自动建档 !== false;
         const newData = applyUpdate(data, parsed, timeJump, playerName, autoTrack);
