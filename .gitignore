@@ -13,7 +13,6 @@ auto-imports.d.ts
 components.d.ts
 
 # 构建产物
-dist
 
 # 用例的临时打包产物(pnpm test 生成)
 tests/.build/

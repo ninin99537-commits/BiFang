@@ -14,7 +14,6 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 /** 每个项目各有自己的 host.ts(唯一允许直接碰平台的文件) */
 const 项目 = [
   { 名: '彼方', 目录: join(ROOT, 'src', '彼方_NPC幕后生命状态系统') },
-  { 名: '烟火', 目录: join(ROOT, 'src', '烟火_世界运转') },
 ];
 const 允许 = ['host.ts'];
 /** 太通用的名字(容易和本地函数撞名), 不计入 */
