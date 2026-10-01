@@ -91,6 +91,7 @@ function saveToGlobal(settings) {
             variables[SETTINGS_KEY] = klona__WEBPACK_IMPORTED_MODULE_1__.klona(settings);
             return variables;
         }, { type: 'global' });
+        invalidateReadCache();
     }
     catch (error) {
         console.warn('[彼方] 保存全局设置失败:', error);
@@ -109,6 +110,7 @@ function saveToGlobalMerged(settings) {
             }
             return variables;
         }, { type: 'global' });
+        invalidateReadCache();
     }
     catch (error) {
         console.warn('[彼方] 保存全局设置失败:', error);
@@ -174,27 +176,34 @@ const useSettingsStore = pinia__WEBPACK_IMPORTED_MODULE_2__.defineStore('bifang-
 /**
  * 读取设置: 优先实时读全局(悬浮球/其他 iframe 改设置后, 能立即拿到最新值,
  * 避免 store 缓存旧设置不生效); 读失败回退 store 缓存。
- * 全局读取带 500ms 缓存, 避免频繁调用时反复序列化大设置。
+ * 全局读取带 500ms 缓存, 避免频繁调用时反复序列化大设置; 窗口内读失败也记着(照样回退 store),
+ * 设置写回后立即失效。
+ * 2026-10-01 与烟火同一处缺陷: 以前缓存没有失效语义 —— 写回后 500ms 窗口里仍按旧值走,
+ * 且"全局被清空/读取报错"会永久返回上一次的值, 只有刷新页面才恢复。
  */
 let globalReadCache = null;
 let globalReadTime = 0;
+/** 写回成功后清掉读缓存 */
+function invalidateReadCache() {
+    globalReadCache = null;
+}
 function getSettings() {
+    const now = Date.now();
+    if (now - globalReadTime <= 500)
+        return globalReadCache ?? useSettingsStore().settings;
+    globalReadTime = now;
     try {
-        const now = Date.now();
-        if (!globalReadCache || now - globalReadTime > 500) {
-            const global = useHost().vars.get({ type: 'global' })?.[SETTINGS_KEY];
-            if (global && typeof global === 'object' && !Array.isArray(global)) {
-                globalReadCache = Settings.parse(global);
-                globalReadTime = now;
-            }
-        }
-        if (globalReadCache)
-            return globalReadCache;
+        const global = useHost().vars.get({ type: 'global' })?.[SETTINGS_KEY];
+        if (global && typeof global === 'object' && !Array.isArray(global))
+            globalReadCache = Settings.parse(global);
+        else
+            globalReadCache = null; // 全局被清空 → 回退 store, 不拿上一次的值充数
     }
     catch {
-        // 全局读取失败, 回退 store
+        // 全局读取失败 → 同样清缓存: 窗口内不反复摸存储, 窗口外再试
+        globalReadCache = null;
     }
-    return useSettingsStore().settings;
+    return globalReadCache ?? useSettingsStore().settings;
 }
 
 export { getSettings, useSettingsStore };

@@ -508,11 +508,11 @@
                       <label class="bf-toggle">
                         <input v-model="settings.接口.流式" type="checkbox" />
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
-                        <span class="bf-toggle-text">流式输出（逐 token 接收）</span>
+                        <span class="bf-toggle-text">流式输出</span>
                       </label>
-                      <div class="bf-hint">请求统一由酒馆服务器转发(不再有跨域(CORS)问题)；「最大输出Token」参考模型页上限(deepseek-v4-flash 384K)</div>
-                      <div class="bf-hint">逐 token 接收(可实时看进度, 部分模型更稳)；关闭则一次性返回；接口不支持流式报错就关</div>
-                      <div class="bf-hint">支持任意 /v1/models 与 /v1/chat/completions 服务；最大输出Token 是状态卡最大长度，NPC 多时调大</div>
+                      <div class="bf-hint">请求走酒馆服务器转发，不会遇到跨域(CORS)问题</div>
+                      <div class="bf-hint">关闭流式则等整段返回</div>
+                      <div class="bf-hint">「最大输出Token」参考模型页上限，NPC 多时调大</div>
                       <div class="bf-row">
                         <span class="bf-label">配置预设</span>
                         <input v-model="presetName" class="bf-input" placeholder="预设名，如 DeepSeek" @keyup.enter="saveApiPreset" />

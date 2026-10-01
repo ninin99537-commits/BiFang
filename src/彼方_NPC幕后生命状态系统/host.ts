@@ -124,6 +124,14 @@ interface HostToast {
     success(text: string, title?: string): void;
 }
 
+/** ACU(自动卡片更新器)的表格数据: 世界书条目里 <if cond="cell:表/行/列 >= 值"> 的条件靠它取数。
+ * 它不在 @types 的 declare 清单里, 是插件挂到酒馆页面 window 上的属性 —— 放在这里,
+ * 世界书求值(共用/条目求值.ts)才不会自己去摸 window.parent。 */
+interface HostAcu {
+    /** 全量导出表格(exportTableAsJson 的返回值); 插件没装/没就绪时 undefined, 调用方按空表处理 */
+    tables(): any;
+}
+
 /** 彼方用到的平台能力集合 */
 interface Host {
     vars: HostVars;
@@ -135,6 +143,7 @@ interface Host {
     model: HostModel;
     macros: HostMacros;
     ejs: HostEjs;
+    acu: HostAcu;
     toast: HostToast;
 }
 
@@ -258,6 +267,20 @@ function createTavernHost(): Host {
             },
             syntaxError: text => EjsTemplate.getSyntaxErrorInfo(text),
         },
+        acu: {
+            // ACU 把 API 挂在酒馆页面的 window 上(脚本跑在自己的 iframe 里, 所以要问 parent),
+            // 结构由插件决定: 这里只把 exportTableAsJson 的返回值原样交出去, 怎么解析是调用方的事。
+            tables: () => {
+                try {
+                    const api = (window.parent as any)?.AutoCardUpdaterAPI ?? (window as any).AutoCardUpdaterAPI;
+                    return api?.exportTableAsJson?.();
+                }
+                catch {
+                    // 插件未就绪 / 跨 document 读取被拒: 按"没有表格"处理
+                    return undefined;
+                }
+            },
+        },
         toast: {
             warn: (text, title) => _toast__WEBPACK_IMPORTED_MODULE_0__.toastWarning(text, title),
             success: (text, title) => _toast__WEBPACK_IMPORTED_MODULE_0__.toastSuccess(text, title),
@@ -277,4 +300,4 @@ function injectHostForTest(next: Partial<Host>) {
 }
 
 export { createTavernHost, injectHostForTest, useHost };
-export type { Host, HostCharacter, HostChat, HostEjs, HostEvents, HostMacros, HostModel, HostPersona, HostToast, HostVars, HostWorldbook };
+export type { Host, HostAcu, HostCharacter, HostChat, HostEjs, HostEvents, HostMacros, HostModel, HostPersona, HostToast, HostVars, HostWorldbook };
