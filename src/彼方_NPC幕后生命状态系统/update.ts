@@ -19,7 +19,9 @@ import { useHost } from './host';
 
 // 这里属于流水线顶层(收尾时要写世界书), 按边界处理, 所以自己构造一次真实宿主。
 // 待 updateNpcStates 拆分(候选2)后, 宿主应从调用方传进来, 而不是在本文件里自己造。
-const host = useHost();
+// 当前宿主: 在 updateNpcStates 开头重新取一次(用例会替换它, 见 host.ts 的 injectHostForTest)。
+// 刻意不在模块加载时抓死: 那样用例注入的假平台到不了这条流水线, 整条更新流程就只能靠真酒馆验证。
+let host = useHost();
 
 
 
@@ -942,6 +944,7 @@ async function updateNpcStates(force = false) {    if (isUpdating) {
         return;
     }
     isUpdating = true;
+    host = useHost();
     // 分段计时: 定位"更新慢"的瓶颈(前置/世界书激活/接口请求/解析应用/收尾)
     const timing = { start: Date.now(), 前置: 0, 世界书: 0, 请求: 0, 请求次数: 0, 解析应用: 0, 收尾: 0 };
     const debugStore = useDebugStore();
