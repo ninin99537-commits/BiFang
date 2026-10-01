@@ -1,19 +1,28 @@
 // 已从酒馆导出的打包产物恢复 (webpack 编译形态还原)
 import * as _pinia__WEBPACK_IMPORTED_MODULE_0__ from './pinia';
-import * as _prompts__WEBPACK_IMPORTED_MODULE_1__ from './prompts';
 import * as _settings__WEBPACK_IMPORTED_MODULE_2__ from './settings';
-import * as _state__WEBPACK_IMPORTED_MODULE_3__ from './state';
+import { loadData } from './快照';
+import { useStateStore } from './数据仓';
+import { captureConsole, useDebugStore } from './日志仓';
 import * as _update__WEBPACK_IMPORTED_MODULE_4__ from './update';
+import * as _worldbook__WEBPACK_IMPORTED_MODULE_6__ from './worldbook';
 import * as _worldbook_inject__WEBPACK_IMPORTED_MODULE_5__ from './worldbook-inject';
 import './悬浮球界面';
 import * as pinia__WEBPACK_IMPORTED_MODULE_8__ from 'pinia';
+import { useHost } from './host';
+
+// 脚本入口就是平台边界: 真实宿主在这里构造一次, 往下只传窄能力(host.worldbook 等)或直接传值。
+// 平台全局(getVariables/getChatMessages/getWorldbook…)只在 host.ts 里出现, 见那边的约定。
+const host = useHost();
 
 pinia__WEBPACK_IMPORTED_MODULE_8__.setActivePinia(_pinia__WEBPACK_IMPORTED_MODULE_0__.pinia);
-_state__WEBPACK_IMPORTED_MODULE_3__.captureConsole();
+captureConsole();
 function handleChatChanged() {
     // 切聊天只刷新数据与注入，不再整页重载，避免悬浮球闪烁消失
-    _state__WEBPACK_IMPORTED_MODULE_3__.useStateStore().reload();
-    _state__WEBPACK_IMPORTED_MODULE_3__.useDebugStore().clear();
+    _update__WEBPACK_IMPORTED_MODULE_4__.resetChatCaches();
+    _worldbook__WEBPACK_IMPORTED_MODULE_6__.resetWorldbookCaches();
+    useStateStore().reload();
+    useDebugStore().clear();
     if (_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().启用幕后)
         maybeInjectNpcStates();
 }
@@ -25,7 +34,7 @@ async function handleMessageReceived(message_id) {
         return;
     let latest;
     try {
-        const messages = getChatMessages(message_id);
+        const messages = host.chat.messages(message_id);
         latest = messages[messages.length - 1];
     }
     catch {
@@ -33,17 +42,23 @@ async function handleMessageReceived(message_id) {
     }
     if (!latest || latest.role !== 'assistant' || latest.is_hidden)
         return;
-    // 正文回复过短(疑似被截断/内容太少、没有足够剧情)时跳过自动更新, 避免浪费一次更新请求
-    const replyText = String(latest.message || '').replace(/\s+/g, '').trim();
-    if (replyText.length < 300) {
-        console.warn(`[彼方] 最新正文回复过短(${replyText.length}字), 疑似被截断, 已跳过本次自动更新`);
+    // 正文回复过短(疑似被截断/内容太少、没有足够剧情)时跳过自动更新, 避免浪费一次更新请求。
+    // 用**标签过滤后**的文本判断——与实际发送给接口的内容同口径: 思维链占比高的回复
+    // 用原文判断会误以为很长, 过滤后才是真正的剧情正文。
+    // 长度统计: 仅剔除换行/制表等结构空白, 保留普通空格——对中文/英文/代码块都更接近真实字数;
+    // 旧版把所有 \s+ 全删掉, 英文文本会被严重低估(空格全没, 单词粘连算 1 字)。
+    const filter = _update__WEBPACK_IMPORTED_MODULE_4__.createTextFilterExported(settings);
+    const replyText = filter(String(latest.message || '')).replace(/[\r\n\t]+/g, '').trim();
+    if (replyText.length < 500) {
+        console.warn(`[彼方] 最新正文回复过短(过滤后 ${replyText.length}字), 疑似被截断, 已跳过本次自动更新`);
         return;
     }
     const frequency = Math.max(1, settings.更新.更新频率);
     if (frequency > 1) {
-        const assistantCount = getChatMessages(`0-${getLastMessageId()}`, {
-            role: 'assistant',
-        }).length;
+        // 用带缓存的全部 AI 楼层列表(getAllAssistantMessages: 已排除隐藏楼层,
+        // 按 lastId 缓存避免每次都全量拉取), 与 getRecentAssistantMessages 的
+        // 可见口径一致——用 getChatMessages 全量扫会包含隐藏楼层导致频率算错
+        const assistantCount = _update__WEBPACK_IMPORTED_MODULE_4__.getAllAssistantMessagesCached().length;
         if (assistantCount % frequency !== 0)
             return;
     }
@@ -51,94 +66,59 @@ async function handleMessageReceived(message_id) {
 }
 function maybeInjectNpcStates() {
     const settings = _settings__WEBPACK_IMPORTED_MODULE_2__.getSettings();
-    const data = _state__WEBPACK_IMPORTED_MODULE_3__.loadData();
-    const npcEntries = Object.entries(data.NPC);
+    const data = loadData();
     // 开了"注入世界书条目"时: 写入角色主世界书(蓝灯常驻), 主AI与数据库剧情推进都会读取激活世界书;
     // 无论有无 NPC 都同步(无则删除条目), 保证切换聊天后不会残留上一个聊天的内容
-    if (settings.更新.注入世界书条目) {
-        _worldbook_inject__WEBPACK_IMPORTED_MODULE_5__.syncNpcStatesWorldbook(data, true);
+    if (!settings.更新.注入世界书条目)
         return;
-    }
-    if (npcEntries.length === 0)
-        return;
-    if (!settings.更新.注入到AI)
-        return;
-    const content = _prompts__WEBPACK_IMPORTED_MODULE_1__.buildInjectionPrompt(npcEntries, data.在场NPC ?? []);
-    // 记录彼方注入给主AI的内容，供日志页查看
-    _state__WEBPACK_IMPORTED_MODULE_3__.useMainPromptStore().record(content);
-    injectPrompts([
-        {
-            id: `bifang_npc_states_${getScriptId()}`,
-            position: 'in_chat',
-            depth: 0,
-            role: 'system',
-            content,
-        },
-    ], { once: true });
+    _worldbook_inject__WEBPACK_IMPORTED_MODULE_5__.syncNpcStatesWorldbook(host, data, true);
 }
 $(function () {
-    // 重roll/重新生成(regenerate)时会触发 MESSAGE_DELETED(删旧回复)再 MESSAGE_RECEIVED(新回复)。
-    // 若彼方已处理过该层, 直接回滚会把状态回退一层(重roll一次滚一层)。因此:
-    // - MESSAGE_DELETED 只"延迟"执行回滚, 若 2 秒内收到新消息(regenerate/重roll)则取消;
-    //   手动删除楼层(无后续新消息)才真正回滚。
-    // - MESSAGE_SWIPED(切分支)不回滚数据, 只重置"最后处理摘要", 让下次更新按新内容重新处理当前层。
-    let rollbackTimer = null;
-    function clearPendingRollback() {
-        if (rollbackTimer) {
-            clearTimeout(rollbackTimer);
-            rollbackTimer = null;
+    // 状态快照存在楼层变量里, 随楼层存亡——删除楼层/重roll(新swipe页没有快照)时状态
+    // 自动回退, 楼层被编辑时由楼层hash校验作废。因此事件处理只剩"刷新界面与世界书注入":
+    // - MESSAGE_DELETED 只"延迟"刷新, 若 2 秒内收到新消息(regenerate/重roll)则取消,
+    //   由 MESSAGE_RECEIVED 的正常更新流程自然同步, 避免中间态闪烁;
+    //   手动删除楼层(无后续新消息)才真正刷新。
+    // - MESSAGE_SWIPED(切分支): 切回旧swipe页会恢复该页当时的快照, 新页则回退到更早
+    //   楼层的快照, 刷新即可。
+    let refreshTimer = null;
+    function clearPendingRefresh() {
+        if (refreshTimer) {
+            clearTimeout(refreshTimer);
+            refreshTimer = null;
         }
     }
-    function resetSummaryForSwipe() {
-        try {
-            const data = _state__WEBPACK_IMPORTED_MODULE_3__.loadData();
-            if (data.最后处理摘要) {
-                data.最后处理摘要 = '';
-                _state__WEBPACK_IMPORTED_MODULE_3__.saveData(data);
-                _state__WEBPACK_IMPORTED_MODULE_3__.useStateStore().data = data;
-                console.warn('[彼方] 检测到重roll/切分支, 已重置"最后处理摘要"(不回滚NPC数据)——下次更新将按新回复重新处理当前层');
-            }
-        }
-        catch {
-            // 忽略
-        }
+    function refreshAfterFloorChange() {
+        useStateStore().reload();
+        if (_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().启用幕后)
+            maybeInjectNpcStates();
     }
-    eventOn(tavern_events.MESSAGE_RECEIVED, message_id => {
-        // 重roll/regenerate 的新消息到达: 取消待处理的删除回滚, 避免误回滚
-        clearPendingRollback();
+    host.events.onMessageReceived(message_id => {
+        // 重roll/regenerate 的新消息到达: 取消待处理的删除刷新(更新完成后会自然同步)
+        clearPendingRefresh();
         handleMessageReceived(message_id).catch(error => {
             console.error('[彼方] 消息处理失败:', error);
         });
     });
-    eventOn(tavern_events.MESSAGE_DELETED, message_id => {
-        // 幕后总开关关闭时跳过回滚(避免意外改写状态数据)
-        if (!_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().启用幕后)
-            return;
-        clearPendingRollback();
-        // 延迟执行: 若是重roll/regenerate 的"删旧", 新消息到达时会 clearPendingRollback 取消;
-        // 手动删除楼层(无后续新消息)才真正回滚
-        rollbackTimer = setTimeout(function () {
-            rollbackTimer = null;
-            _update__WEBPACK_IMPORTED_MODULE_4__.maybeRollback();
+    host.events.onMessageDeleted(() => {
+        clearPendingRefresh();
+        // 延迟执行: 若是重roll/regenerate 的"删旧", 新消息到达时 clearPendingRefresh 取消;
+        // 手动删除楼层(无后续新消息)才真正刷新
+        refreshTimer = setTimeout(function () {
+            refreshTimer = null;
+            refreshAfterFloorChange();
         }, 2000);
     });
-    eventOn(tavern_events.MESSAGE_SWIPED, () => {
-        // 幕后总开关关闭时跳过
-        if (_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().启用幕后)
-            resetSummaryForSwipe();
+    host.events.onMessageSwiped(() => {
+        refreshAfterFloorChange();
     });
-    eventOn(tavern_events.GENERATION_AFTER_COMMANDS, () => {
+    host.events.onGenerationAfterCommands(() => {
         if (_settings__WEBPACK_IMPORTED_MODULE_2__.getSettings().启用幕后)
             maybeInjectNpcStates();
     });
-    let lastChatId = null;
-    try {
-        lastChatId = SillyTavern.getCurrentChatId();
-    }
-    catch {
-        // 读取失败则首次 CHAT_CHANGED 事件直接刷新
-    }
-    eventOn(tavern_events.CHAT_CHANGED, new_chat_id => {
+    // 读不到时返回 null, 此时首次 CHAT_CHANGED 事件直接刷新
+    let lastChatId = host.chat.currentChatId();
+    host.events.onChatChanged(new_chat_id => {
         if (lastChatId !== new_chat_id) {
             lastChatId = new_chat_id;
             handleChatChanged();

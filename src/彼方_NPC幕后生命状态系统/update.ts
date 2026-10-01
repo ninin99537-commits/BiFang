@@ -5,9 +5,22 @@ import * as _prompts__WEBPACK_IMPORTED_MODULE_2__ from './prompts';
 import * as _settings__WEBPACK_IMPORTED_MODULE_3__ from './settings';
 import * as _worldbook__WEBPACK_IMPORTED_MODULE_4__ from './worldbook';
 import * as _worldbook_inject__WEBPACK_IMPORTED_MODULE_5__ from './worldbook-inject';
-import * as _state__WEBPACK_IMPORTED_MODULE_6__ from './state';
+import { APPEND_CARD_FIELDS, CARD_FIELDS, LEGACY_CARD_FIELDS } from './卡字段';
+import { loadData, updateClearLayer, writeStateSnapshot } from './快照';
+import { useStateStore } from './数据仓';
+import { useDebugStore } from './日志仓';
+import { useUpdatingStore } from './任务中断';
+import * as _toast__WEBPACK_IMPORTED_MODULE_7__ from './toast';
+import { applyConceptionCheck, CYCLE_STAGE_INFLUENCE, correctPhysioByStoryTime, ensurePregnancyKnowledge, extractLactationMonths, extractPregnancyWeek, cycleStageName, lactationExpired, normalizeRaceScale, PHYSIO_CYCLE_MAX, PHYSIO_CYCLE_MIN, PHYSIO_FIELDS, PREGNANCY_KNOWN_CONFIRMED, PREGNANCY_KNOWN_SUSPECT, PREGNANCY_KNOWN_UNKNOWN, PREGNANCY_KNOWN_VALUES, RACE_SCALE_FIELDS } from './生理规则';
+import { fmtStoryTime, parseStoryTime, parseStoryTimeRange, withStoryDate } from './剧情时间';
+import { useHost } from './host';
 
 /* harmony export */ 
+
+// 这里属于流水线顶层(收尾时要写世界书), 按边界处理, 所以自己构造一次真实宿主。
+// 待 updateNpcStates 拆分(候选2)后, 宿主应从调用方传进来, 而不是在本文件里自己造。
+const host = useHost();
+
 
 
 
@@ -91,24 +104,28 @@ function collectTrackedNpcs(settings, data) {
             names.add(trimmed);
     }
     if (settings.更新.追踪当前角色) {
-        try {
-            const character = getCharData('current');
-            if (character?.name)
-                names.add(character.name);
-        }
-        catch {
-            // 未打开角色卡时忽略
-        }
+        const characterName = host.character.name();
+        if (characterName)
+            names.add(characterName);
     }
     return [...names];
 }
 function getRecentAssistantMessages(count) {
     try {
-        const lastId = getLastMessageId();
-        // 只取末尾一小段楼层（足够找到最近 N 条 AI 回复），避免每次更新都拉全量楼层
-        const start = Math.max(0, lastId - count * 10);
-        const messages = getChatMessages(`${start}-${lastId}`, { role: 'assistant' });
-        return messages.filter(message => !message.is_hidden).slice(-count);
+        const lastId = host.chat.lastMessageId();
+        if (lastId < 0)
+            return [];
+        // 循环扩大窗口直到取够 N 条可见 AI 回复(或扫完整个聊天)。
+        // 旧版固定 count*10 窗口, 隐藏楼层多时会取不够导致本轮更新被跳过。
+        let window = Math.max(count * 4, 10);
+        for (;;) {
+            const start = Math.max(0, lastId - window);
+            const messages = host.chat.messages(`${start}-${lastId}`, { role: 'assistant' });
+            const visible = messages.filter(message => !message.is_hidden);
+            if (visible.length >= count || start === 0)
+                return visible.slice(-count);
+            window *= 2;
+        }
     }
     catch {
         return [];
@@ -116,35 +133,28 @@ function getRecentAssistantMessages(count) {
 }
 function buildContext(replyMessageId, filter, window, replyIds, minId = 0) {
     try {
-        const lastId = getLastMessageId();
+        const lastId = host.chat.lastMessageId();
         const start = Math.max(0, Math.min(replyMessageId, lastId) - window * 2);
-        const messages = getChatMessages(`${start}-${lastId}`)
+        const messages = host.chat.messages(`${start}-${lastId}`)
             .filter(message => message.role !== 'system' && !message.is_hidden && message.message_id > minId && !replyIds.has(message.message_id))
             .slice(-window);
         return messages
-            .map(message => `${message.role === 'user' ? '玩家' : message.name || 'AI'}: ${filter(message.message).slice(0, 2000)}`)
+            .map(message => `${message.role === 'user' ? '玩家' : message.name || 'AI'}: ${filter(message.message)}`)
             .join('\n\n');
     }
     catch {
         return '';
     }
 }
-function hashString(text) {
-    let hash = 0;
-    for (let i = 0; i < text.length; i++) {
-        hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
-    }
-    return String(hash);
-}
 let allAssistantCache = null;
 function getAllAssistantMessages() {
     try {
-        const lastId = getLastMessageId();
+        const lastId = host.chat.lastMessageId();
         if (allAssistantCache && allAssistantCache.lastId === lastId)
             return allAssistantCache.messages;
         if (lastId <= 0)
             return [];
-        const messages = getChatMessages(`0-${lastId}`, { role: 'assistant' }).filter(message => !message.is_hidden);
+        const messages = host.chat.messages(`0-${lastId}`, { role: 'assistant' }).filter(message => !message.is_hidden);
         allAssistantCache = { lastId, messages };
         return messages;
     }
@@ -152,201 +162,176 @@ function getAllAssistantMessages() {
         return [];
     }
 }
-function applyRollback(data) {
-    try {
-        const assistants = getAllAssistantMessages();
-        const curCount = assistants.length;
-        let changed = false;
-        // 楼层被删到清空层以下时，清空层失效，挪到当前楼层末尾，避免更新一直找不到新楼层
-        const lastId = getLastMessageId();
-        if ((data.清空层 ?? 0) > 0 && lastId < data.清空层) {
-            data.清空层 = lastId;
-            changed = true;
-        }
-        if (curCount === 0) {
-            if (data.快照.length === 0 && data.已处理层数 === 0 && Object.keys(data.NPC).length === 0 && !changed)
-                return false;
-            console.warn(`[彼方] 自动回退: 楼层全部删除(当前AI楼层=0), 清空所有NPC数据`);
-            data.名单 = [];
-            data.NPC = {};
-            data.在场NPC = [];
-            data.后台互动 = [];
-            data.时间轴 = [];
-            data.卡字段计数 = {};
-            data.统计 = { 更新次数: 0, 最后更新: 0 };
-            data.快照 = [];
-            data.已处理层数 = 0;
-            data.最后处理摘要 = '';
-            return true;
-        }
-        const curLastHash = hashString(assistants[assistants.length - 1].message);
-        let targetLayer = null;
-        let rollbackReason = '';
-        if (data.已处理层数 > curCount) {
-            targetLayer = curCount;
-            rollbackReason = `楼层被删除: 彼方已处理 ${data.已处理层数} 层, 当前仅检测到 ${curCount} 层 AI 楼层(lastId=${lastId})`;
-        }
-        else if (data.已处理层数 === curCount && data.最后处理摘要 && data.最后处理摘要 !== curLastHash) {
-            targetLayer = curCount - 1;
-            rollbackReason = `最后一条 AI 回复变化(疑似重roll/编辑): 彼方已处理 ${data.已处理层数} 层, 最后处理摘要与当前不一致`;
-        }
-        if (targetLayer === null) {
-            // 不触发回滚也留个日志, 方便排查"没回滚/回滚错"的情况
-            console.info(`[彼方] 回滚检查: 未触发. 已处理层=${data.已处理层数} 当前AI层=${curCount} lastId=${lastId} 摘要非空=${!!data.最后处理摘要} 摘要一致=${data.最后处理摘要 === curLastHash} 快照层=[${(data.快照 || []).map(s => s.层数).join(',')}]`);
-            return changed;
-        }
-        console.warn(`[彼方] 自动回退: ${rollbackReason} (快照层=${(data.快照 || []).map(s => s.层数).join(',')} 目标层=${targetLayer} 已处理=${data.已处理层数} 当前=${curCount} lastId=${lastId})`);
-        _state__WEBPACK_IMPORTED_MODULE_6__.useDebugStore().record({ time: Date.now(), error: `[自动回退] ${rollbackReason} (目标层=${targetLayer})` });
-        const snap = [...data.快照].reverse().find(s => s.层数 <= targetLayer);
-        if (snap) {
-            console.info(`[彼方] 回滚执行: 命中快照层=${snap.层数} (目标层=${targetLayer}), 恢复NPC=${Object.keys(snap.NPC ?? {}).length}个 名单=[${(snap.名单 ?? []).join(',')}]`);
-            data.名单 = [...snap.名单];
-            data.NPC = _.cloneDeep(snap.NPC);
-            data.在场NPC = [...(snap.在场NPC ?? [])];
-            data.后台互动 = [...snap.后台互动];
-            data.时间轴 = [...(snap.时间轴 ?? [])];
-            data.卡字段计数 = _.cloneDeep(snap.卡字段计数 ?? {});
-            data.统计 = { ...snap.统计 };
-        }
-        else if (targetLayer <= 0) {
-            console.warn(`[彼方] 回滚执行: 目标层<=0 且无快照, 清空所有NPC数据`);
-            data.名单 = [];
-            data.NPC = {};
-            data.在场NPC = [];
-            data.后台互动 = [];
-            data.时间轴 = [];
-            data.卡字段计数 = {};
-            data.统计 = { 更新次数: 0, 最后更新: 0 };
-        }
-        else {
-            // 目标楼层之前没有快照（通常是升级前就有的历史楼层），保留当前状态避免误清
-            console.warn(`[彼方] 回滚跳过: 目标层=${targetLayer} 之前没有可用快照, 保留当前状态`);
-            return changed;
-        }
-        // 关键: 回滚后同步"已处理层数"到目标层, 并清空摘要——否则下次更新会重复判定"楼层被删"而反复回滚, 永远卡在上一层
-        data.已处理层数 = targetLayer;
-        data.最后处理摘要 = '';
-        data.快照 = data.快照.filter(s => s.层数 <= targetLayer);
-        console.info(`[彼方] 回滚完成: 已处理层数=${data.已处理层数}, 剩余快照层=[${data.快照.map(s => s.层数).join(',')}]`);
-        return true;
-    }
-    catch {
-        return false;
-    }
-}
-function maybeRollback() {
-    try {
-        // 重roll/编辑后楼层数不变但内容变了, 必须清掉 allAssistantCache(其按 lastId 缓存),
-        // 否则 applyRollback 里 curLastHash 用旧内容计算, 判定"摘要一致"导致不回滚 NPC 状态
-        allAssistantCache = null;
-        const data = _state__WEBPACK_IMPORTED_MODULE_6__.loadData();
-        const before = {
-            已处理层数: data.已处理层数,
-            NPC数: Object.keys(data.NPC ?? {}).length,
-            快照层: (data.快照 ?? []).map(s => s.层数),
-            摘要: data.最后处理摘要 || '(空)',
-        };
-        if (!applyRollback(data)) {
-            return false;
-        }
-        _state__WEBPACK_IMPORTED_MODULE_6__.saveData(data);
-        _state__WEBPACK_IMPORTED_MODULE_6__.useStateStore().data = data;
-        console.info(`[彼方] 回滚触发完成: 回滚前=${JSON.stringify(before)}, 回滚后已处理层=${data.已处理层数} NPC数=${Object.keys(data.NPC ?? {}).length}`);
-        // 回滚改了数据, 世界书条目(如已开启注入)也要同步回滚, 否则主AI读到的是旧内容
-        try {
-            const settings = _settings__WEBPACK_IMPORTED_MODULE_3__.getSettings();
-            if (settings.更新.注入世界书条目)
-                _worldbook_inject__WEBPACK_IMPORTED_MODULE_5__.syncNpcStatesWorldbook(data, true).catch(() => { });
-        }
-        catch {
-            // 忽略
-        }
-        return true;
-    }
-    catch {
-        return false;
-    }
-}
-/**
- * 撤销最新一次彼方更新（"重新填写"用）: 恢复到比当前 AI 楼层数更早的最新快照,
- * 把最新层当作从未填写过。若之后重填失败, 数据保持在此状态, 下次更新会自动重新填写。
- */
-function rollbackLatestUpdate() {
-    try {
-        const data = _state__WEBPACK_IMPORTED_MODULE_6__.loadData();
-        const assistants = getAllAssistantMessages();
-        const curCount = assistants.length;
-        if (curCount <= 0)
-            return false;
-        const snap = [...data.快照].reverse().find(s => s.层数 < curCount);
-        if (!snap)
-            return false;
-        data.名单 = [...snap.名单];
-        data.NPC = _.cloneDeep(snap.NPC);
-        data.在场NPC = [...(snap.在场NPC ?? [])];
-        data.后台互动 = [...snap.后台互动];
-        data.时间轴 = [...(snap.时间轴 ?? [])];
-        data.卡字段计数 = _.cloneDeep(snap.卡字段计数 ?? {});
-        data.统计 = { ...snap.统计 };
-        data.快照 = data.快照.filter(s => s.层数 < curCount);
-        data.已处理层数 = snap.层数;
-        _state__WEBPACK_IMPORTED_MODULE_6__.saveData(data);
-        _state__WEBPACK_IMPORTED_MODULE_6__.useStateStore().data = data;
-        return true;
-    }
-    catch {
-        return false;
-    }
-}
-function thinSnapshots(snaps) {
-    return snaps.slice(-_state__WEBPACK_IMPORTED_MODULE_6__.SNAPSHOT_LIMIT);
-}
-function recordSnapshot(data, layer) {
-    // 同层(重填/重roll 等不产生新楼层的情况)只保留最新一次快照, 避免连续重填挤掉更早楼层的检查点
-    data.快照 = data.快照.filter(snapshot => snapshot.层数 !== layer);
-    data.快照.push({
-        层数: layer,
-        时间: Date.now(),
-        名单: [...data.名单],
-        NPC: _.cloneDeep(data.NPC),
-        在场NPC: [...(data.在场NPC ?? [])],
-        后台互动: [...data.后台互动],
-        时间轴: [...data.时间轴],
-        卡字段计数: _.cloneDeep(data.卡字段计数 ?? {}),
-        统计: { ...data.统计 },
-    });
-    data.快照 = thinSnapshots(data.快照);
-    console.info(`[彼方] 快照记录: 层数=${layer}, NPC=${Object.keys(data.NPC ?? {}).length}个, 快照总览=[${data.快照.map(s => s.层数).join(',')}]`);
+/** 供 index.ts 等外部调用(更新频率判定): 带缓存的全部可见 AI 楼层 */
+function getAllAssistantMessagesCached() {
+    return getAllAssistantMessages();
 }
 function parseModelResponse(content) {
     let text = content.trim();
     const fence = text.match(/^```(?:json|yaml)?\s*([\s\S]*?)\s*```$/);
     if (fence)
         text = fence[1].trim();
-    const firstBrace = text.indexOf('{');
-    const lastBrace = text.lastIndexOf('}');
-    if (firstBrace === -1 || lastBrace <= firstBrace) {
-        throw Error(`AI 没有返回 JSON 对象（只输出了文字/推理内容）。\n原始内容: ${content.slice(0, 400)}`);
-    }
-    text = text.slice(firstBrace, lastBrace + 1);
-    try {
-        return JSON.parse(text);
-    }
-    catch (jsonError) {
-        try {
-            // eslint-disable-next-line import-x/no-named-as-default-member
-            return json5__WEBPACK_IMPORTED_MODULE_0__["default"].parse(text);
+    // 括号配平+候选轮验截取 JSON——不能用"第一个{到最后一个}"的粗切:
+    // 模型受世界书格式影响时, 彼方的 JSON 前后可能跟着自带 { } 的其他格式块(UpdateVariable/思维链里的伪示例),
+    // 粗切会拼出坏串, 固定取第一个 { 又可能抓到前文的示例小对象。
+    // 候选轮验: 逐个 { 起配平切出候选串, 含彼方核心字段且能通过解析的第一个完整对象胜出
+    const sliceBalancedJson = (text) => {
+        let start = text.indexOf('{');
+        while (start !== -1) {
+            let depth = 0;
+            let inString = false;
+            let escaped = false;
+            for (let i = start; i < text.length; i++) {
+                const ch = text[i];
+                if (inString) {
+                    if (escaped)
+                        escaped = false;
+                    else if (ch === '\\')
+                        escaped = true;
+                    else if (ch === '"')
+                        inString = false;
+                    continue;
+                }
+                if (ch === '"')
+                    inString = true;
+                else if (ch === '{')
+                    depth++;
+                else if (ch === '}') {
+                    depth--;
+                    if (depth === 0) {
+                        const candidate = text.slice(start, i + 1);
+                        // 候选必须含彼方的核心字段才算目标对象(排除前文伪 JSON 示例/其他格式块的小对象)
+                        if (candidate.includes('"剧情时间"') || candidate.includes("'剧情时间'") || candidate.includes('"移除NPC"')) return candidate;
+                        start = text.indexOf('{', i + 1); // 不是目标, 从这个候选之后继续找
+                        break;
+                    }
+                }
+            }
+            if (depth !== 0)
+                break; // 扫到文本末尾括号都没配平(截断), 无更多候选
         }
-        catch {
-            throw Error(`AI 返回的 JSON 不完整或格式错误（已自动重试，多次失败请调大「最大输出Token」或检查模型）。解析错误: ${jsonError instanceof Error ? jsonError.message : String(jsonError)}\n原始内容: ${content.slice(0, 600)}`, { cause: jsonError });
+        return null;
+    };
+    const sliced = sliceBalancedJson(text);
+    if (!sliced) {
+        throw Error(`AI 没有返回 JSON 对象（只输出了文字/推理内容, 或大括号不配平可能被截断）。\n原始内容: ${content.slice(0, 400)}`);
+    }
+    text = sliced;
+    // 思考内容不是数据, 直接无视: 模型偶尔把内部思考当顶层字段输出(如 "静默思考流程": "Step1 ..."),
+    // 其中的裸换行/未转义引号会让 JSON 与 JSON5 全部解析失败。优先剥离该字段再解析。
+    const stripped = stripThinkingFields(text);
+    // 字符串内的裸控制字符(换行/制表符)转义: 模型把多行文本写进数据字段时(思考之外的字段也可能出现)
+    const candidates = [];
+    if (stripped !== text) {
+        candidates.push(escapeRawControlCharsInStrings(stripped), stripped);
+    }
+    candidates.push(escapeRawControlCharsInStrings(text), text);
+    // 逐个候选尝试: JSON 严格解析 → JSON5 宽松解析; 全部失败时用最后一次的错误报错
+    let lastError;
+    for (const candidate of candidates) {
+        // 剥离/修复后必须仍是彼方 JSON(含数据键), 否则说明切坏了, 换下一候选
+        if (!candidate.includes('"剧情时间"') && !candidate.includes("'剧情时间'") && !candidate.includes('"移除NPC"'))
+            continue;
+        for (const parse of [(t) => JSON.parse(t), (t) => json5__WEBPACK_IMPORTED_MODULE_0__["default"].parse(t)]) {
+            try {
+                return parse(candidate);
+            }
+            catch (e) {
+                lastError = e;
+            }
         }
     }
+    if (stripped !== text)
+        console.warn('[彼方] JSON 解析失败后已剥离"思考流程"字段重试(提示词已要求不要把思考写进 JSON)');
+    const jsonError = lastError;
+    throw Error(`AI 返回的 JSON 不完整或格式错误（已自动重试，多次失败请调大「最大输出Token」或检查模型）。解析错误: ${jsonError instanceof Error ? jsonError.message : String(jsonError)}\n原始内容: ${content.slice(0, 600)}`, { cause: jsonError ?? undefined });
 }
-function sameNpcSet(a, b) {
-    if (a.length !== b.length)
-        return false;
-    const set = new Set(a);
-    return b.every(name => set.has(name));
+/** 字符串内的裸控制字符(换行/回车/制表符等)转义为合法 JSON 转义序列。
+ *  模型把多行文本直接写进 JSON 字符串时会产生裸换行, JSON.parse 与 json5 都会拒绝。
+ *  只在字符串内部做转义, 不改动结构字符。 */
+function escapeRawControlCharsInStrings(text) {
+    const src = String(text ?? '');
+    let out = '';
+    let inString = false;
+    let escaped = false;
+    for (let i = 0; i < src.length; i++) {
+        const ch = src[i];
+        if (inString) {
+            if (escaped) {
+                out += ch;
+                escaped = false;
+                continue;
+            }
+            if (ch === '\\') {
+                out += ch;
+                escaped = true;
+                continue;
+            }
+            if (ch === '"') {
+                out += ch;
+                inString = false;
+                continue;
+            }
+            const code = ch.charCodeAt(0);
+            if (code === 0x0A)
+                out += '\\n';
+            else if (code === 0x0D)
+                out += '\\r';
+            else if (code === 0x09)
+                out += '\\t';
+            else if (code < 0x20)
+                out += `\\u${code.toString(16).padStart(4, '0')}`;
+            else
+                out += ch;
+            continue;
+        }
+        if (ch === '"')
+            inString = true;
+        out += ch;
+    }
+    return out;
+}
+/** 剥离顶层"静默思考流程"等思考字段(非彼方数据, 直接无视)。
+ *  优先按"下一个顶层键"定位值结尾(`,` + 换行 + `"键名"`), 找不到再退回对象结尾 `}`;
+ *  切完立即由调用方用真实解析验证, 切坏则自动降级到原始文本。找不到思考键时原样返回。 */
+function stripThinkingFields(text) {
+    let result = String(text ?? '');
+    for (const key of THINKING_FIELD_KEYS) {
+        const keyRe = new RegExp(`"${key}"\\s*:`, 'g');
+        let match = keyRe.exec(result);
+        while (match) {
+            const valueStart = keyRe.lastIndex;
+            let end = -1;
+            let endWithComma = false;
+            // ① 优先: 顶层键分隔符 `,` + 换行 + `"键名"`
+            for (let i = valueStart; i < result.length; i++) {
+                if (result[i] === ',') {
+                    const rest = result.slice(i + 1);
+                    if (/^\s*\n\s*"/.test(rest)) {
+                        end = i;
+                        break;
+                    }
+                }
+            }
+            // ② 退回: 顶层对象结尾 `}`(此时候选框会缺数据键, 由调用方判定作废)
+            if (end === -1) {
+                const closeIdx = result.lastIndexOf('}');
+                if (closeIdx > valueStart) {
+                    end = closeIdx;
+                    endWithComma = true;
+                }
+            }
+            if (end === -1)
+                break;
+            const before = result.slice(0, match.index);
+            const after = result.slice(end + (endWithComma ? 0 : 1));
+            result = before + after.replace(/^\s*/, '');
+            // 重建后必须重置 lastIndex: 全局正则否则会从旧位置继续, 漏掉重复出现的思考字段
+            keyRe.lastIndex = 0;
+            match = keyRe.exec(result);
+        }
+    }
+    return result;
 }
 /** 从 AI 原始输出中提取 JSON 部分(去思维链/正文等杂质), 供重试时回喂给 AI 指明格式错误 */
 function extractJsonSnippet(content) {
@@ -358,18 +343,28 @@ function extractJsonSnippet(content) {
     const lastBrace = text.lastIndexOf('}');
     if (firstBrace === -1 || lastBrace <= firstBrace)
         return '';
-    return text.slice(firstBrace, lastBrace + 1);
+    // 剥离思考字段: 思考超长(数十KB)会挤掉真正需要回喂的格式错误信息
+    const snippet = stripThinkingFields(text.slice(firstBrace, lastBrace + 1));
+    return snippet.trim() || text.slice(firstBrace, lastBrace + 1);
 }
-/** 生理字段(仅当某 NPC 卡里出现了任一生理字段、即被判定为女性/双性等可怀孕角色时, 才要求全部补全) */
-const PHYSIO_FIELDS = ['生理周期', '是否怀孕', '周期影响', '当前防护', '近期性行为'];
-/** 每张被返回的状态卡都必须包含的普通字符串字段(全部字段, 缺一即判定不完整并自动重试) */
-const REQUIRED_CARD_FIELDS = _state__WEBPACK_IMPORTED_MODULE_6__.CARD_FIELDS.filter(field => !PHYSIO_FIELDS.includes(field));
-/** 校验 AI 输出的 JSON 结构是否符合预期; 结构错误、"新增 NPC 字段不全"、"女性 NPC 生理字段不全"抛错重试, 已有 NPC 缺普通字段只警告(保留旧值) */
-function validateParsedFormat(parsed, existingNpcNames = new Set(), existingCards = {}, physioEnabled = false) {
+/** 模型可能把内部思考当成顶层字段输出的键名(非彼方数据): 解析兜底时剥离, 也作为保留键不参与 NPC 建档 */
+const THINKING_FIELD_KEYS = ['静默思考流程', '思考流程', '思考过程', '思维链', '推理过程'];
+/** 顶层保留键(非 NPC 名字): 元数据/思考字段/旧格式分组键, 不参与状态卡合并与校验 */
+function isReservedTopLevelKey(name) {
+    return name === '在场NPC' || name === '后台互动' || name === '移除NPC'
+        || name === '剧情时间' || name === '受孕事件' || name === '人设参考'
+        || THINKING_FIELD_KEYS.includes(name);
+}
+/** 每张被返回的状态卡都必须包含的普通字符串字段(全部字段, 新建 NPC 建档时使用) */
+const REQUIRED_CARD_FIELDS = CARD_FIELDS.filter(field => !PHYSIO_FIELDS.includes(field));
+/** 增量更新下已有 NPC 每次必返的核心字段(其余字段未返回=沿用旧值) */
+const CORE_CARD_FIELDS = ['当前在做', '当前状态', '位置'];
+/** 校验 AI 输出的 JSON 结构是否符合预期; 结构错误、"新增 NPC 字段不全"抛错重试, 已有 NPC 缺普通字段只警告(沿用旧值) */
+function validateParsedFormat(parsed, existingCards = {}, skipCheckNames = null) {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
         throw Error('AI 返回的 JSON 结构不符合预期(顶层不是对象)');
     }
-    // 剧情时间格式校验: 生理周期日期/受孕判定/时间轴都依赖它解析, 必须为标准
+    // 剧情时间格式校验: 生理周期日期/受孕判定依赖它解析, 必须为标准
     // "YYYY-MM-DD HH:mm"(年份4位补零如 0004/0025/0137), 否则自动重试让 AI 修正格式
     const storyTime = parsed['剧情时间'];
     let storyEndTs = null;
@@ -386,35 +381,17 @@ function validateParsedFormat(parsed, existingNpcNames = new Set(), existingCard
         const endStr = String(storyTime['结束'] ?? '').trim();
         storyEndTs = endStr ? parseStoryTime(endStr) : null;
     }
-    const raw = parsed['在场NPC'];
-    if (typeof raw !== 'undefined' && raw !== null) {
-        if (!Array.isArray(raw)) {
-            throw Error('"在场NPC" 应为数组, 请按输出格式说明返回');
-        }
-        for (const item of raw) {
-            if (item && typeof item === 'object' && !Array.isArray(item)) {
-                // 对象元素必须含"姓名/名字"字段; 禁止把 NPC 名字用作对象键(如 {"艾莉": {...}})
-                const name = String(item['姓名'] ?? item['名字'] ?? '').trim();
-                if (!name) {
-                    throw Error('"在场NPC" 的对象元素必须含"姓名"字段, 请按输出格式说明返回(禁止把名字用作对象键)');
-                }
-            }
-        }
-    }
-    const checkCard = (npcName, card, isNew, isInScene) => {
-        // 普通字段: 缺失一律只警告(保留旧值), 不抛错重试——避免频繁重试失败浪费请求
-        const missingNormal = REQUIRED_CARD_FIELDS.filter(field => typeof card?.[field] !== 'string' || !String(card?.[field] ?? '').trim());
+    const checkCard = (npcName, card, isNew = false) => {
+        // 增量更新: 新建 NPC 要求全字段(建档补全); 已有 NPC 只要求核心三字段——
+        // 其余字段未返回=沿用旧值, 属于合法行为, 不警告
+        const requiredFields = isNew ? REQUIRED_CARD_FIELDS : CORE_CARD_FIELDS;
+        const missingNormal = requiredFields.filter(field => typeof card?.[field] !== 'string' || !String(card?.[field] ?? '').trim());
         if (missingNormal.length > 0) {
             console.warn(`[彼方] NPC「${npcName}」缺失字段: ${missingNormal.join('、')}(保留旧值)`);
         }
-        // 「可能偶遇」是扩展字段(仅不在场 NPC 需要; 在场 NPC 已在场景中, 不需要偶遇标记)。
-        // 缺失一律不抛错(避免频繁重试), 只对不在场 NPC 保留警告, 让 AI 有机会补上
-        if (!isInScene && !('可能偶遇' in (card ?? {}))) {
-            console.warn(`[彼方] NPC「${npcName}」缺失「可能偶遇」(保留旧值)`);
-        }
-        // 睡眠时间合理性告警(仅不在场 NPC): 剧情结束时刻已到白天(约07:00~21:00),
+        // 睡眠时间合理性告警: 剧情结束时刻已到白天(约07:00~21:00),
         // 但"当前在做/当前状态"仍停留在过夜睡眠(睡觉/入睡/就寝/赖床), 提示 AI 按时间推进
-        if (!isInScene && storyEndTs !== null) {
+        if (storyEndTs !== null) {
             const hour = new Date(storyEndTs).getHours();
             if (hour >= 7 && hour <= 21) {
                 const sleepText = `${String(card?.['当前在做'] ?? '')} ${String(card?.['当前状态'] ?? '')}`;
@@ -423,17 +400,11 @@ function validateParsedFormat(parsed, existingNpcNames = new Set(), existingCard
                 }
             }
         }
-        // 生理字段: 生理监测开启且判定为女性(本卡或旧卡出现过生理字段)时, 缺失一律只警告(保留旧值),
-        // 不抛错重试——「是否怀孕」由代码掷骰写回, 其余字段缺失由 mergeCard 保留旧值/提示词约束
+        // 生理字段齐全性: 只对**本卡实际返回了任一生理字段**的卡要求齐全(增量更新下,
+        // 未返回生理字段=沿用旧值+代码按剧情时间兜底推进, 属于合法行为, 不警告)
         const cardHasPhysio = PHYSIO_FIELDS.some(field => card?.[field] !== undefined && card?.[field] !== null && String(card?.[field] ?? '').trim() !== '');
-        const oldCard = (existingCards ?? {})[npcName];
-        const oldHasPhysio = !!oldCard && PHYSIO_FIELDS.some(field => oldCard[field] !== undefined && oldCard[field] !== null && String(oldCard[field] ?? '').trim() !== '');
-        const isFemale = cardHasPhysio || (physioEnabled && oldHasPhysio);
         const missingPhysio = PHYSIO_FIELDS.filter(field => card?.[field] === undefined || card?.[field] === null || (typeof card?.[field] === 'string' && !card[field].trim()));
-        if (physioEnabled && isFemale && missingPhysio.length > 0) {
-            console.warn(`[彼方] NPC「${npcName}」缺少生理字段: ${missingPhysio.join('、')}(保留旧值)`);
-        }
-        else if (cardHasPhysio && missingPhysio.length > 0) {
+        if (cardHasPhysio && missingPhysio.length > 0) {
             console.warn(`[彼方] NPC「${npcName}」缺失生理字段: ${missingPhysio.join('、')}(保留旧值)`);
         }
         // 防全知字段: 孕期角色必须有「怀孕知晓」(NPC 本人是否知晓怀孕); 缺失时警告(mergeCard 会按孕周兜底补全)
@@ -443,19 +414,13 @@ function validateParsedFormat(parsed, existingNpcNames = new Set(), existingCard
         }
     };
     for (const [name, card] of Object.entries(parsed)) {
-        if (name === '在场NPC' || name === '后台互动' || name === '移除NPC' || name === '剧情时间' || name === '受孕事件')
+        if (isReservedTopLevelKey(name))
+            continue;
+        // 自动建档关闭: 即将被跳过(不建档)的新角色不按"新建 NPC 全字段"口径校验, 避免误警告
+        if (skipCheckNames && skipCheckNames.has(name))
             continue;
         if (card && typeof card === 'object' && !Array.isArray(card))
-            checkCard(name, card, !existingNpcNames.has(name), false);
-    }
-    if (Array.isArray(raw)) {
-        for (const item of raw) {
-            if (item && typeof item === 'object' && !Array.isArray(item)) {
-                const name = String(item['姓名'] ?? item['名字'] ?? '').trim();
-                if (name)
-                    checkCard(name, item, !existingNpcNames.has(name), true);
-            }
-        }
+            checkCard(name, card, !(existingCards ?? {})[name]);
     }
 }
 /** 脱敏接口地址(隐藏地址中可能携带的 token/key 查询参数), 用于错误日志 */
@@ -463,8 +428,10 @@ function maskBaseUrl(url) {
     const value = String(url || '').trim();
     return value.replace(/([?&](?:key|token|api_key|apiKey|apikey)=)[^&]*/gi, '$1***');
 }
-/** 从世界书/正文/上下文中提取明确标注的"当前时间"(如全局时间表的"当前时间"列、<time_format> 的 time 行), 作为剧情时间的参考提示 */
-function extractCurrentTimeHint(worldbook, reply, context) {
+/** 从正文/上下文中提取明确标注的"当前时间"(如 <time_format> 的 time 行、正文里的日期+时刻), 作为剧情时间的参考提示。
+ *  **只从正文与上下文提取, 不读世界书**——世界书里的"当前时间"表/全局时间表是其他系统或彼方
+ *  上次写入的推断值, 可能滞后或与正文不符, 作为"务必以此为准"的提示反而会把剧情时间带偏。 */
+function extractCurrentTimeHint(_worldbook, reply, context) {
     const pad = (n) => String(n).padStart(2, '0');
     // 正文时间**只从 reply(最近回复)里提取**——worldbook/context 含彼方自己写的
     // "当前时间"固定标签(会干扰), 且拼接在 reply 之后, 取"最后一次"会取到它们。
@@ -515,262 +482,135 @@ function extractCurrentTimeHint(worldbook, reply, context) {
         }
         return '';
     };
-    // 优先 reply(最新正文), 其次 context(最近剧情上下文), 最后 worldbook(世界书)
+    // 优先 reply(最新正文), 其次 context(最近剧情上下文)——两者都是本聊天的
+    // 实际剧情内容, 时间标注可信; 世界书不参与(见函数注释)
     const fromReply = extractFrom(reply);
     if (fromReply)
         return fromReply;
-    const fromContext = extractFrom(context);
-    if (fromContext)
-        return fromContext;
-    return extractFrom(worldbook);
+    return extractFrom(context);
 }
-/** 周期长度随机范围(可怀孕角色首次建档时确定, 之后锁死, 不随 AI 覆盖变化) */
-const PHYSIO_CYCLE_MIN = 21;
-const PHYSIO_CYCLE_MAX = 35;
-/** 从"生理周期"文本提取当前 Day(如 "排卵期 Day 13/25" → 13; "孕期 孕6周+3天" → null) */
-function extractCycleDay(physioText) {
-    const m = String(physioText ?? '').match(/Day\s*(\d+)/i);
-    return m ? +m[1] : null;
-}
-/** 计算某 NPC 在指定 Day 发生受孕行为的单次受孕率(0~1), 基于锁定周期长度与防护 */
-function calcConceptionRate(cycleLen, day, protection) {
-    if (!cycleLen || !day)
-        return 0;
-    const ovuDay = cycleLen - 14; // 排卵日 = 周期长度-14
-    const dist = day - ovuDay;    // 正=排卵后, 负=排卵前
-    let base = 0.01; // 窗口外(安全期)保底 1%
-    if (dist === 0)
-        base = 0.25;              // 排卵日当天
-    else if (dist >= -1 && dist <= -2)
-        base = 0.20;              // 排卵前1-2天
-    else if (dist >= -5 && dist <= -3)
-        base = 0.10;              // 排卵前3-5天
-    else if (dist === 1)
-        base = 0.05;              // 排卵后1天
-    const prot = String(protection ?? '').trim();
-    const factor = prot.includes('避孕药') ? 0.01
-        : prot.includes('避孕套') ? 0.02
-            : prot.includes('外射') ? 0.05
-                : prot.includes('无') ? 1
-                    : 1;
-    return Math.min(1, base * factor);
-}
+
 /**
- * 彼方自动受孕判定: AI 报告了"受孕事件"(阴道内射/阴道外射外阴附近)时, 由彼方代码
- * 掷 D100 并判定是否怀孕, 结果写回卡——不依赖 AI 自觉遵守规则。
- * 触发条件: 方式∈{阴道内射, 阴道外射(外阴附近)}, 且该 NPC 未怀孕(孕期不再判定),
- * 且该事件**发生在本次剧情时间窗口内**(旧事件——如剧情已跨过一晚仍被 AI 沿用的——不再判定)。
+ * 近期关键事件的语义近似去重。
+ *
+ * AI 常把同一件事换一种说法再次返回，例如：
+ * - 2026-05-20 因诊所宣传日需提早出门，临走前叮嘱家中孩子们
+ * - 2026-05-20 因诊所宣传日提早出门上班
+ *
+ * 精确字符串去重认不出这种重复。这里用“同日期 + 最长公共连续文本占较短事件正文 >= 60%”
+ * 判断为同一事件，并保留信息更完整（正文更长）的一条。不同日期永不合并。
  */
-function applyConceptionCheck(merged, oldCard, storyTimeText = '') {
-    const ev = merged['受孕事件'];
-    if (!ev || typeof ev !== 'object')
-        return;
-    try {
-        const way = String(ev['方式'] ?? '').trim();
-        const isConceptive = way.includes('阴道内射') || way.includes('阴道外射');
-        if (!isConceptive)
-            return; // 口内/肛内/体外不判定
-        // 旧事件过滤(防反复判定): AI 每次更新会把旧卡里的受孕事件原样带上(如剧情已过了一晚),
-        // 若事件时间明显早于本次剧情开始(或晚于剧情结束), 说明不是本次新发生的行为, 跳过判定。
-        const range = parseStoryTimeRange(storyTimeText);
-        const evTs = parsePregnancyEventTime(ev['时间'], storyTimeText);
-        if (evTs !== null && range.startTs !== null && (evTs < range.startTs || (range.endTs !== null && evTs > range.endTs))) {
-            console.info(`[彼方] 受孕事件为旧事件(不在本次剧情时间窗口内), 跳过判定: 事件=${ev['时间']} 剧情=${storyTimeText}`);
-            return;
-        }
-        // 事件时间无法解析时, 若与旧卡里的受孕事件时间完全相同, 视为旧事件被沿用, 同样跳过
-        if (evTs === null && storyTimeText) {
-            const oldEv = oldCard?.['受孕事件'];
-            if (oldEv && oldEv['时间'] && ev['时间'] && String(ev['时间']) === String(oldEv['时间'])) {
-                console.info(`[彼方] 受孕事件时间无法解析且与旧卡相同, 视为旧事件, 跳过判定`);
-                return;
+function dedupeRecentEvents(text) {
+    const items = String(text ?? '').split(/[；;、\n]+/).map(item => item.trim()).filter(Boolean);
+    const parse = (item) => {
+        const match = item.match(/^(\d{4}-\d{1,2}-\d{1,2})\s*(.*)$/);
+        return {
+            date: match?.[1] ?? '',
+            body: String(match?.[2] ?? item).replace(/[\s，。！？、；;,.!?：:的了需]/g, ''),
+        };
+    };
+    const longestCommonSubstringLength = (a, b) => {
+        if (!a || !b)
+            return 0;
+        const previous = new Array(b.length + 1).fill(0);
+        let longest = 0;
+        for (let i = 1; i <= a.length; i++) {
+            const current = new Array(b.length + 1).fill(0);
+            for (let j = 1; j <= b.length; j++) {
+                if (a[i - 1] === b[j - 1]) {
+                    current[j] = previous[j - 1] + 1;
+                    longest = Math.max(longest, current[j]);
+                }
             }
+            for (let j = 0; j <= b.length; j++)
+                previous[j] = current[j];
         }
-        // 已怀孕: 不再判定(孕期无排卵, 不会二次怀孕)
-        if (String(merged['是否怀孕'] ?? '') === 'true' || String(merged['是否怀孕']) === '是')
-            return;
-        const phy = merged['生理周期'] || '';
-        if (String(phy).includes('孕期'))
-            return;
-        const day = extractCycleDay(phy);
-        const cycleLen = merged['周期长度'];
-        if (!day || !cycleLen)
-            return;
-        const rate = calcConceptionRate(cycleLen, day, ev['防护']);
-        // 彼方掷骰 D100(1~100)
-        const roll = 1 + Math.floor(Math.random() * 100);
-        const ovuDay = cycleLen - 14;
-        const pregnant = roll <= Math.round(rate * 100);
-        console.info(`[彼方] 受孕判定: ${merged['是否怀孕'] !== undefined ? 'AI输出=' + merged['是否怀孕'] : '新卡'} 周期=${cycleLen} Day=${day}(排卵日${ovuDay}) 方式=${way} 防护=${ev['防护'] || '无'} 受孕率=${(rate * 100).toFixed(1)}% 掷骰=${roll} → ${pregnant ? '怀孕!' : '未怀'}`);
-        if (pregnant) {
-            merged['是否怀孕'] = 'true';
-            if (!String(phy).includes('孕期'))
-                merged['生理周期'] = `孕期 孕0周+0天`;
-            // 防全知: 刚受孕的 NPC 本人完全不知情, 知晓状态固定为"未知"
-            merged['怀孕知晓'] = '未知';
-            // 记录受孕日期(剧情时间): 优先用受孕事件时间, 解析失败用剧情结束时刻。
-            // 这是孕周推进的**绝对基准**——之后孕周一律按"当前剧情日期 - 受孕日期"重算,
-            // 彻底摆脱 AI/旧卡孕周被写快后越推越快的问题。
-            const pregTs = evTs !== null ? evTs : range.endTs;
-            if (pregTs !== null)
-                merged['受孕日期'] = fmtStoryTime(pregTs);
-            console.info(`[彼方] ${merged['曾用名'] || ''} 判定为怀孕, 生理周期转孕期(本人尚不知晓), 受孕日期=${merged['受孕日期'] || '(未知)'}`);
+        return longest;
+    };
+    const result = [];
+    for (const item of items) {
+        const candidate = parse(item);
+        const duplicateIndex = result.findIndex(existing => {
+            const prior = parse(existing);
+            if (!candidate.date || candidate.date !== prior.date)
+                return false;
+            const shorter = Math.min(candidate.body.length, prior.body.length);
+            return shorter > 0 && longestCommonSubstringLength(candidate.body, prior.body) / shorter >= 0.6;
+        });
+        if (duplicateIndex === -1) {
+            result.push(item);
         }
-        else if (String(merged['是否怀孕'] ?? '') !== 'false') {
-            merged['是否怀孕'] = 'false';
+        else if (item.length > result[duplicateIndex].length) {
+            result[duplicateIndex] = item;
         }
     }
-    finally {
-        // 无论是否判定(已怀孕/孕期/方式非受孕/数据缺失/旧事件), 都从卡中清空受孕事件——
-        // 避免残留后下一轮 AI 沿用旧事件再次触发重复判定/怀孕。
-        delete merged['受孕事件'];
-    }
+    return result.slice(-3).join('；');
 }
-/** 解析受孕事件的"时间"字段为时间戳: 兼容 "0137-06-09 21:40" 与缺年份的 "06-09 21:40"(用剧情时间补年份); 解析失败返回 null */
-function parsePregnancyEventTime(timeText, storyTimeText) {
-    let t = String(timeText ?? '').trim();
-    if (!t)
-        return null;
-    // 缺年份(如 "06-09 21:40")时, 用剧情时间里的年份补全
-    if (!/^\d{4}[-/.]/.test(t)) {
-        const yearMatch = String(storyTimeText ?? '').match(/\d{4}[-/.]\d{1,2}[-/.]\d{1,2}/);
-        const year = yearMatch ? yearMatch[0].slice(0, 4) : String(new Date().getFullYear());
-        t = `${year}-${t}`;
-    }
-    return parseStoryTime(t);
-}
-/** 从"生理周期"孕期文本提取孕周(如 "孕期 孕6周+3天" → 6; 提取不到返回 null) */
-function extractPregnancyWeek(physioText) {
-    const m = String(physioText ?? '').match(/孕\s*(\d+)\s*周/);
-    return m ? +m[1] : null;
-}
-/** 由 Day 与锁定周期长度推算阶段名(与提示词规则一致): 排卵日 = 周期长度 - 14;
- *  月经期 Day1~5, 卵泡期 Day6~排卵日-2, 排卵期 排卵日±1, 黄体期 排卵日+2~周期长度 */
-function cycleStageName(day, cycleLen) {
-    const ovuDay = cycleLen - 14;
-    if (day >= 1 && day <= 5)
-        return '月经期';
-    if (day >= 6 && day <= ovuDay - 2)
-        return '卵泡期';
-    if (day >= ovuDay - 1 && day <= ovuDay + 1)
-        return '排卵期';
-    return '黄体期';
-}
-/**
- * 时间戳的"日期"部分时间戳(忽略时分, 用于按**日历日**计算天数差)。
- * 用 setFullYear 构造, 避免 JS 对 0~99 年份自动映射到 1900+。
- */
-function dateOnlyTs(ts) {
-    const d = new Date(ts);
-    const t = new Date(0);
-    t.setFullYear(d.getFullYear(), d.getMonth(), d.getDate());
-    return t.getTime();
-}
-/**
- * 生理周期兜底校正: 以旧卡中(AI 维护的)"生理周期日期"到本次剧情结束时刻的
- * **日历日差**推进 Day/孕周, 纠正 AI 偶发失误(同一天/过一晚就 +1~+2 天)。
- * 仅供兜底——AI 自行正确推进时不冲突; 旧卡无基准/剧情时间不可解析/时间倒退时跳过。
- * - 同一日历日(未跨午夜): 强制 Day/孕周保持与旧卡一致(不改动)
- * - 跨过午夜进入新的一天(即使只差几分钟, 如 23:45 → 00:20): Day+1
- * - 过了几个日历日: Day = 旧Day + 日历日差, 超过锁定周期长度归零进入新周期; 孕期按总天数推进
- */
-function correctPhysioByStoryTime(merged, oldCard, storyTimeText) {
-    const oldDate = oldCard?.['生理周期日期'];
-    if (!oldDate)
-        return;
-    const range = parseStoryTimeRange(storyTimeText);
-    const endTs = range.endTs;
-    // 兼容旧数据: 早期 fmtStoryTime 年份没补零(如 "137-06-12 07:45"), 补零到4位再解析
-    const rawDate = String(oldDate).trim();
-    let oldTs = parseStoryTime(rawDate);
-    if (oldTs === null) {
-        const m = rawDate.match(/^(\d{1,3})([-/.]\d)/);
-        if (m)
-            oldTs = parseStoryTime(m[1].padStart(4, '0') + m[2] + rawDate.slice(m[0].length));
-    }
-    if (endTs === null || oldTs === null)
-        return;
-    // 按日历日差推进(忽略时分): 跨午夜(23:45→00:20)算 1 天, 同日算 0 天。
-    // 注意: 剧情时间与上次同刻或倒退(endTs <= oldTs)时**不跳过**——days 会被
-    // Math.max(0) 压成 0, 强制把 Day/孕周拉回旧卡值, 防止 AI 乱写(如手动重更时
-    // AI 把 Day6 又写成 Day20, 却因 endTs==oldTs 而跳过校正直接入库)。
-    const days = Math.max(0, Math.round((dateOnlyTs(endTs) - dateOnlyTs(oldTs)) / 86400000));
-    const oldPhy = String(oldCard?.['生理周期'] ?? '').trim();
-    if (!oldPhy)
-        return;
-    // 孕期: 优先按「受孕日期」重算孕周 = (当前剧情结束日期 - 受孕日期)的天数,
-    // 彻底不依赖 AI/旧卡孕周(它们可能被 AI 写快后越推越快)。
-    // 无受孕日期(存量旧卡)时退回: 旧卡孕周 + 天数差。
-    const oldPreg = oldPhy.match(/孕期\s*孕(\d+)\s*周\s*\+\s*(\d+)\s*天/);
-    // 关键: 旧卡是孕期, 但 AI 已把生理周期改为**非孕期**(哺乳期/普通周期) = AI 明确结束
-    // 孕期(剧情写了分娩/孩子出生)。此时**不强制改回孕期**——否则 AI 输出哺乳期会被
-    // 下面的孕期分支(受孕日期重算/旧卡孕周推进)覆盖回孕期, 导致"分娩了还显示孕期"。
-    if (oldPreg && !String(merged['生理周期'] ?? '').includes('孕期')) {
-        return;
-    }
-    const pregDate = merged['受孕日期'] || oldCard?.['受孕日期'];
-    if (pregDate) {
-        const pregTs = parseStoryTime(String(pregDate).trim());
-        if (pregTs !== null && endTs !== null && endTs > pregTs) {
-            const totalDays = Math.max(0, Math.round((dateOnlyTs(endTs) - dateOnlyTs(pregTs)) / 86400000));
-            merged['生理周期'] = `孕期 孕${Math.floor(totalDays / 7)}周+${totalDays % 7}天`;
-            return;
-        }
-    }
-    if (oldPreg) {
-        const total = (+oldPreg[1]) * 7 + (+oldPreg[2]) + days;
-        merged['生理周期'] = `孕期 孕${Math.floor(total / 7)}周+${total % 7}天`;
-        return;
-    }
-    // 普通周期: 以旧卡 Day 为基准推进, 超过周期长度归零进入新周期
-    const oldDay = extractCycleDay(oldPhy);
-    const cycleLen = merged['周期长度'];
-    if (oldDay === null || !cycleLen || typeof merged['生理周期'] !== 'string' || !merged['生理周期'])
-        return;
-    const newDay = ((oldDay - 1 + days) % cycleLen) + 1;
-    merged['生理周期'] = String(merged['生理周期'])
-        .replace(/Day\s*\d+(?:\/\d+)?/i, `Day ${newDay}/${cycleLen}`);
-}
-/** 「怀孕知晓」的合法取值: 反映 NPC 本人对自己怀孕的知晓程度(防全知) */
-const PREGNANCY_KNOWN_UNKNOWN = '未知';
-const PREGNANCY_KNOWN_SUSPECT = '疑似';
-const PREGNANCY_KNOWN_CONFIRMED = '已确认';
-const PREGNANCY_KNOWN_VALUES = [PREGNANCY_KNOWN_UNKNOWN, PREGNANCY_KNOWN_SUSPECT, PREGNANCY_KNOWN_CONFIRMED];
-/**
- * 防全知兜底: 保证孕期 NPC 一定有「怀孕知晓」字段(该字段只属于怀孕角色)。
- * - 未怀孕: 清理残留的知晓字段;
- * - 孕期但缺字段(存量旧卡升级): 按当前孕周推断初始知晓度——孕0~4周本人不知情(未知),
- *   孕4~6周停经开始怀疑(疑似), 孕6周+早孕反应/验孕早已确认(已确认), 符合现实认知。
- */
-function ensurePregnancyKnowledge(merged) {
-    const pregnant = String(merged['是否怀孕'] ?? '') === 'true' || String(merged['是否怀孕']) === '是' || String(merged['生理周期'] ?? '').includes('孕期');
-    if (!pregnant) {
-        delete merged['怀孕知晓'];
-        return;
-    }
-    if (typeof merged['怀孕知晓'] === 'string' && merged['怀孕知晓'].trim())
-        return;
-    const week = extractPregnancyWeek(merged['生理周期']);
-    merged['怀孕知晓'] = week === null ? PREGNANCY_KNOWN_UNKNOWN
-        : week < 4 ? PREGNANCY_KNOWN_UNKNOWN
-            : week < 6 ? PREGNANCY_KNOWN_SUSPECT
-                : PREGNANCY_KNOWN_CONFIRMED;
-}
+
 function mergeCard(oldCard, update, storyTimeText = '') {
     const merged = { ...(oldCard ?? {}) };
-    // 剧情时间只用于时间轴展示(独立记录), 不再写入状态卡; 顺带清理旧数据残留
+    // 剧情时间已废弃独立记录(时间轴功能已下线), 不再写入状态卡; 顺带清理旧数据残留
     delete merged['剧情时间'];
-    for (const key of _state__WEBPACK_IMPORTED_MODULE_6__.CARD_FIELDS) {
+    // 人设参考是发给 AI 的只读参考(每张卡附在末尾的世界书条目), AI 不应把它当字段返回——
+    // 若 AI 误把它写进 JSON, 直接丢弃不合并, 防止它进入快照无限累积。
+    delete merged['人设参考'];
+    // 清理旧版字段(最近变化已从 CARD_FIELDS 移除)
+    for (const legacyField of LEGACY_CARD_FIELDS) {
+        delete merged[legacyField];
+    }
+    for (const key of CARD_FIELDS) {
         const value = update[key];
         if (typeof value === 'string' && value.trim()) {
-            // 生活状态: AI 若写了"今天/昨天 HH:mm"等相对时间, 用本次剧情时间补全为带日期格式
-            merged[key] = key === '生活状态' ? withStoryDate(value.trim(), storyTimeText) : value.trim();
+            // 持有物/近期关键事件: 追加式合并, 不覆盖(见原则4.5一致性铁律)
+            if (APPEND_CARD_FIELDS.includes(key)) {
+                const oldText = String(merged[key] ?? '').trim();
+                const newText = value.trim();
+                if (!oldText) {
+                    merged[key] = newText;
+                }
+                else if (key === '近期关键事件') {
+                    // FIFO 最多3条, 新条目追加到末尾, 去重(避免AI重复返回已入库条目)
+                    // 分隔符兼容: 提示词未强制, AI 可能用 ；、;、顿号、换行 分隔多条
+                    const splitItems = (text) => text.split(/[；;、\n]+/).map(s => s.trim()).filter(Boolean);
+                    const oldItems = splitItems(oldText);
+                    const newItems = splitItems(newText);
+                    const combined = [...oldItems];
+                    for (const item of newItems) {
+                        if (!combined.includes(item))
+                            combined.push(item);
+                    }
+                    merged[key] = dedupeRecentEvents(combined.join('；'));
+                }
+                else {
+                    // 持有物: 去重合并, 旧物品保留
+                    // 分隔符兼容: 提示词要求顿号, 但 AI 可能用 , 、, 逗号、顿号、分号
+                    const splitItems = (text) => text.split(/[、,，;；]+/).map(s => s.trim()).filter(Boolean);
+                    const oldItems = splitItems(oldText);
+                    const newItems = splitItems(newText);
+                    const combined = [...oldItems];
+                    for (const item of newItems) {
+                        if (!combined.includes(item))
+                            combined.push(item);
+                    }
+                    merged[key] = combined.join('、');
+                }
+            }
+            else {
+                // 生活状态: AI 若写了"今天/昨天 HH:mm"等相对时间, 用本次剧情时间补全为带日期格式
+                merged[key] = key === '生活状态' ? withStoryDate(value.trim(), storyTimeText) : value.trim();
+            }
         }
     }
-    // 受孕事件: AI 报告的结构化对象(时间/对象/方式/防护), 整块覆盖; 未报告则保留旧值
+    // 即使本轮 AI 没返回近期关键事件，也清理旧快照里已经存在的近义重复。
+    if (merged['近期关键事件'])
+        merged['近期关键事件'] = dedupeRecentEvents(merged['近期关键事件']);
+    // 受孕事件: AI 报告的结构化对象(时间/对象/方式/防护/次数)或事件数组, 整块覆盖; 未报告则保留旧值
     let 本次有新受孕事件 = false;
-    if (update['受孕事件'] && typeof update['受孕事件'] === 'object' && !Array.isArray(update['受孕事件'])) {
-        merged['受孕事件'] = _.cloneDeep(update['受孕事件']);
+    const evUpdate = update['受孕事件'];
+    const evValid = !!evUpdate && typeof evUpdate === 'object'
+        && (!Array.isArray(evUpdate) || evUpdate.some(item => item && typeof item === 'object' && !Array.isArray(item)));
+    if (evValid) {
+        merged['受孕事件'] = _.cloneDeep(evUpdate);
         本次有新受孕事件 = true;
     }
     if (merged['周期长度'] === undefined || merged['周期长度'] === null) {
@@ -778,6 +618,19 @@ function mergeCard(oldCard, update, storyTimeText = '') {
         if (hasPhysio) {
             merged['周期长度'] = PHYSIO_CYCLE_MIN + Math.floor(Math.random() * (PHYSIO_CYCLE_MAX - PHYSIO_CYCLE_MIN + 1));
         }
+    }
+    // 种族时间尺度(「孕程周数」「哺乳期月数」): AI 按 NPC 种族/世界书设定填写, 只接受范围内的正整数。
+    // 非法/缺失一律**保留原值**并告警——缺数字时彼方没有依据, 下游按"不推断、不改写"处理, 绝不默认人类。
+    for (const scaleField of RACE_SCALE_FIELDS) {
+        const rawScale = update[scaleField];
+        if (rawScale === undefined)
+            continue;
+        const normalized = normalizeRaceScale(scaleField, rawScale);
+        if (normalized === null) {
+            console.warn(`[彼方] ${merged['曾用名'] || ''} 「${scaleField}」取值不合法(${rawScale}), 已忽略并保留原值`);
+            continue;
+        }
+        merged[scaleField] = normalized;
     }
     // 受孕日期兜底(存量孕期卡): 孕期但缺「受孕日期」(旧版本受孕的卡)时, 用旧卡孕周反推
     // 受孕日 = 本次剧情结束时刻 - 孕周总天数, 作为后续孕周推进的绝对基准。
@@ -815,21 +668,29 @@ function mergeCard(oldCard, update, storyTimeText = '') {
         merged['是否怀孕'] = 'false';
         delete merged['受孕日期'];
         delete merged['怀孕知晓'];
-        // 记录哺乳期开始日期(首次进入时, 供后续判断哺乳期是否超期): 哺乳期是产后约6个月的
-        // 短期状态, 超过后应恢复普通周期(由 AI 按提示词处理), 代码在超期时只告警不强制
+        // 记录哺乳期开始日期(首次进入时, 供后续判断哺乳期是否超期)
         const physioEndNow = parseStoryTimeRange(storyTimeText).endTs;
         if (!merged['哺乳期开始日期'] && physioEndNow !== null)
             merged['哺乳期开始日期'] = fmtStoryTime(physioEndNow);
-        // 哺乳期超期处理(>180天): 哺乳期是产后约6个月的短期状态, 剧情大跳跃(如3年后)后
-        // 早已断奶, AI 若不推进, 这里强制恢复普通周期(月经期 Day 1, 产后月经恢复的合理起点),
+        // 哺乳期超期处理: 时长按该 NPC 的「哺乳期月数」(AI 按种族/世界书设定填写, 人类约 6)判定, 30 天/月。
+        // 剧情大跳跃(如3年后)且 AI 未推进时, 强制恢复普通周期(月经期 Day 1, 产后月经恢复的合理起点),
         // 之后由校正/AI 按"生理周期日期"正常推进。
+        // **未填「哺乳期月数」= 彼方没有依据 → 只告警、绝不改数据**, 交回 AI 按种族设定决定。
+        // (这里以前硬编码 180 天, 等于把人类时长套给所有种族——龙族/天使等更长的会被错误地强制恢复)
         const lactStartRaw = String(merged['哺乳期开始日期'] ?? '').trim();
         if (lactStartRaw && physioEndNow !== null) {
             const lactStartTs = parseStoryTime(lactStartRaw);
-            if (lactStartTs !== null && physioEndNow - lactStartTs > 180 * 86400000) {
+            const expired = lactationExpired(lactStartTs, physioEndNow, merged);
+            if (expired === true) {
                 merged['生理周期'] = `月经期 Day 1/${merged['周期长度'] || 28}`;
                 delete merged['哺乳期开始日期'];
-                console.warn(`[彼方] ${merged['曾用名'] || ''} 哺乳期已超过6个月(自${lactStartRaw}), 已恢复普通周期(月经期 Day 1)`);
+                // 阶段联动: 哺乳期强制恢复普通周期后, 原"周期影响"(哺乳相关描述)已不适用
+                if (typeof merged['周期影响'] === 'string' && merged['周期影响'].includes('哺乳'))
+                    merged['周期影响'] = CYCLE_STAGE_INFLUENCE['月经期'];
+                console.warn(`[彼方] ${merged['曾用名'] || ''} 哺乳期已超过${extractLactationMonths(merged)}个月(自${lactStartRaw}), 已恢复普通周期(月经期 Day 1)`);
+            }
+            else if (expired === null) {
+                console.info(`[彼方] ${merged['曾用名'] || ''} 哺乳期时长无从判断(未填「哺乳期月数」或时间不可解析), 不改写, 交回 AI 按种族设定处理(自${lactStartRaw})`);
             }
         }
     }
@@ -856,10 +717,21 @@ function mergeCard(oldCard, update, storyTimeText = '') {
     if (!phyNow.includes('孕期') && !phyNow.includes('哺乳期'))
         delete merged['受孕日期'];
     // 怀孕知晓: AI 维护的 NPC 自我认知字段(仅孕期角色), 只接受合法取值, 非法/空值忽略(走下方兜底)
+    // 单向闸: 只能 未知→疑似→已确认 前进, 不能倒退(AI 误标"未知"为"已确认"时拦截)
     if (update['怀孕知晓'] !== undefined) {
         const known = String(update['怀孕知晓'] ?? '').trim();
-        if (PREGNANCY_KNOWN_VALUES.includes(known))
-            merged['怀孕知晓'] = known;
+        if (PREGNANCY_KNOWN_VALUES.includes(known)) {
+            const oldKnown = String(merged['怀孕知晓'] ?? '').trim();
+            const order = { [PREGNANCY_KNOWN_UNKNOWN]: 0, [PREGNANCY_KNOWN_SUSPECT]: 1, [PREGNANCY_KNOWN_CONFIRMED]: 2 };
+            const oldIdx = order[oldKnown] ?? -1;
+            const newIdx = order[known] ?? -1;
+            if (newIdx >= oldIdx) {
+                merged['怀孕知晓'] = known;
+            }
+            else {
+                console.warn(`[彼方] ${merged['曾用名'] || ''} 怀孕知晓倒退被拦截(${oldKnown}→${known}), 保持旧值`);
+            }
+        }
     }
     // 防全知兜底: 未怀孕清理该字段; 孕期缺该字段(旧卡升级)按孕周补初始知晓度
     ensurePregnancyKnowledge(merged);
@@ -883,20 +755,28 @@ function mergeCard(oldCard, update, storyTimeText = '') {
         if (dayOnly && merged['周期长度']) {
             const stage = cycleStageName(+dayOnly[1], merged['周期长度']);
             const stageRe = /^(月经期|卵泡期|排卵期|黄体期|经前期|孕期|哺乳期)\s*/;
-            const hasStage = stageRe.test(finalPhy);
-            merged['生理周期'] = hasStage
+            const oldStageMatch = finalPhy.match(stageRe);
+            const oldStage = oldStageMatch ? oldStageMatch[1] : '';
+            merged['生理周期'] = oldStage
                 ? finalPhy.replace(stageRe, `${stage} `)
                 : `${stage} ${finalPhy}`;
+            // 阶段被修正时联动「周期影响」: AI 的"周期影响"是按它写的(错误)阶段撰写的,
+            // 彼方修正阶段名后二者矛盾(如写了排卵期影响、实际已是黄体期)——
+            // 影响文本包含旧阶段名时, 用新阶段的通用描述覆盖(下一轮 AI 可按剧情自然细化)。
+            if (oldStage && oldStage !== stage
+                && typeof merged['周期影响'] === 'string' && merged['周期影响'].includes(oldStage)) {
+                merged['周期影响'] = CYCLE_STAGE_INFLUENCE[stage];
+                console.warn(`[彼方] ${merged['曾用名'] || ''} 生理周期阶段被修正(${oldStage}→${stage}), "周期影响"已同步替换`);
+            }
         }
     }
     // 清理旧版生理字段残留(累计受孕率/受孕率记录/生理结算 已被新系统取代)
     delete merged['累计受孕率'];
     delete merged['受孕率记录'];
     delete merged['生理结算'];
-    if ('可能偶遇' in update) {
-        const raw = update['可能偶遇'];
-        merged['可能偶遇'] = typeof raw === 'boolean' ? raw : raw === 'true' || raw === '是' || raw === '会';
-    }
+    // 清理已下线的「可能偶遇」字段: 主 AI 通过"位置+当前在做"即可推断偶遇可能性,
+    // 单独维护布尔字段反而容易出现"位置在公司但可能偶遇=true"的矛盾
+    delete merged['可能偶遇'];
     // 曾用名: AI 在改名时标注的旧名(如"林姐"其实是"林淑仪"), 保留供彼方识别与合并
     if (update['曾用名'] && typeof update['曾用名'] === 'string' && update['曾用名'].trim()) {
         merged['曾用名'] = update['曾用名'].trim();
@@ -947,162 +827,24 @@ function resolveRenamedNpc(newData, name, card, playerName) {
     return { name, oldCard: newData.NPC[name] };
 }
 
-/**
- * 把生活状态里的相对时间("今天18:45"/"今天18点45"/"昨天15:30"等)补全为**剧情日期**。
- * 剧情日期取自本次更新的剧情时间文本(storyTimeText, 形如 "2026-08-15 18:41 至 2026-08-15 18:48"),
- * 取结束时刻所在日期作为"今天", 前一天作为"昨天"。
- */
-function withStoryDate(text, storyTimeText) {
-    if (!text || !storyTimeText)
-        return text;
-    // 从剧情时间文本里提取日期(取最后一个出现的 YYYY-MM-DD, 通常为结束时刻)
-    const dates = String(storyTimeText).match(/\d{4}[-/.]\d{1,2}[-/.]\d{1,2}/g);
-    if (!dates || dates.length === 0)
-        return text;
-    const lastDate = dates[dates.length - 1].replace(/[./]/g, '-');
-    const parts = lastDate.split('-');
-    const today = `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
-    // 昨天 = 剧情日期 - 1 天
-    const d = new Date(+parts[0], +parts[1] - 1, +parts[2]);
-    d.setDate(d.getDate() - 1);
-    const yesterday = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    return String(text)
-        .replace(/今天\s*(\d{1,2})\s*[:：]\s*(\d{1,2})/g, `${today} $1:$2`)
-        .replace(/今天\s*(\d{1,2})\s*点\s*(\d{1,2})?\s*分?/g, (_, h, m) => `${today} ${h}:${m ? m.padStart(2, '0') : '00'}`)
-        .replace(/昨天\s*(\d{1,2})\s*[:：]\s*(\d{1,2})/g, `${yesterday} $1:$2`)
-        .replace(/昨天\s*(\d{1,2})\s*点\s*(\d{1,2})?\s*分?/g, (_, h, m) => `${yesterday} ${h}:${m ? m.padStart(2, '0') : '00'}`);
-}
-/** 解析剧情时间为时间戳（支持 YYYY-MM-DD HH:mm、YYYY.MM.DD HH:mm、YYYY/MM/DD 等，分钟可省略）。
- * 年份固定 4 位数字(如 0004/0025/0137); 用 setFullYear 构造, 避免 JS 对 0~99 年份自动映射到 1900+ */
-function parseStoryTime(text) {
-    const t = text.trim().replace(/[./]/g, '-');
-    const match = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{1,2}))?$/);
-    if (!match)
-        return null;
-    const [, year, month, day, hour, minute] = match;
-    const d = new Date(0);
-    d.setFullYear(+year, +month - 1, +day);
-    d.setHours(+(hour ?? 0), +(minute ?? 0), 0, 0);
-    const ts = d.getTime();
-    return Number.isNaN(ts) ? null : ts;
-}
-/** 时间戳格式化为 "YYYY-MM-DD HH:mm"（年份固定 4 位补零, 如 0137-06-12 07:45） */
-function fmtStoryTime(ts) {
-    const date = new Date(ts);
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${String(date.getFullYear()).padStart(4, '0')}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-/** 解析 AI 返回的"剧情时间"（兼容字符串或 {开始, 结束} 对象）为起止时间戳 */
-function parseStoryTimeRange(raw) {
-    if (typeof raw === 'string') {
-        const text = raw.trim();
-        // 兼容 "开始 至 结束" 时间段字符串(如 mergeCard 收到的 storyTimeText):
-        // 拆成起止两段分别解析, 否则整串解析失败 → startTs=null, 受孕判定的窗口过滤会失效
-        const parts = text.split(/\s*(?:至|到|~)\s*/);
-        if (parts.length >= 2) {
-            const start = parts[0].trim().replace(/[./]/g, '-');
-            const end = parts[parts.length - 1].trim().replace(/[./]/g, '-');
-            return { text, startTs: parseStoryTime(start), endTs: parseStoryTime(end) };
-        }
-        const ts = text ? parseStoryTime(text) : null;
-        return { text, startTs: ts, endTs: ts };
-    }
-    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-        const start = String(raw['开始'] ?? '').trim();
-        const end = String(raw['结束'] ?? '').trim();
-        const text = start && end && start !== end ? `${start} 至 ${end}` : end || start;
-        return { text, startTs: parseStoryTime(start), endTs: parseStoryTime(end) };
-    }
-    return { text: '', startTs: null, endTs: null };
-}
-/**
- * 为本次更新的条目分配剧情时间（均匀分布在 [开始, 结束] 时间段内, 不超出剧情时间范围）:
- * - 顺序(早→晚): 不在场 NPC 卡 → 在场 NPC 卡(最新, 贴近结束时刻), 互动紧随其后
- * - 时间跳跃(开始=结束)或时间不可解析: 全部统一写剧情时间
- * 返回与 orderedNames 和 interactions 一一对应的分配结果, 供时间轴记录使用(不写入状态卡)
- */
-function assignStoryTimes(names, interactions, inSceneNames, startTs, endTs, storyTimeText, timeJump) {
-    if (!storyTimeText)
-        return { orderedNames: [], times: [] };
-    const inSceneSet = new Set(inSceneNames);
-    const orderedNames = [
-        ...names.filter(name => !inSceneSet.has(name)),
-        ...names.filter(name => inSceneSet.has(name)),
-    ];
-    const total = orderedNames.length + interactions.length;
-    if (total === 0)
-        return { orderedNames, times: [] };
-    const canSpread = startTs !== null && endTs !== null && endTs > startTs && !timeJump;
-    const span = canSpread ? endTs - startTs : 0;
-    const times = [];
-    for (let i = 0; i < total; i++) {
-        if (canSpread && total > 1) {
-            times.push(fmtStoryTime(startTs + Math.round((span * i) / (total - 1))));
-        }
-        else if (canSpread) {
-            times.push(fmtStoryTime(endTs));
-        }
-        else {
-            times.push(storyTimeText);
-        }
-    }
-    return { orderedNames, times };
-}
-function applyUpdate(data, parsed, timeJump = null, playerName = null) {
+function applyUpdate(data, parsed, timeJump = null, playerName = null, autoTrack = true) {
     const newData = {
         ...data,
         名单: [...data.名单],
         NPC: _.cloneDeep(data.NPC),
-        在场NPC: [...(data.在场NPC ?? [])],
-        后台互动: [...data.后台互动],
-        时间轴: [...data.时间轴],
         卡字段计数: _.cloneDeep(data.卡字段计数 ?? {}),
         统计: { ...data.统计 },
-        快照: [...data.快照],
     };
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
         return newData;
     const storyRange = parseStoryTimeRange(parsed['剧情时间']);
     const storyTimeText = storyRange.text;
+    if (!storyTimeText) {
+        // AI 完全省略"剧情时间"时静默通过会导致生理推进失去基准, 至少留一条警告
+        console.warn('[彼方] AI 输出缺少"剧情时间", 生理周期推进将使用旧基准');
+    }
     if (storyTimeText)
         newData.剧情时间 = storyTimeText;
-    // 解析"在场NPC"（兼容三种格式: 名字字符串数组 / [{姓名, ...卡字段}] / [{"NPC名": {...卡字段}}]）; 对象形式一并合并卡
-    const inSceneList = [];
-    const inSceneCardNames = [];
-    if (typeof parsed['在场NPC'] !== 'undefined') {
-        const raw = parsed['在场NPC'];
-        if (Array.isArray(raw)) {
-            for (const item of raw) {
-                if (typeof item === 'string') {
-                    const name = item.trim();
-                    // 主角不计入在场名单
-                    if (name && name !== playerName && !inSceneList.includes(name))
-                        inSceneList.push(name);
-                }
-                else if (item && typeof item === 'object' && !Array.isArray(item)) {
-                    // 优先取 "姓名/名字" 字段; 没有则把对象里第一个键当作 NPC 名, 其值为状态卡
-                    let name = String(item['姓名'] ?? item['名字'] ?? '').trim();
-                    let card = item;
-                    if (!name) {
-                        const first = Object.entries(item).find(([key, value]) => key !== '姓名' && key !== '名字' && value && typeof value === 'object');
-                        if (first) {
-                            name = String(first[0]).trim();
-                            card = first[1];
-                        }
-                    }
-                    if (name && name !== playerName) {
-                        if (!inSceneList.includes(name))
-                            inSceneList.push(name);
-                        const resolved = resolveRenamedNpc(newData, name, card, playerName);
-                        newData.NPC[resolved.name] = mergeCard(resolved.oldCard, card, storyTimeText);
-                        inSceneCardNames.push(resolved.name);
-                    }
-                }
-            }
-        }
-        // 记录最近一次更新时在场的名单，供注入主 AI 时区分在场/不在场措辞
-        newData.在场NPC = inSceneList;
-    }
     let npcUpdates;
     if (typeof parsed['NPC'] === 'object' && parsed['NPC'] !== null && !Array.isArray(parsed['NPC'])) {
         npcUpdates = parsed['NPC'];
@@ -1110,13 +852,16 @@ function applyUpdate(data, parsed, timeJump = null, playerName = null) {
     else {
         npcUpdates = { ...parsed };
         delete npcUpdates['在场NPC'];
-        delete npcUpdates['后台互动'];
         delete npcUpdates['剧情时间'];
     }
+    // 「自动建档」关闭时: 只允许合并**已追踪**的 NPC(名单内或已有卡), AI 返回的新角色一律跳过——
+    // 已有卡但不在名单的(如改名后的新键)仍放行, 由 resolveRenamedNpc 的改名合并逻辑处理
+    const isTrackedNpc = (name) => newData.名单.includes(name) || !!newData.NPC[name];
+    const skippedNewNpcs = [];
     const updatedNames = [];
     for (const [name, card] of Object.entries(npcUpdates)) {
-        // 顶层保留键(防止 AI 误把受孕事件/剧情时间等放顶层被当成 NPC 建档)
-        if (name === '在场NPC' || name === '后台互动' || name === '受孕事件' || name === '剧情时间'
+        // 顶层保留键(防止 AI 误把受孕事件/剧情时间/思考流程等放顶层被当成 NPC 建档)
+        if (isReservedTopLevelKey(name)
             || typeof card !== 'object' || card === null || Array.isArray(card))
             continue;
         // 主角: 跳过合并, 并清理误建的主角卡/名单项
@@ -1125,24 +870,47 @@ function applyUpdate(data, parsed, timeJump = null, playerName = null) {
             newData.名单 = newData.名单.filter(n => n !== name);
             continue;
         }
-        // 在场 NPC 只按"在场NPC"数组中的版本合并一次, 顶层(幕后)跳过, 避免同一 NPC 双重更新/互相覆盖
-        if (inSceneList.includes(name))
+        // 自动建档关闭: 新角色(未在名单且无卡)不建档不追踪, 记录后跳过
+        if (!autoTrack && !isTrackedNpc(name)) {
+            skippedNewNpcs.push(name);
             continue;
+        }
         const resolved = resolveRenamedNpc(newData, name, card, playerName);
         newData.NPC[resolved.name] = mergeCard(resolved.oldCard, card, storyTimeText);
         updatedNames.push(resolved.name);
         if (!newData.名单.includes(resolved.name))
             newData.名单.push(resolved.name);
     }
-    for (const name of inSceneCardNames) {
-        if (!updatedNames.includes(name))
-            updatedNames.push(name);
-        if (!newData.名单.includes(name))
-            newData.名单.push(name);
-    }
-    for (const name of inSceneList) {
-        if (!newData.名单.includes(name))
-            newData.名单.push(name);
+    // 兼容旧版输出格式: 旧提示词会让 AI 返回「在场NPC」数组(对象=完整状态卡), 照常建档合并,
+    // 不丢数据; 新提示词不再要求该数组, 所有 NPC 一律顶层返回
+    if (Array.isArray(parsed['在场NPC'])) {
+        for (const item of parsed['在场NPC']) {
+            if (!item || typeof item !== 'object' || Array.isArray(item))
+                continue;
+            // 优先取 "姓名/名字" 字段; 没有则把对象里第一个键当作 NPC 名, 其值为状态卡
+            let name = String(item['姓名'] ?? item['名字'] ?? '').trim();
+            let card = item;
+            if (!name) {
+                const first = Object.entries(item).find(([key, value]) => key !== '姓名' && key !== '名字' && value && typeof value === 'object');
+                if (first) {
+                    name = String(first[0]).trim();
+                    card = first[1];
+                }
+            }
+            if (name && name !== playerName) {
+                // 自动建档关闭: 旧格式数组里的新角色同样不建档
+                if (!autoTrack && !isTrackedNpc(name)) {
+                    skippedNewNpcs.push(name);
+                    continue;
+                }
+                const resolved = resolveRenamedNpc(newData, name, card, playerName);
+                newData.NPC[resolved.name] = mergeCard(resolved.oldCard, card, storyTimeText);
+                if (!updatedNames.includes(resolved.name))
+                    updatedNames.push(resolved.name);
+                if (!newData.名单.includes(resolved.name))
+                    newData.名单.push(resolved.name);
+            }
+        }
     }
     const removedNpcs = [];
     if (typeof parsed['移除NPC'] !== 'undefined') {
@@ -1155,87 +923,29 @@ function applyUpdate(data, parsed, timeJump = null, playerName = null) {
     if (removedNpcs.length > 0) {
         newData.名单 = newData.名单.filter(name => !removedNpcs.includes(name));
     }
-    // 已追踪但本次未被 AI 返回的 NPC: 警告(状态保持旧值, 可能漏更新——如大幅时间跳跃时
-    // AI 只更新了部分 NPC, 其余卡会停留在上次日期, 生理周期/状态不推进)
+    // 自动建档关闭时, 提示本次被跳过的新角色(仅提示, 不影响其他更新)
+    if (skippedNewNpcs.length > 0) {
+        console.info(`[彼方] 「自动建档」已关闭, 本次跳过新角色(未建档): ${skippedNewNpcs.join('、')}`);
+    }
+    // 已追踪但本次整卡未被 AI 返回的 NPC: 警告(增量更新下核心三字段应每次必返, 整卡省略=状态停留旧值——
+    // 如大幅时间跳跃时 AI 只更新了部分 NPC, 其余卡会停留在上次日期)
     const notUpdatedNpcs = newData.名单.filter(name => !updatedNames.includes(name) && !removedNpcs.includes(name));
     if (notUpdatedNpcs.length > 0) {
-        console.warn(`[彼方] 以下已追踪NPC本次未被AI返回(状态保持旧值, 可能漏更新): ${notUpdatedNpcs.join('、')}`);
-    }
-    // 后台互动按"当前仍在进行"整体替换：AI 返回的清单即当前有效互动，已结束的自然消失；返回空数组则清空
-    if (Array.isArray(parsed['后台互动'])) {
-        const prevList = newData.后台互动;
-        const newList = [];
-        for (const item of parsed['后台互动']) {
-            if (item && typeof item === 'object' && !Array.isArray(item)) {
-                const npcList = Array.isArray(item['NPC']) ? item['NPC'].map(String).filter(Boolean) : [];
-                const eventText = String(item['事件'] ?? '').trim();
-                if (npcList.length > 0 && eventText) {
-                    // 同一组 NPC 的互动延续上一轮, 自动递增"已持续轮次", 供提示词引导 AI 推进进展而不是重新开始
-                    const prev = prevList.find(interaction => sameNpcSet(interaction.NPC, npcList));
-                    const rounds = (prev?.轮次 ?? 0) + 1;
-                    newList.unshift({
-                        // 时间用**剧情时间**(结束时刻), 不用现实时间——后台互动发生在剧情里
-                        时间: storyRange.endTs ? fmtStoryTime(storyRange.endTs) : (storyTimeText || new Date().toLocaleString()),
-                        NPC: npcList,
-                        事件: eventText,
-                        轮次: rounds,
-                    });
-                }
-            }
-        }
-        newData.后台互动 = newList.slice(0, 30);
-    }
-    // 分配剧情时间并写入时间轴记录（均匀分布在 [开始, 结束] 内, 在场角色贴近结束时刻）
-    const newInteractions = newData.后台互动;
-    const { orderedNames, times } = assignStoryTimes(updatedNames, newInteractions, inSceneList, storyRange.startTs, storyRange.endTs, storyTimeText, timeJump);
-    if (times.length > 0) {
-        const now = Date.now();
-        const entries = [];
-        orderedNames.forEach((name, i) => {
-            const card = newData.NPC[name];
-            entries.push({
-                时间: now,
-                剧情时间: times[i],
-                标题: name,
-                描述: card['当前在做'] || card['最近变化'] || '状态更新',
-                类型: '状态',
-            });
-        });
-        [...newInteractions].reverse().forEach((item, j) => {
-            entries.push({
-                时间: now,
-                剧情时间: times[orderedNames.length + j],
-                标题: item.NPC.join(' × '),
-                描述: item.事件,
-                类型: '互动',
-            });
-        });
-        // 时间轴只保留最近 5 次更新的内容(同一次更新内多条条目时间戳相同, 按批次去重), 超出删除最早的
-        const merged = [...entries, ...newData.时间轴];
-        const keptTimes = [];
-        const kept = [];
-        for (const entry of merged) {
-            if (!keptTimes.includes(entry.时间)) {
-                if (keptTimes.length >= 5)
-                    break;
-                keptTimes.push(entry.时间);
-            }
-            kept.push(entry);
-        }
-        newData.时间轴 = kept;
+        console.warn(`[彼方] 以下已追踪NPC本次整卡未返回(状态保持旧值, 剧情已推进时可能漏更新): ${notUpdatedNpcs.join('、')}`);
     }
     newData.统计.更新次数 = (newData.统计.更新次数 ?? 0) + 1;
     newData.统计.最后更新 = Date.now();
     return newData;
 }
-async function updateNpcStates(force = false, fresh = false) {
-    if (isUpdating) {
+async function updateNpcStates(force = false) {    if (isUpdating) {
         console.warn('[彼方] 上一次更新尚未完成, 已跳过本次更新');
         return;
     }
     isUpdating = true;
-    const debugStore = _state__WEBPACK_IMPORTED_MODULE_6__.useDebugStore();
-    const updatingStore = _state__WEBPACK_IMPORTED_MODULE_6__.useUpdatingStore();
+    // 分段计时: 定位"更新慢"的瓶颈(前置/世界书激活/接口请求/解析应用/收尾)
+    const timing = { start: Date.now(), 前置: 0, 世界书: 0, 请求: 0, 请求次数: 0, 解析应用: 0, 收尾: 0 };
+    const debugStore = useDebugStore();
+    const updatingStore = useUpdatingStore();
     const abortSignal = updatingStore.start('正在分析最近楼层…', '幕后');
     let parsed = null;
     let parseError = null;
@@ -1243,40 +953,56 @@ async function updateNpcStates(force = false, fresh = false) {
         const settings = _settings__WEBPACK_IMPORTED_MODULE_3__.getSettings();
         const { 地址, 模型 } = settings.接口;
         if (!地址 || !模型) {
-            toastr.warning('彼方: 尚未配置接口地址或模型, 请先在设置中完成配置', '彼方');
+            _toast__WEBPACK_IMPORTED_MODULE_7__.toastWarning('彼方: 尚未配置接口地址或模型, 请先在设置中完成配置', '彼方');
             return;
         }
-        maybeRollback();
-        let data = _state__WEBPACK_IMPORTED_MODULE_6__.loadData();
+        let data = loadData();
         // 获取玩家/主角名, 避免给主角建档; 顺带清理历史误建的主角卡
-        let playerName = null;
-        try {
-            playerName = getCurrentPersonaName();
-        }
-        catch {
-            playerName = null;
-        }
+        const playerName = host.persona.name();
+        // 主角信息(persona 描述): 主 AI 能看到 persona, 彼方此前没有读取渠道——
+        // 主角设定不写在世界书里时, 更新 AI 完全不知道主角是谁, 这里补齐
+        const playerDescription = host.persona.description().trim().slice(0, 4000);
         if (playerName && data.NPC[playerName]) {
             delete data.NPC[playerName];
             data.名单 = data.名单.filter(name => name !== playerName);
         }
-        if (fresh || (force && data.已处理层数 >= getAllAssistantMessages().length)) {
-            // 手动更新: 若最新层已更新过, 先撤销最新一次更新(回滚到上一层快照)再重新填写(避免基于不满意的结果继续);
-            // 若最新层尚未更新过, 则无需撤销直接填写。fresh 参数保留兼容(同语义)。
-            if (rollbackLatestUpdate()) {
-                data = _state__WEBPACK_IMPORTED_MODULE_6__.loadData();
-            }
-        }
+        // 手动更新不再撤销当前快照(旧行为"先回退再重填"会把本轮自动更新积累的其他 NPC
+        // 一起退回旧快照, 频繁手动更新时表现为角色/更新次数反复消失)——直接以现有状态为基底
+        // 增量重填, 更新次数照常累加。
         const tracked = collectTrackedNpcs(settings, data);
         const recentCount = Math.max(1, settings.更新.读取最近回复数 ?? 3);
-        const clearLayer = data.清空层 ?? 0;
+        let clearLayer = data.清空层 ?? 0;
+        // 清空层自适应: 清空后楼层被删到清空层以下时, 现有楼层号永远追不上清空层,
+        // 自动更新会被静默卡死。此时把清空层自动挪到最新楼层(等价于"从没更新过",
+        // 之后的新楼层照常分析), 与 v1.10 的行为一致。
+        if (!force && clearLayer > 0) {
+            let lastId = -1;
+            try {
+                lastId = host.chat.lastMessageId();
+            }
+            catch {
+                lastId = -1;
+            }
+            if (lastId >= 0 && clearLayer > lastId) {
+                const oldClearLayer = clearLayer;
+                clearLayer = lastId;
+                data.清空层 = clearLayer;
+                try {
+                    updateClearLayer(clearLayer);
+                    console.warn(`[彼方] 清空层 #${oldClearLayer} 高于当前最新楼层 #${lastId}, 已自动下移到 #${lastId}(之后的新楼层照常分析)`);
+                }
+                catch (error) {
+                    console.warn('[彼方] 清空层下移失败(不影响本次更新):', error);
+                }
+            }
+        }
         // 自动更新只分析清空之后的楼层；手动更新(force)强制分析最近 N 条
         let recent = getRecentAssistantMessages(recentCount);
         if (!force)
             recent = recent.filter(message => message.message_id > clearLayer);
         if (recent.length === 0) {
             if (force) {
-                toastr.warning('彼方: 没有可分析的AI回复（请确认已生成至少一条AI回复）', '彼方');
+                _toast__WEBPACK_IMPORTED_MODULE_7__.toastWarning('彼方: 没有可分析的AI回复（请确认已生成至少一条AI回复）', '彼方');
             }
             else {
                 console.warn('[彼方] 未找到新的AI回复(清空后或仅剩旧楼层), 跳过本次更新');
@@ -1289,14 +1015,18 @@ async function updateNpcStates(force = false, fresh = false) {
             .map((message, index) => `【${index === recent.length - 1 ? '最新回复' : `较早回复 ${index + 1}`}】\n${filter(message.message)}`)
             .join('\n\n');
         const timeJump = detectTimeJump(reply);
-        const inSceneHint = tracked.filter(name => recent.some(message => isNameMentioned(message.message, name)));
+        // 名字提示用**过滤后**的正文判断(思维链/隐藏标签里提到的名字不算"出现过")
+        const inSceneHint = tracked.filter(name => isNameMentioned(reply, name));
         const replyIds = new Set(recent.map(message => message.message_id));
         // 手动更新(force)连上下文一起完整分析（含清空前的用户输入）；自动更新才受清空层约束
         // 「最近剧情」上下文只取最新 1 层用户输入（正文仍按「读取最近 N 条」）
         const context = buildContext(recent[recent.length - 1].message_id, filter, 1, replyIds, force ? 0 : clearLayer);
+        timing.前置 = Date.now() - timing.start;
+        const worldbookStart = Date.now();
         const worldbook = settings.更新.注入世界书
-            ? await _worldbook__WEBPACK_IMPORTED_MODULE_4__.getActiveWorldbookText([context, reply].filter(Boolean).join('\n\n'), settings.更新.注入世界书上限, settings.更新.注入世界书条数, settings.更新.注入世界书排除 ?? [])
+            ? await _worldbook__WEBPACK_IMPORTED_MODULE_4__.getActiveWorldbookText([context, reply].filter(Boolean).join('\n\n'), settings.更新.注入世界书排除 ?? [], settings.更新.常驻世界书条目 ?? [])
             : '';
+        timing.世界书 = Date.now() - worldbookStart;
         const storyTimeHint = extractCurrentTimeHint(worldbook, reply, context);
         const currentCards = {};
         // 无论是否重填都发送现有状态卡: 重填时它们作为"旧卡参考"传给 AI, 保证角色设定连续, 但要求 AI 忽略具体状态从零重填
@@ -1319,7 +1049,29 @@ async function updateNpcStates(force = false, fresh = false) {
             delete card['生理结算'];
             currentCards[name] = card;
         }
-        const messages = _prompts__WEBPACK_IMPORTED_MODULE_2__.buildUpdateMessages({
+        // 人设注入: 对每个已追踪 NPC, 收集**该 NPC 名字能触发的绿灯(关键词)条目**作为"人设参考"附在卡旁。
+        // 与整包 worldbook 注入的区别: 这里**跳过蓝灯常驻条目**——蓝灯无条件下发, 给所有 NPC 的都是同一份
+        // "基础世界观", 失去按 NPC 区分人设的意义; 只保留"keys 数组里显式包含 NPC 名字(或曾用名)"的条目,
+        // 保证每张卡附的人设参考真的是它自己的人设, 而不是基础世界观。
+        if (settings.更新.注入世界书 && tracked.length > 0) {
+            for (const name of tracked) {
+                const card = currentCards[name];
+                if (!card)
+                    continue;
+                const alias = String(card['曾用名'] ?? '').trim();
+                try {
+                    const personaText = await _worldbook__WEBPACK_IMPORTED_MODULE_4__.getPersonaTextForNpc(name, alias, settings.更新.注入世界书排除 ?? []);
+                    if (personaText && personaText.trim()) {
+                        // 截断到 1500 字: 防止人设条目超长挤占输出 token
+                        card['人设参考'] = personaText.trim().slice(0, 1500);
+                    }
+                }
+                catch (error) {
+                    console.warn(`[彼方] 获取 NPC「${name}」人设条目失败(不影响本次更新):`, error);
+                }
+            }
+        }
+        const { messages, 锚点 } = _prompts__WEBPACK_IMPORTED_MODULE_2__.buildUpdateMessages({
             reply,
             replyCount: recent.length,
             context,
@@ -1327,15 +1079,18 @@ async function updateNpcStates(force = false, fresh = false) {
             tracked,
             inSceneHint,
             currentCards,
-            interactions: data.后台互动 ?? [],
-            interactionsEnabled: settings.更新.后台互动,
+            autoTrackEnabled: settings.更新.自动建档 !== false,
             physioEnabled: settings.更新.生理监测,
-            gemini3FJB: !!settings.更新.gemini37f破限,
+            破限: !!settings.更新.破限,
+            头部填充: !!settings.更新.提示词头部填充,
+            头部填充文本: settings.更新.头部填充文本 ?? '',
+            防截断: !!settings.更新.防截断,
+            预填充: !!settings.更新.预填充,
             worldbook,
             currentStoryTime: data.剧情时间,
             storyTimeHint,
             playerName,
-            自定义提示词: settings.更新.自定义提示词 ?? [],
+            playerDescription,
         });
         debugStore.record({
             time: Date.now(),
@@ -1352,32 +1107,112 @@ async function updateNpcStates(force = false, fresh = false) {
         let lastErrorReason = '';
         let lastErrorOutput = '';
         for (let attempt = 1; attempt <= 3; attempt++) {
-            const attemptMessages = attempt === 1 || !lastErrorOutput
-                ? messages
-                : [
-                    ...messages.slice(0, -1),
-                    {
-                        role: 'user',
-                        content: `${messages[messages.length - 1].content}\n\n【上次输出不符合要求, 请根据错误原因修正后重新输出】\n错误原因: ${lastErrorReason}\n上次输出(仅 JSON 部分):\n\`\`\`json\n${lastErrorOutput}\n\`\`\``,
-                    },
-                ];
-            // 预填充(prefill): 开启时在最后追加一条 assistant 消息, 引导模型直接从 JSON 开头开始输出
+            // 重试: 错误反馈要追加到**任务 user 消息**上, 而非消息数组末尾——
+            // 破限开启时尾部是 system(SPECIAL NOTE)+assistant(承诺), 不能把它们顶掉或改写。
+            // "任务在哪"由提示词形状自己声明(锚点), 这里不再比对收尾文案的字面量。
+            let attemptMessages;
+            if (attempt === 1 || !lastErrorOutput) {
+                attemptMessages = [...messages];
+            }
+            else {
+                const taskIdx = 锚点.任务下标;
+                if (taskIdx >= 0) {
+                    attemptMessages = [
+                        ...messages.slice(0, taskIdx),
+                        {
+                            role: 'user',
+                            content: `${messages[taskIdx].content}\n\n【上次输出不符合要求, 请根据错误原因修正后重新输出】\n错误原因: ${lastErrorReason}\n上次输出(仅 JSON 部分):\n\`\`\`json\n${lastErrorOutput}\n\`\`\``,
+                        },
+                        ...messages.slice(taskIdx + 1), // 保留尾部的 SPECIAL NOTE + 承诺/收尾(若开启)
+                    ];
+                }
+                else {
+                    // 兜底(内置形状必有任务 user, 正常情况下走不到这里; 留着以防以后改形状时越界)
+                    attemptMessages = [
+                        ...messages,
+                        {
+                            role: 'user',
+                            content: `【上次输出不符合要求, 请根据错误原因修正后重新输出】\n错误原因: ${lastErrorReason}\n上次输出(仅 JSON 部分):\n\`\`\`json\n${lastErrorOutput}\n\`\`\``,
+                        },
+                    ];
+                }
+            }
+            // 预填充(prefill): 开启时在最后追加一条 assistant 消息 '{', 引导模型直接从 JSON 开头开始输出
             // (提示词要求"只输出 JSON、不用 markdown 围栏", 所以 prefill 直接用 { 开头而非 ```json)。
+            // - 末位是 user(无破限): '{' 作为唯一尾 assistant;
+            // - 末位是 assistant 承诺(破限): 连续两条 assistant——OpenAI 兼容接口合法(Anthropic 原生
+            //   Messages API 会自动合并, 效果等同"承诺 + 起手"一条), 模型从承诺与 { 的衔接处开始续写。
             // 注意: prefill 的 { 只作为提示发给模型, 模型不会在输出里重复它 → 返回后需把 { 拼回开头,
             // 否则 parseModelResponse 的 indexOf('{') 会切到"剧情时间"的子对象导致 JSON 不完整。
-            const prefill = settings.更新.预填充 && attemptMessages.length > 0 && attemptMessages[attemptMessages.length - 1].role === 'user'
+            const last = attemptMessages[attemptMessages.length - 1];
+            const prefill = settings.更新.预填充 && attemptMessages.length > 0 && (last.role === 'user' || last.role === 'assistant')
                 ? '{\n'
                 : '';
             if (prefill)
                 attemptMessages.push({ role: 'assistant', content: prefill });
-            content = await _api__WEBPACK_IMPORTED_MODULE_1__.chatCompletion(attemptMessages, { signal: abortSignal });
-            // 拼回 prefill 的 { (仅当模型输出不是以 { 开头, 避免双 { )
-            if (prefill && String(content).trim().charAt(0) !== '{')
-                content = prefill + content;
-            debugStore.record({ time: Date.now(), response: content });
             try {
+                const requestStart = Date.now();
+                content = await _api__WEBPACK_IMPORTED_MODULE_1__.chatCompletion(attemptMessages, { signal: abortSignal });
+                timing.请求 += Date.now() - requestStart;
+                timing.请求次数 += 1;
+                // 拼回 prefill 的 { (仅当模型输出不是以 { 开头, 避免双 { )
+                if (prefill && String(content).trim().charAt(0) !== '{')
+                    content = prefill + content;
+                debugStore.record({ time: Date.now(), response: content });
                 parsed = parseModelResponse(content);
-                validateParsedFormat(parsed, new Set(Object.keys(data.NPC ?? {})), data.NPC ?? {}, settings.更新.生理监测);
+            }
+            catch (error) {
+                // 接口调用失败(网络/网关/超时/政策拦): 不回喂错误输出(没有有效输出), 等待加长后直接重试
+                if (abortSignal.aborted)
+                    throw Error('用户已中断本次更新', { cause: error });
+                const isRequestError = !(error instanceof Error && /没有返回 JSON 对象|不完整|格式错误/.test(error.message));
+                if (!isRequestError)
+                    throw error;
+                parsed = null;
+                parseError = error instanceof Error ? error : Error(String(error));
+                content = '';
+                lastErrorReason = parseError.message;
+                lastErrorOutput = '';
+                debugStore.record({ time: Date.now(), error: `接口调用失败(第 ${attempt}/3 次): ${parseError.message}` });
+                if (attempt < 3 && !abortSignal.aborted) {
+                    updatingStore.message = `接口调用失败，正在重试（${attempt}/3）…`;
+                    console.warn(`[彼方] 接口调用失败(第 ${attempt} 次), 正在重试…:`, parseError.message);
+                    await new Promise(resolve => setTimeout(resolve, 2000 * attempt));
+                }
+                continue;
+            }
+            try {
+                // 自动建档关闭: 构造将被跳过的新角色名单(未追踪且不在已有卡中), 校验时不按新建口径要求全字段
+                let skipCheckNames = null;
+                if (settings.更新.自动建档 === false) {
+                    skipCheckNames = new Set();
+                    const collect = (n) => {
+                        const name = String(n ?? '').trim();
+                        if (name && name !== playerName && !(data.名单.includes(name) || data.NPC[name]))
+                            skipCheckNames.add(name);
+                    };
+                    for (const [name, card] of Object.entries(parsed)) {
+                        if (isReservedTopLevelKey(name))
+                            continue;
+                        if (card && typeof card === 'object' && !Array.isArray(card))
+                            collect(name);
+                    }
+                    if (Array.isArray(parsed['在场NPC'])) {
+                        for (const item of parsed['在场NPC']) {
+                            if (!item || typeof item !== 'object' || Array.isArray(item))
+                                continue;
+                            const n = String(item['姓名'] ?? item['名字'] ?? '').trim();
+                            if (n)
+                                collect(n);
+                            else {
+                                const first = Object.entries(item).find(([key, value]) => key !== '姓名' && key !== '名字' && value && typeof value === 'object');
+                                if (first)
+                                    collect(first[0]);
+                            }
+                        }
+                    }
+                }
+                validateParsedFormat(parsed, data.NPC ?? {}, skipCheckNames);
                 break;
             }
             catch (error) {
@@ -1395,10 +1230,10 @@ async function updateNpcStates(force = false, fresh = false) {
                     : '（上次输出中未找到可解析的 JSON 结构）';
                 if (attempt < 3 && !abortSignal.aborted) {
                     const errMsg = parseError.message ?? '';
-                    const reason = errMsg.includes('缺少必返字段')
-                        ? 'AI 输出缺少必填字段'
-                        : errMsg.includes('JSON') || errMsg.includes('解析')
-                            ? 'AI 返回的 JSON 不完整'
+                    const reason = errMsg.includes('JSON') || errMsg.includes('解析')
+                        ? 'AI 返回的 JSON 不完整'
+                        : errMsg.includes('格式不正确')
+                            ? 'AI 输出格式不符合要求(如剧情时间格式)'
                             : 'AI 返回格式不符合要求';
                     updatingStore.message = `正在重试（${attempt}/3）：${reason}`;
                     console.warn(`[彼方] ${reason}(第 ${attempt} 次)，正在重试…`);
@@ -1409,16 +1244,19 @@ async function updateNpcStates(force = false, fresh = false) {
         if (parsed === null) {
             throw parseError ?? Error('解析失败');
         }
-        const newData = applyUpdate(data, parsed, timeJump, playerName);
+        const applyStart = Date.now();
+        const autoTrack = settings.更新.自动建档 !== false;
+        const newData = applyUpdate(data, parsed, timeJump, playerName, autoTrack);
         const updatedNpcs = [];
         const removedNpcs = [];
         if (parsed && typeof parsed === 'object') {
             for (const [name, card] of Object.entries(parsed)) {
-                if (name === '后台互动')
+                // 顶层非 NPC 键(剧情时间/受孕事件/思考流程)不计入"已更新"统计
+                if (name === '剧情时间' || name === '受孕事件' || THINKING_FIELD_KEYS.includes(name))
                     continue;
                 if (name === '移除NPC') {
                     if (Array.isArray(card))
-                        removedNpcs.push(...card.map(String));
+                        removedNpcs.push(...card.map(String).filter(Boolean));
                     continue;
                 }
                 if (name === '在场NPC') {
@@ -1446,25 +1284,41 @@ async function updateNpcStates(force = false, fresh = false) {
                     updatedNpcs.push(name);
             }
         }
+        // 自动建档关闭时: 被跳过的新角色不计入"已更新"统计(实际未建档), 与提示口径一致
+        const skippedNewNpcs = autoTrack ? [] : updatedNpcs.filter(name => !(newData.名单.includes(name) || newData.NPC[name]));
+        if (!autoTrack && skippedNewNpcs.length > 0) {
+            for (const name of skippedNewNpcs) {
+                const idx = updatedNpcs.indexOf(name);
+                if (idx >= 0)
+                    updatedNpcs.splice(idx, 1);
+            }
+        }
         debugStore.record({ time: Date.now(), updatedNpcs, removedNpcs });
-        const assistantCount = getAllAssistantMessages().length;
-        recordSnapshot(newData, assistantCount);
-        newData.已处理层数 = assistantCount;
-        newData.最后处理摘要 = hashString(recent[recent.length - 1].message);
-        console.info(`[彼方] 更新完成: 已处理层数=${assistantCount}, 摘要=${newData.最后处理摘要.slice(0, 12)}, 快照层数=${assistantCount}`);
-        // 清空层只在清空后的首次更新生效（防旧NPC复活），之后恢复正常分析最近 N 楼
+        timing.解析应用 = Date.now() - applyStart;
+        const finalizeStart = Date.now();
+        // 把更新后的状态整体写入本次分析的最后一条楼层(快照随该楼层存亡:
+        // 删除楼层/重roll时状态自动回退, 楼层被编辑时由楼层hash校验作废), 并同步清空层清零
+        const anchorFloor = recent[recent.length - 1].message_id;
+        newData.处理到楼层 = anchorFloor;
         newData.清空层 = 0;
-        const stateStore = _state__WEBPACK_IMPORTED_MODULE_6__.useStateStore();
-        stateStore.data = newData;
-        stateStore.save();
+        const stateStore = useStateStore();
+        if (writeStateSnapshot(newData, anchorFloor, anchorFloor, true)) {
+            stateStore.data = { ...newData, 锚点楼层: anchorFloor };
+        }
+        else {
+            stateStore.data = newData;
+        }
         // 同步幕后状态到角色卡主世界书(蓝灯常驻条目), 供主AI与数据库剧情推进读取
         if (settings.更新.注入世界书条目) {
-            _worldbook_inject__WEBPACK_IMPORTED_MODULE_5__.syncNpcStatesWorldbook(newData, true).catch(error => {
+            _worldbook_inject__WEBPACK_IMPORTED_MODULE_5__.syncNpcStatesWorldbook(host, newData, true).catch(error => {
                 console.error('[彼方] 同步世界书条目失败:', error);
             });
         }
+        timing.收尾 = Date.now() - finalizeStart;
+        const secs = (ms) => (ms / 1000).toFixed(1);
+        console.info(`[彼方] 本次更新总耗时 ${secs(Date.now() - timing.start)}s = 前置 ${secs(timing.前置)}s + 世界书 ${secs(timing.世界书)}s + 接口请求 ${secs(timing.请求)}s(${timing.请求次数}次) + 解析应用 ${secs(timing.解析应用)}s + 收尾 ${secs(timing.收尾)}s`);
         console.info(`[彼方] 幕后NPC状态更新完成: ${updatedNpcs.join('、') || '(本次无重要NPC变化)'}${removedNpcs.length > 0 ? `; 已移除: ${removedNpcs.join('、')}` : ''}`);
-        toastr.success(updatedNpcs.length > 0
+        _toast__WEBPACK_IMPORTED_MODULE_7__.toastSuccess(updatedNpcs.length > 0
             ? `彼方: 已更新 ${updatedNpcs.length} 个NPC的幕后状态${removedNpcs.length > 0 ? `，移除 ${removedNpcs.length} 个NPC` : ''}`
             : removedNpcs.length > 0
                 ? `彼方: 已移除 ${removedNpcs.length} 个NPC`
@@ -1473,8 +1327,9 @@ async function updateNpcStates(force = false, fresh = false) {
     catch (error) {
         if (abortSignal.aborted) {
             const message = '更新已中断';
+            console.warn(`[彼方] 更新被中断: 已进行 ${((Date.now() - timing.start) / 1000).toFixed(1)}s(接口请求 ${timing.请求次数} 次, 累计 ${((timing.请求) / 1000).toFixed(1)}s)`);
             debugStore.record({ time: Date.now(), error: message });
-            toastr.info(`彼方: ${message}`, '彼方');
+            _toast__WEBPACK_IMPORTED_MODULE_7__.toastInfo(`彼方: ${message}`, '彼方');
             return;
         }
         console.error('[彼方] 更新失败:', error);
@@ -1484,12 +1339,13 @@ async function updateNpcStates(force = false, fresh = false) {
         const detail = [
             '[彼方] 更新失败',
             `阶段: ${parseError && parsed === null ? 'JSON 解析' : '接口调用/其他'}`,
-            `接口: ${maskBaseUrl(settingsNow.接口.地址) || '(未填)'} / 模型: ${settingsNow.接口.模型 || '(未选)'} / 最大token: ${settingsNow.接口.最大token} / 服务端转发: ${settingsNow.接口.服务端转发 ? '开' : '关'}`,
+            `耗时: 总 ${((Date.now() - timing.start) / 1000).toFixed(1)}s(前置 ${(timing.前置 / 1000).toFixed(1)}s / 世界书 ${(timing.世界书 / 1000).toFixed(1)}s / 接口请求 ${(timing.请求 / 1000).toFixed(1)}s×${timing.请求次数}次 / 解析应用 ${(timing.解析应用 / 1000).toFixed(1)}s)`,
+            `接口: ${maskBaseUrl(settingsNow.接口.地址) || '(未填)'} / 模型: ${settingsNow.接口.模型 || '(未选)'} / 最大token: ${settingsNow.接口.最大token}`,
             `错误: ${message}`,
             ...(stack ? ['堆栈:', stack] : []),
         ].join('\n');
         debugStore.record({ time: Date.now(), error: detail });
-        toastr.error(message, '彼方更新失败');
+        _toast__WEBPACK_IMPORTED_MODULE_7__.toastError(message, '彼方更新失败');
     }
     finally {
         isUpdating = false;
@@ -1497,4 +1353,8 @@ async function updateNpcStates(force = false, fresh = false) {
     }
 }
 
-export { detectTimeJump, maybeRollback, rollbackLatestUpdate, updateNpcStates };
+/** 切聊天时重置按楼层号缓存的数据(两个聊天楼层号可能相同, 不重置会用到上一聊天的楼层内容) */
+function resetChatCaches() {
+    allAssistantCache = null;
+}
+export { createTextFilter as createTextFilterExported, detectTimeJump, getAllAssistantMessagesCached, resetChatCaches, updateNpcStates };

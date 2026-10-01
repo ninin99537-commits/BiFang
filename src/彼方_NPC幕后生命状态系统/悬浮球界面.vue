@@ -1,10 +1,10 @@
-﻿<template>
+<template>
   <div ref="rootEl" class="bf-root" :data-theme="theme">
-    <!-- 悬浮球 (可拖动) -->
+    <!-- 悬浮球 (可拖动): 关闭时填满 40px 圆形 iframe, 打开时 iframe 全屏、球按锚点定位 -->
     <div
       class="bf-orb"
       :class="{ dragging: isDragging }"
-      :style="panelOpen ? { left: anchorX + 'px', top: anchorY + 'px' } : undefined"
+      :style="panelOpen ? { left: anchorX - CLOSED_SIZE / 2 + 'px', top: anchorY - CLOSED_SIZE / 2 + 'px' } : { left: '0px', top: '0px' }"
       :title="panelOpen ? '收起彼方' : '打开彼方'"
       @pointerdown="onOrbPointerDown"
       @click="onOrbClick"
@@ -31,7 +31,6 @@
           stroke-linejoin="round"
         />
       </svg>
-      <span v-if="panelOpen" class="bf-orb-close-badge"><PhX :size="10" weight="bold" /></span>
       <span v-if="updatingActive" class="bf-orb-spinner"></span>
     </div>
 
@@ -129,7 +128,7 @@
                       </div>
                       <div v-if="npcList.length === 0" class="bf-empty">
                         <div class="bf-empty-text">还没有追踪任何 NPC</div>
-                        <div class="bf-empty-hint">添加名字，或留空让 AI 自动识别重要NPC后点「手动更新」</div>
+                        <div class="bf-empty-hint">{{ autoTrackEnabled ? '添加名字，或留空让 AI 自动识别重要NPC后点「手动更新」' : '「正文新角色自动建档」已关闭，新角色不会自动加入，需在此手动添加名字' }}</div>
                       </div>
                       <div v-else class="bf-dash-npcs">
                         <div v-for="name in npcList" :key="name" class="bf-dash-npc" @click="openNpc(name)">
@@ -149,7 +148,6 @@
                         <PhArrowsClockwise v-else :size="15" weight="bold" />{{ updating ? '更新中…' : '手动更新' }}
                       </button>
                       <button class="bf-btn" :disabled="updating" @click="reload"><PhArrowsClockwise :size="15" weight="bold" />刷新</button>
-                      <button class="bf-btn" :disabled="updating" @click="reload"><PhArrowsClockwise :size="15" weight="bold" />刷新</button>
                       <button class="bf-btn bf-btn-danger" :disabled="updating" @click="clearAll">
                         <PhTrash :size="15" weight="bold" />{{ clearing ? '再点一次确认清空' : '清空' }}
                       </button>
@@ -167,10 +165,6 @@
                       <div class="bf-side-label"><PhUsersThree :size="13" weight="duotone" /> 追踪 NPC</div>
                     </div>
                     <div class="bf-side-card">
-                      <div class="bf-side-num">{{ interactions.length }}</div>
-                      <div class="bf-side-label"><PhChatCircle :size="13" weight="duotone" /> 后台互动</div>
-                    </div>
-                    <div class="bf-side-card">
                       <div class="bf-side-num bf-side-clock">{{ nowClock }}</div>
                       <div class="bf-side-label"><PhClock :size="13" weight="duotone" /> 当前时间</div>
                     </div>
@@ -183,7 +177,7 @@
                 <div class="bf-npc-list">
                   <div v-if="npcEntries.length === 0" class="bf-empty">
                     <div class="bf-empty-text">还没有 NPC</div>
-                    <div class="bf-empty-hint">在仪表盘「追踪 NPC 管理」添加，或留空让 AI 自动识别后点「手动更新」</div>
+                    <div class="bf-empty-hint">{{ autoTrackEnabled ? '在仪表盘「追踪 NPC 管理」添加，或留空让 AI 自动识别后点「手动更新」' : '「正文新角色自动建档」已关闭，在仪表盘手动添加名字后更新即可建档' }}</div>
                   </div>
                   <div
                     v-for="[name, card] in npcEntries"
@@ -204,7 +198,7 @@
                         <span class="bf-npc-status">{{ npcStatusText(card) }}</span>
                       </div>
                       <div class="bf-npc-tags">
-                        <span v-for="t in npcTags(card, (data.在场NPC ?? []).includes(name))" :key="t.label" class="bf-tag" :class="'bf-tag-' + t.color">{{ t.label }}</span>
+                        <span v-for="t in npcTags(card)" :key="t.label" class="bf-tag" :class="'bf-tag-' + t.color">{{ t.label }}</span>
                       </div>
                     </div>
                   </div>
@@ -217,7 +211,7 @@
                       <div class="bf-detail-head-text">
                         <div class="bf-detail-name">{{ selectedNpc }}</div>
                         <div class="bf-npc-tags">
-                          <span v-for="t in npcTags(selectedNpcCard, (data.在场NPC ?? []).includes(selectedNpc))" :key="t.label" class="bf-tag" :class="'bf-tag-' + t.color">{{ t.label }}</span>
+                          <span v-for="t in npcTags(selectedNpcCard)" :key="t.label" class="bf-tag" :class="'bf-tag-' + t.color">{{ t.label }}</span>
                         </div>
                       </div>
                       <div v-if="data.剧情时间 || selectedNpcCard['最后更新']" class="bf-detail-updated">
@@ -281,14 +275,6 @@
                       <div v-if="detailFields['生活']" class="bf-field-group">
                         <div class="bf-field-group-title"><PhSuitcaseSimple :size="13" weight="duotone" /> 生活动态</div>
                         <div class="bf-field-grid">
-                          <div class="bf-field">
-                            <span class="bf-field-label">可能偶遇</span>
-                            <label v-if="editingNpc" class="bf-toggle">
-                              <input v-model="editDraft['可能偶遇']" type="checkbox" />
-                              <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
-                            </label>
-                            <span v-else class="bf-field-value bf-field-value-bool">{{ selectedNpcCard['可能偶遇'] ? '是' : '否' }}</span>
-                          </div>
                           <div v-for="field in detailFields['生活']" :key="field" v-show="selectedNpcCard[field] || editingNpc" class="bf-field">
                             <span class="bf-field-label">{{ field }}</span>
                             <textarea
@@ -339,51 +325,39 @@
                 </div>
               </div>
 
-              <!-- 互动 (聊天流) -->
-              <div v-else-if="tab === 'interaction'" key="interaction" class="bf-page">
-                <div class="bf-page-title"><PhChatsCircle :size="18" weight="duotone" /> 后台互动</div>
-                <div v-if="interactions.length === 0" class="bf-empty">
-                  <div class="bf-empty-text">还没有后台互动记录</div>
-                  <div class="bf-empty-hint">在「设置」开启「生成 NPC 间后台互动」后再更新</div>
+              <!-- 一致性检查 -->
+              <div v-else-if="tab === 'consistency'" key="consistency" class="bf-page">
+                <div class="bf-page-title"><PhShieldCheck :size="18" weight="duotone" /> 事实档案</div>
+                <div class="bf-page-hint">
+                  每个 NPC 当下"记得"什么——具体物品/承诺/近期关键事件/身份锚点。这些跨楼层事实档案会发送给彼方更新 AI,
+                  并在开启注入后提供给主 AI; 代码会自动追加/去重/保留最近三条, 看到明显错误时可在 NPC 详情手动修正。
                 </div>
-                <div v-else class="bf-flow">
-                  <div v-for="(item, index) in interactions" :key="index" class="bf-flow-item">
-                    <div class="bf-flow-time">{{ item.时间 }}</div>
-                    <div class="bf-flow-body">
-                      <div class="bf-flow-head">
-                        <div class="bf-flow-participants">
-                          <span
-                            v-for="(n, i) in item.NPC.slice(0, 3)"
-                            :key="n + i"
-                            class="bf-flow-avatar"
-                            :style="{ zIndex: item.NPC.length - i }"
-                          >{{ n.slice(0, 1) }}</span>
-                          <span class="bf-flow-name">{{ item.NPC.join(' × ') }}</span>
-                        </div>
-                      </div>
-                      <div class="bf-flow-content">{{ cleanText(item.事件) }}</div>
+                <div v-if="consistencyList.length === 0" class="bf-empty">
+                  <div class="bf-empty-text">还没有 NPC 状态卡</div>
+                  <div class="bf-empty-hint">更新一次后这里会显示每个 NPC 的一致性档案</div>
+                </div>
+                <div v-else class="bf-consistency-list">
+                  <div v-for="item in consistencyList" :key="item.name" class="bf-panel-card bf-consistency-card">
+                    <div class="bf-consistency-head">
+                      <span class="bf-consistency-name">{{ item.name }}</span>
+                      <span v-if="item.锚点" class="bf-consistency-anchor">{{ item.锚点 }}</span>
                     </div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- 时间轴 -->
-              <div v-else-if="tab === 'timeline'" key="timeline" class="bf-page">
-                <div class="bf-page-title"><PhClockCounterClockwise :size="18" weight="duotone" /> 时间轴</div>
-                <div v-if="timeline.length === 0" class="bf-empty">
-                  <div class="bf-empty-text">暂无时间轴记录</div>
-                  <div class="bf-empty-hint">更新并开启后台互动后会自动生成</div>
-                </div>
-                <div v-else class="bf-timeline">
-                  <div v-for="(entry, index) in timeline" :key="index" class="bf-tl-item">
-                    <div class="bf-tl-icon"><component :is="entry.icon" :size="13" weight="fill" /></div>
-                    <div class="bf-tl-content">
-                      <div class="bf-tl-head">
-                        <span class="bf-tl-title">{{ entry.title }}</span>
-                        <span class="bf-tl-time">{{ entry.timeText || fmtTime(entry.time) }}</span>
-                        <span class="bf-tag" :class="'bf-tag-' + entry.color">{{ entry.tag }}</span>
+                    <div class="bf-consistency-grid">
+                      <div v-if="item.持有物" class="bf-consistency-row">
+                        <span class="bf-consistency-label"><PhPackage :size="12" weight="duotone" /> 持有物</span>
+                        <span class="bf-consistency-value">{{ item.持有物 }}</span>
                       </div>
-                      <div v-if="entry.desc" class="bf-tl-desc">{{ cleanText(entry.desc) }}</div>
+                      <div v-if="item.未完成事项" class="bf-consistency-row">
+                        <span class="bf-consistency-label"><PhHandshake :size="12" weight="duotone" /> 未完成承诺</span>
+                        <span class="bf-consistency-value">{{ item.未完成事项 }}</span>
+                      </div>
+                      <div v-if="item.近期关键事件" class="bf-consistency-row">
+                        <span class="bf-consistency-label"><PhBookmarkSimple :size="12" weight="duotone" /> 近期关键事件</span>
+                        <span class="bf-consistency-value">{{ item.近期关键事件 }}</span>
+                      </div>
+                      <div v-if="!item.持有物 && !item.未完成事项 && !item.近期关键事件" class="bf-consistency-row bf-consistency-empty">
+                        <span class="bf-consistency-value">该 NPC 暂无事实档案(可在 NPC 详情页手动添加)</span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -476,12 +450,12 @@
                   <div class="bf-logs-side">
                     <div class="bf-panel-card">
                       <div class="bf-debug-head">
-                        <span class="bf-debug-head-label"><PhBrain :size="14" weight="duotone" /> 彼方注入给主AI的内容</span>
+                        <span class="bf-debug-head-label"><PhBrain :size="14" weight="duotone" /> 彼方写入世界书的内容</span>
                         <template v-if="mainPrompt">
                           <button class="bf-btn bf-btn-mini" @click="copyText(mainPrompt)"><PhCopy :size="12" weight="bold" />复制</button>
                         </template>
                       </div>
-                      <div v-if="mainPrompt" class="bf-hint">记录时间: {{ fmtTime(mainPromptTime) }} · 已记录 {{ mainPromptCount }} 次（仅彼方自己注入的幕后状态，不含主AI其他内容）</div>
+                      <div v-if="mainPrompt" class="bf-hint">记录时间: {{ fmtTime(mainPromptTime) }} · 已记录 {{ mainPromptCount }} 次（写入角色卡主世界书常驻条目的幕后状态；主AI 与任何读取该世界书的环节读到的就是这一段）</div>
                       <template v-if="mainPrompt">
                         <details>
                           <summary class="bf-debug-summary">展开查看（{{ mainPrompt.length }} 字）</summary>
@@ -489,8 +463,8 @@
                         </details>
                       </template>
                       <div v-else class="bf-empty">
-                        <div class="bf-empty-text">还没有彼方注入给主AI的内容</div>
-                        <div class="bf-empty-hint">开启「注入幕后状态到主AI」并在更新后，这里显示彼方注入的幕后状态内容</div>
+                        <div class="bf-empty-text">还没有写入世界书的内容</div>
+                        <div class="bf-empty-hint">开启「写入世界书条目」并在更新后，这里显示彼方写入的幕后状态内容</div>
                       </div>
                     </div>
 
@@ -515,9 +489,7 @@
 
               <!-- 设置 -->
               <div v-else key="settings" class="bf-page">
-                <div class="bf-page-title"><PhGearSix :size="18" weight="duotone" /> 设置
-                  <button class="bf-btn bf-btn-mini" @click="openPromptEditor">编辑提示词</button>
-                </div>
+                <div class="bf-page-title"><PhGearSix :size="18" weight="duotone" /> 设置</div>
 
                 <div class="bf-settings-layout">
                   <!-- 左栏：接口配置 -->
@@ -564,21 +536,11 @@
                         </div>
                       </div>
                       <label class="bf-toggle">
-                        <input v-model="settings.接口.关闭思维链" type="checkbox" />
-                        <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
-                        <span class="bf-toggle-text">关闭模型思维链（推理/思考）</span>
-                      </label>
-                      <label class="bf-toggle">
-                        <input v-model="settings.接口.服务端转发" type="checkbox" />
-                        <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
-                        <span class="bf-toggle-text">走酒馆服务器转发请求</span>
-                      </label>
-                      <label class="bf-toggle">
                         <input v-model="settings.接口.流式" type="checkbox" />
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">流式输出（逐 token 接收）</span>
                       </label>
-                      <div class="bf-hint">跨域(CORS)不支持的接口开启(如 tokenrhythm.studio)；「关闭思维链」仅 Responses API 原生模型可用(如 deepseek-v4-flash-0731)，其余遇 Bad Request 请关；「最大输出Token」参考模型页上限(deepseek-v4-flash 384K)</div>
+                      <div class="bf-hint">请求统一由酒馆服务器转发(不再有跨域(CORS)问题)；「最大输出Token」参考模型页上限(deepseek-v4-flash 384K)</div>
                       <div class="bf-hint">逐 token 接收(可实时看进度, 部分模型更稳)；关闭则一次性返回；接口不支持流式报错就关</div>
                       <div class="bf-hint">支持任意 /v1/models 与 /v1/chat/completions 服务；最大输出Token 是状态卡最大长度，NPC 多时调大</div>
                       <div class="bf-row">
@@ -595,6 +557,37 @@
                         <button class="bf-btn bf-btn-mini" @click="deleteApiPreset">删除</button>
                       </div>
                       <div class="bf-hint">保存当前接口配置为预设，可一键切换</div>
+                    </div>
+
+                    <div class="bf-group">
+                      <div class="bf-group-title"><PhStarFour :size="14" weight="duotone" /> 提示词强化</div>
+                      <div class="bf-hint">改变发给彼方接口的提示词结构，用于对位特定预设/绕过限制；无需改动时保持默认</div>
+                      <label class="bf-toggle">
+                        <input v-model="settings.更新.提示词头部填充" type="checkbox" />
+                        <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                        <span class="bf-toggle-text">提示词头部填充</span>
+                      </label>
+                      <div class="bf-hint">在消息最前插入文本作为第一条消息</div>
+                      <textarea v-model="settings.更新.头部填充文本" class="bf-textarea bf-textarea-short" placeholder="留空使用内置「陨落的天才」(斗破苍穹)文本"></textarea>
+                      <div class="bf-hint">自定义头部填充文本：想换小说直接粘贴到这里，清空则恢复内置文本；支持酒馆宏替换</div>
+                      <label class="bf-toggle">
+                        <input v-model="settings.更新.防截断" type="checkbox" />
+                        <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                        <span class="bf-toggle-text">防截断</span>
+                      </label>
+                      <div class="bf-hint">gemini3.7f 对位预设[27]: 在 system 末尾缝入「牢大」免责声明段；3.6F 起不支持预填充，可关「预填充」配合</div>
+                      <label class="bf-toggle">
+                        <input v-model="settings.更新.破限" type="checkbox" />
+                        <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                        <span class="bf-toggle-text">破限</span>
+                      </label>
+                      <div class="bf-hint">任务后注入 SPECIAL NOTE 身份强化(防注入/思考语气/无安全限制)并预置 AI 承诺(看过任务后的应答)；关闭后只发送任务本身</div>
+                      <label class="bf-toggle">
+                        <input v-model="settings.更新.预填充" type="checkbox" />
+                        <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                        <span class="bf-toggle-text">预填充(prefill)</span>
+                      </label>
+                      <div class="bf-hint">追加 assistant 消息引导直接从 JSON 输出，减少格式失败；DeepSeek/GLM/Qwen/Claude 大多支持，报错就关</div>
                     </div>
                   </div>
 
@@ -614,21 +607,17 @@
                         <span class="bf-toggle-text">AI 回复后自动更新</span>
                       </label>
                       <label class="bf-toggle">
+                        <input v-model="settings.更新.自动建档" type="checkbox" />
+                        <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                        <span class="bf-toggle-text">正文新角色自动建档</span>
+                      </label>
+                      <div class="bf-hint">开启后正文出现新角色自动建档追踪；关闭后只更新已追踪的 NPC，新角色不建档（可手动加到名单）</div>
+                      <label class="bf-toggle">
                         <input v-model="settings.更新.追踪当前角色" type="checkbox" />
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">追踪当前角色卡角色</span>
                       </label>
                       <div class="bf-hint">仅群聊时角色卡名才是角色；角色写在世界书里则保持关闭</div>
-                      <label class="bf-toggle">
-                        <input v-model="settings.更新.后台互动" type="checkbox" />
-                        <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
-                        <span class="bf-toggle-text">生成 NPC 间后台互动</span>
-                      </label>
-                      <label class="bf-toggle">
-                        <input v-model="settings.更新.注入到AI" type="checkbox" />
-                        <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
-                        <span class="bf-toggle-text">注入幕后状态到主AI</span>
-                      </label>
                       <label class="bf-toggle">
                         <input v-model="settings.更新.注入世界书条目" type="checkbox" />
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
@@ -640,35 +629,17 @@
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">女性NPC生理监测</span>
                       </label>
-                      <div class="bf-hint">为女性NPC维护生理字段(周期/受孕/结算)，并随状态注入主AI</div>
-                      <label class="bf-toggle">
-                        <input v-model="settings.更新.gemini37f破限" type="checkbox" />
-                        <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
-                        <span class="bf-toggle-text">gemini3.7f破限</span>
-                      </label>
-                      <div class="bf-hint">注入 Dramatron 破限(陨落的天才/牢大)，适合 Gemini 3.7 Flash；3.6F 起不支持预填充，可关「预填充」配合</div>
+                      <div class="bf-hint">为女性NPC维护生理字段(周期/受孕/结算)，并随状态卡一同注入</div>
                       <label class="bf-toggle">
                         <input v-model="settings.更新.注入世界书" type="checkbox" />
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">给彼方接口注入世界书内容</span>
                       </label>
                       <div class="bf-hint">按主AI方式激活世界书条目，让更新AI理解世界设定；不读全局世界书</div>
+                      <textarea v-model="worldbookAlwaysDraft" class="bf-textarea bf-textarea-short" placeholder="角色名/人设条目名，如「苏禾」或「人设」"></textarea>
+                      <div class="bf-hint">常驻注入：每行一个条目名/关键词，每次都强制注入(不走关键词激活)——角色人设条目通常按关键词触发，正文没提到该角色时更新AI就读不到人设；换角色卡后匹配不到会静默跳过</div>
                       <textarea v-model="worldbookExcludeDraft" class="bf-textarea bf-textarea-short" placeholder="【彼方】NPC幕后生活"></textarea>
                       <div class="bf-hint">排除不注入的世界书条目，每行一个条目名(或其关键词)，如「【彼方】NPC幕后生活」</div>
-                      <div class="bf-row">
-                        <span class="bf-label">世界书内容上限</span>
-                        <input v-model.number="settings.更新.注入世界书上限" class="bf-input bf-input-num" type="number" min="500" max="200000" step="500" />
-                      </div>
-                      <div class="bf-row">
-                        <span class="bf-label">世界书条数上限</span>
-                        <input v-model.number="settings.更新.注入世界书条数" class="bf-input bf-input-num" type="number" min="1" max="200" step="1" />
-                      </div>
-                      <label class="bf-toggle">
-                        <input v-model="settings.更新.预填充" type="checkbox" />
-                        <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
-                        <span class="bf-toggle-text">预填充(prefill)</span>
-                      </label>
-                      <div class="bf-hint">追加 assistant 消息引导直接从 JSON 输出，减少格式失败；DeepSeek/GLM/Qwen/Claude 大多支持，报错就关</div>
                       <div class="bf-row-pair">
                         <div class="bf-pair">
                           <span class="bf-label">更新频率</span>
@@ -738,6 +709,10 @@
           <input v-model="addDraft['名字']" class="bf-input" placeholder="NPC名字" />
         </label>
         <label class="bf-row">
+          <span class="bf-label">身份锚点</span>
+          <textarea v-model="addDraft['身份锚点']" class="bf-textarea bf-textarea-short" rows="2" placeholder="一句话概括 NPC 的独立身份与日常(职业/家庭/作息), 如: 35岁急诊科护士, 独自抚养5岁女儿"></textarea>
+        </label>
+        <label class="bf-row">
           <span class="bf-label">当前在做</span>
           <textarea v-model="addDraft['当前在做']" class="bf-textarea bf-textarea-short" rows="2"></textarea>
         </label>
@@ -753,54 +728,10 @@
           <span class="bf-label">接下来想做</span>
           <textarea v-model="addDraft['接下来想做']" class="bf-textarea bf-textarea-short" rows="2"></textarea>
         </label>
-        <label class="bf-toggle">
-          <input v-model="addDraft['可能偶遇']" type="checkbox" />
-          <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
-          <span class="bf-toggle-text">可能偶遇</span>
-        </label>
         <div class="bf-hint">初始状态可后续在 NPC 详情中补充或编辑（不含生理监测字段）</div>
         <div class="bf-row bf-actions">
           <button class="bf-btn bf-btn-primary" @click="confirmAddNpc"><PhCheck :size="14" weight="bold" />添加</button>
           <button class="bf-btn" @click="addDialogOpen = false">取消</button>
-        </div>
-      </div>
-    </Transition>
-
-    <!-- 编辑提示词弹层: 幕后更新自定义提示词, 非空时替换内置 -->
-    <Transition name="bf-fade">
-      <div v-if="showPromptEditor" class="bf-prompt-overlay" @click.self="showPromptEditor = false">
-        <div class="bf-prompt-modal">
-          <div class="bf-prompt-head">
-            <span>编辑提示词</span>
-            <button class="bf-btn bf-btn-mini" @click="showPromptEditor = false">关闭（不保存）</button>
-          </div>
-          <div class="bf-hint">自定义幕后更新提示词（留空则使用内置提示词）</div>
-          <div class="bf-hint bf-prompt-ph">占位符：&#123;&#123;正文&#125;&#125; &#123;&#123;上下文&#125;&#125; &#123;&#123;追踪名单&#125;&#125; &#123;&#123;现有状态卡&#125;&#125; &#123;&#123;互动记录&#125;&#125; &#123;&#123;当前剧情时间&#125;&#125; &#123;&#123;主角名&#125;&#125; &#123;&#123;当前时间&#125;&#125;</div>
-          <div class="bf-prompt-list">
-            <div v-for="(seg, i) in promptDraftUpdate" :key="i" class="bf-prompt-seg">
-              <div class="bf-prompt-seg-head">
-                <select v-model="seg.role" class="bf-input bf-input-role">
-                  <option value="system">system</option>
-                  <option value="user">user</option>
-                  <option value="assistant">assistant</option>
-                </select>
-                <span class="bf-hint">第 {{ i + 1 }} 段</span>
-                <div class="bf-prompt-move">
-                  <button class="bf-btn bf-btn-mini" :disabled="i === 0" title="上移" @click="movePromptSegment(i, -1)">↑</button>
-                  <button class="bf-btn bf-btn-mini" :disabled="i === promptDraftUpdate.length - 1" title="下移" @click="movePromptSegment(i, 1)">↓</button>
-                </div>
-                <button class="bf-btn bf-btn-mini" @click="removePromptSegment(i)">删除</button>
-              </div>
-              <textarea v-model="seg.content" class="bf-input bf-textarea" rows="4" spellcheck="false" placeholder="提示词内容（可含占位符）…"></textarea>
-            </div>
-            <div v-if="!promptDraftUpdate.length" class="bf-empty-hint">未配置自定义提示词，当前使用内置提示词</div>
-          </div>
-          <div class="bf-prompt-actions">
-            <button class="bf-btn bf-btn-mini" @click="addPromptSegment">＋ 添加提示词段</button>
-            <button class="bf-btn bf-btn-mini" @click="clearPromptSegments">清空自定义</button>
-            <span class="bf-prompt-spacer"></span>
-            <button class="bf-btn bf-btn-primary" @click="savePromptDraft">保存</button>
-          </div>
         </div>
       </div>
     </Transition>
@@ -812,26 +743,27 @@ import type { Component } from 'vue';
 import { storeToRefs } from 'pinia';
 import {
   PhArrowsClockwise,
+  PhBookmarkSimple,
   PhBrain,
-  PhChatCircle,
   PhChatText,
-  PhChatsCircle,
   PhCheck,
   PhClipboardText,
   PhClock,
-  PhClockCounterClockwise,
   PhCopy,
   PhFootprints,
   PhGauge,
   PhGearSix,
+  PhHandshake,
   PhHeartStraight,
   PhMapPin,
   PhMoon,
+  PhPackage,
   PhPaperPlaneRight,
   PhPencilSimple,
   PhPlug,
   PhPulse,
   PhScroll,
+  PhShieldCheck,
   PhStarFour,
   PhSuitcaseSimple,
   PhSun,
@@ -846,19 +778,30 @@ import {
 } from '@phosphor-icons/vue';
 import { chatCompletion, fetchModelList } from './api';
 import { useSettingsStore } from './settings';
-import { CARD_FIELDS, freshClearData, loadData, useConsoleStore, useDebugStore, useMainPromptStore, useStateStore, useUpdatingStore } from './state';
-import type { NpcStateCard } from './state';
+import { useStateStore } from './数据仓';
+import { useConsoleStore, useDebugStore, useMainPromptStore } from './日志仓';
+import { useUpdatingStore } from './任务中断';
+import { 加NPC, 移除NPC, 更新状态卡, 清空彼方数据, 建变更环境 } from './数据变更';
+import type { NpcStateCard } from './卡字段';
 import { updateNpcStates } from './update';
 import { syncNpcStatesWorldbook } from './worldbook-inject';
-import { getUpdatePromptSeed } from './prompts';
+import { setToastAnchor, setToastColors, toastError, toastInfo, toastSuccess, toastWarning } from './toast';
+import { 取弹窗配色, 弹窗兜底配色, 弹窗变量, 悬浮球直径 } from './theme';
+import type { 弹窗配色 } from './theme';
+import { useHost } from './host';
+
+// 界面入口同样是平台边界: 真实宿主在这里构造一次(适配层无状态, 只是把平台全局包一层)
+const host = useHost();
 
 const ORB_KEY = '彼方_悬浮球';
 const THEME_KEY = '彼方_主题';
-const CLOSED_SIZE = 56;
+/** 关闭态 iframe(命中区)边长 = 球体视觉直径: 两者必须相等, 圆形裁剪才能与球完全重合——
+ *  iframe 圆比球大时球会贴在 iframe 左上角, 圆心错位导致球的弧边被 iframe 圆弧切掉一块 */
+const CLOSED_SIZE = 悬浮球直径;
 
 const theme = ref<'dark' | 'light'>('dark');
 try {
-  const saved = getVariables({ type: 'global' })?.[THEME_KEY];
+  const saved = host.vars.get({ type: 'global' })?.[THEME_KEY];
   if (saved === 'light' || saved === 'dark') theme.value = saved;
 } catch {
   // 读取失败保持默认深色
@@ -870,11 +813,15 @@ function toggleTheme() {
 
 watch(theme, value => {
   try {
-    insertOrAssignVariables({ [THEME_KEY]: value }, { type: 'global' });
+    host.vars.insertOrAssign({ [THEME_KEY]: value }, { type: 'global' });
   } catch {
     // 忽略保存失败
   }
-  if (updatingPopEl && updatingPopEl.isConnected) updatingPopEl.dataset.theme = value;
+  if (updatingPopEl && updatingPopEl.isConnected) {
+    updatingPopEl.dataset.theme = value;
+    applyPopTheme(updatingPopEl);
+  }
+  applyToastTheme();
 });
 
 const settingsStore = useSettingsStore();
@@ -902,11 +849,13 @@ const frame = computed<HTMLIFrameElement | null>(() => frameWin.value?.frameElem
 const parentWin = computed<Window | null>(() => frameWin.value?.parent ?? null);
 
 const panelOpen = ref(false);
-const tab = ref<'dashboard' | 'npc' | 'interaction' | 'timeline' | 'logs' | 'settings'>('dashboard');
+const tab = ref<'dashboard' | 'npc' | 'consistency' | 'logs' | 'settings'>('dashboard');
 const showKey = ref(false);
 const fetchingModels = ref(false);
 const testing = ref(false);
-const updating = ref(false);
+/** 更新进行中: 直接取自 updatingStore —— updateNpcStates 内部 start/stop 维护它,
+ *  球上的转圈(updatingActive)与更新弹窗同源; 用本地 ref 会导致自动更新进行中面板按钮仍可点 */
+const updating = computed(() => updatingActive.value);
 const isDragging = ref(false);
 
 // API 配置预设: 保存/加载/删除多套接口配置
@@ -916,53 +865,48 @@ const presetNames = computed(() => Object.keys(settings.value.接口预设 ?? {}
 function saveApiPreset() {
   const name = String(presetName.value).trim();
   if (!name) {
-    toastr.warning('请填写预设名', '彼方');
+    toastWarning('请填写预设名');
     return;
   }
   if (!settings.value.接口预设) settings.value.接口预设 = {};
   settings.value.接口预设[name] = klona(settings.value.接口);
   presetName.value = '';
   selectedPreset.value = name;
-  toastr.success(`已保存接口配置预设「${name}」`, '彼方');
+  toastSuccess(`已保存接口配置预设「${name}」`);
 }
 function loadApiPreset() {
   const name = String(selectedPreset.value).trim();
   if (!name || !settings.value.接口预设?.[name]) {
-    toastr.warning('请选择要加载的预设', '彼方');
+    toastWarning('请选择要加载的预设');
     return;
   }
   settings.value.接口 = klona(settings.value.接口预设[name]);
-  toastr.success(`已加载接口配置预设「${name}」`, '彼方');
+  toastSuccess(`已加载接口配置预设「${name}」`);
 }
 function deleteApiPreset() {
   const name = String(selectedPreset.value).trim();
   if (!name || !settings.value.接口预设?.[name]) {
-    toastr.warning('请选择要删除的预设', '彼方');
+    toastWarning('请选择要删除的预设');
     return;
   }
   delete settings.value.接口预设[name];
   selectedPreset.value = '';
-  toastr.success(`已删除接口配置预设「${name}」`, '彼方');
+  toastSuccess(`已删除接口配置预设「${name}」`);
 }
 
-const cardFields = CARD_FIELDS;
 const tabs = [
   { key: 'dashboard', icon: PhGauge, label: '仪表盘' },
   { key: 'npc', icon: PhUsers, label: 'NPC' },
-  { key: 'interaction', icon: PhChatsCircle, label: '互动' },
-  { key: 'timeline', icon: PhClockCounterClockwise, label: '时间轴' },
+  { key: 'consistency', icon: PhShieldCheck, label: '事实档案' },
   { key: 'logs', icon: PhScroll, label: '日志' },
   { key: 'settings', icon: PhGearSix, label: '设置' },
 ] as const;
 
-const npcEntries = computed(() => {
-  const entries = Object.entries(data.value.NPC ?? {});
-  const inScene = new Set(data.value.在场NPC ?? []);
-  // 在场的 NPC 排在上面, 其余保持原顺序
-  return entries.sort((a, b) => (inScene.has(b[0]) ? 1 : 0) - (inScene.has(a[0]) ? 1 : 0));
-});
+const npcEntries = computed(() => Object.entries(data.value.NPC ?? {}));
 const npcList = computed(() => data.value.名单 ?? []);
 const newNpcName = ref('');
+/** 自动建档开启时给空状态的正确引导; 关闭时提示手动加名单 */
+const autoTrackEnabled = computed(() => settings.value.更新.自动建档 !== false);
 
 const addDialogOpen = ref(false);
 const addDraft = ref<Record<string, any>>({});
@@ -970,11 +914,11 @@ const addDraft = ref<Record<string, any>>({});
 function openAddDialog() {
   addDraft.value = {
     '名字': newNpcName.value.trim(),
+    '身份锚点': '',
     '当前在做': '',
     '当前状态': '',
     '位置': '',
     '接下来想做': '',
-    '可能偶遇': false,
   };
   addDialogOpen.value = true;
 }
@@ -982,35 +926,38 @@ function openAddDialog() {
 function confirmAddNpc() {
   const name = String(addDraft.value['名字'] || '').trim();
   if (!name) {
-    toastr.warning('请填写NPC名字', '彼方');
+    toastWarning('请填写NPC名字');
     return;
   }
-  if (!data.value.名单.includes(name)) data.value.名单.push(name);
-  data.value.NPC = data.value.NPC || {};
-  const card: Record<string, any> = { ...(data.value.NPC[name] || {}) };
-  for (const field of cardFields) {
-    const v = addDraft.value[field];
-    if (typeof v === 'string' && v.trim()) card[field] = v.trim();
-  }
-  if ('可能偶遇' in addDraft.value) card['可能偶遇'] = Boolean(addDraft.value['可能偶遇']);
-  card['最后更新'] = Date.now();
-  data.value.NPC[name] = card;
+  // 改数据 → 写快照 → 重同步世界书这一整套在 数据变更.ts, 界面只消费返回值
+  const 结果 = 加NPC(data.value, name, addDraft.value, 建变更环境());
+  data.value = 结果.数据;
   selectedNpc.value = name;
   newNpcName.value = '';
   addDialogOpen.value = false;
-  stateStore.save();
-  syncWorldbookAfterEdit();
-  toastr.success(`已添加 NPC: ${name}`, '彼方');
+  toastSuccess(结果.说明);
 }
 
 function removeNpc(name: string) {
-  data.value.名单 = data.value.名单.filter(n => n !== name);
-  if (data.value.NPC) delete data.value.NPC[name];
+  const 结果 = 移除NPC(data.value, name, 建变更环境());
+  data.value = 结果.数据;
   if (selectedNpc.value === name) selectedNpc.value = null;
-  stateStore.save();
-  syncWorldbookAfterEdit();
 }
-const interactions = computed(() => data.value.后台互动 ?? []);
+/** 事实档案: 每个 NPC 的跨楼层记忆账本(身份锚点/持有物/未完成承诺/近期关键事件) */
+const consistencyList = computed(() => {
+  const list: Array<{ name: string; 锚点?: string; 持有物?: string; 未完成事项?: string; 近期关键事件?: string }> = [];
+  for (const [name, card] of Object.entries(data.value.NPC ?? {})) {
+    const c = card as Record<string, any>;
+    list.push({
+      name,
+      锚点: c['身份锚点'],
+      持有物: c['持有物'],
+      未完成事项: c['未完成事项'],
+      近期关键事件: c['近期关键事件'],
+    });
+  }
+  return list;
+});
 const stats = computed(() => data.value.统计 ?? { 更新次数: 0, 最后更新: 0 });
 const modelList = computed(() => settings.value.接口.模型列表);
 const ready = computed(() => Boolean(settings.value.接口.地址 && settings.value.接口.模型));
@@ -1056,56 +1003,24 @@ function startEditNpc() {
 
 function saveEditNpc() {
   if (!selectedNpc.value || !data.value.NPC?.[selectedNpc.value]) return;
-  const card = data.value.NPC[selectedNpc.value];
-  for (const field of cardFields) {
-    const v = editDraft.value[field];
-    if (typeof v === 'string') {
-      if (v.trim()) card[field] = v.trim();
-      else delete card[field];
-    }
-  }
-  // 额外可编辑字段(不在 CARD_FIELDS 中, 由彼方/AI 维护, 但允许玩家手动调整):
-  // 受孕日期——修改它即可调整孕周时间线, 彼方会按 (当前剧情日期-受孕日期) 重算孕周
-  for (const field of ['受孕日期']) {
-    const v = editDraft.value[field];
-    if (typeof v === 'string') {
-      if (v.trim()) card[field] = v.trim();
-      else delete card[field];
-    }
-  }
-  if ('可能偶遇' in editDraft.value) {
-    const raw = editDraft.value['可能偶遇'];
-    card['可能偶遇'] = typeof raw === 'boolean' ? raw : raw === 'true' || raw === '是' || raw === '会';
-  }
-  card['最后更新'] = Date.now();
+  const 名字 = selectedNpc.value;
+  // 草稿合并的规则(含"额外可编辑字段" 受孕日期/生理周期日期/怀孕知晓/孕程周数/哺乳期月数)在
+  // 数据变更.ts: 有值就写、空字符串就删该字段。扩展字段用于调整孕周时间线与该 NPC 种族的时间尺度。
+  const 结果 = 更新状态卡(data.value, 名字, editDraft.value, 建变更环境());
+  data.value = 结果.数据;
   editingNpc.value = false;
-  stateStore.save();
-  syncWorldbookAfterEdit();
-  toastr.success(`已保存 ${selectedNpc.value} 的状态`, '彼方');
+  toastSuccess(结果.说明);
 }
 
-/** 界面里编辑 NPC 数据后, 同步刷新世界书里的幕后状态条目 */
-async function syncWorldbookAfterEdit() {
-  if (!settings.value.更新.注入世界书条目) return;
-  try {
-    await syncNpcStatesWorldbook(data.value, true);
-  } catch (error) {
-    console.error('[彼方] 同步世界书条目失败:', error);
-  }
-}
-
-// 开世界书注入时关闭"注入到主AI"(避免重复); 关闭时删除世界书条目
+// 开世界书注入时立即写入条目(有 NPC 才写); 关闭时删除条目。
+// 数据变更之后的"重同步"由 数据变更.ts 统一负责, 这里只管"开关被拨动"这一件事。
 watch(
   () => settings.value.更新.注入世界书条目,
   enabled => {
-    if (enabled) {
-      settings.value.更新.注入到AI = false;
-      syncWorldbookAfterEdit();
-    } else {
-      syncNpcStatesWorldbook(data.value, false).catch(error => {
-        console.error('[彼方] 删除世界书条目失败:', error);
-      });
-    }
+    const 写入 = enabled && Object.keys(data.value.NPC ?? {}).length > 0;
+    syncNpcStatesWorldbook(host, data.value, 写入).catch(error => {
+      console.error('[彼方] 同步世界书条目失败:', error);
+    });
   },
 );
 
@@ -1117,11 +1032,11 @@ function npcStatusText(card: NpcStateCard): string {
   return card['当前状态'] || card['当前在做'] || '状态未知';
 }
 
-/** NPC 详情字段分组：生活动态 / 内心世界 / 生理状态（'可能偶遇'与核心状态字段单独处理） */
+/** NPC 详情字段分组：生活动态 / 内心世界 / 生理状态（核心状态字段单独处理） */
 const DETAIL_GROUPS: Record<string, string[]> = {
-  生活: ['生活状态', '接下来想做', '当前目标', '最近变化', '未完成事项'],
+  生活: ['身份锚点', '持有物', '近期关键事件', '生活状态', '接下来想做', '当前目标', '未完成事项'],
   内心: ['心里惦记', '秘密想法', '隐藏目标'],
-  生理: ['生理周期', '生理周期日期', '受孕日期', '是否怀孕', '怀孕知晓', '周期影响', '当前防护', '近期性行为'],
+  生理: ['生理周期', '生理周期日期', '受孕日期', '是否怀孕', '怀孕知晓', '孕程周数', '哺乳期月数', '周期影响', '当前防护', '近期性行为'],
 };
 
 const detailFields = computed(() =>
@@ -1150,14 +1065,8 @@ const PHYSIOLOGY_COLORS: Record<string, string> = {
   哺乳期: 'teal',
 };
 
-function npcTags(card: NpcStateCard, isInScene = false): NpcTag[] {
+function npcTags(card: NpcStateCard): NpcTag[] {
   const tags: NpcTag[] = [];
-  // 在场 NPC 直接标记"在场", 不再显示"偶遇可能"
-  if (isInScene) {
-    tags.push({ label: '在场', color: 'green' });
-  } else if (card['可能偶遇']) {
-    tags.push({ label: '偶遇可能', color: 'yellow' });
-  }
   const status = `${card['当前状态'] || ''} ${card['当前在做'] || ''}`;
   if (/睡|休息|就寝|午休|打盹/.test(status)) tags.push({ label: '睡眠', color: 'purple' });
   if (/工作|巡逻|食堂|任务|执勤|值班|搬运|修理|劳作|耕种|狩猎|采集|打猎|锻炼|训练|站岗/.test(status)) tags.push({ label: '工作', color: 'blue' });
@@ -1179,29 +1088,6 @@ function npcTags(card: NpcStateCard, isInScene = false): NpcTag[] {
   }
   return tags;
 }
-
-const timeline = computed(() => {
-  const entries: { time: number; timeText: string; title: string; desc: string; tag: string; color: string; icon: Component }[] = [];
-  for (const entry of data.value.时间轴 ?? []) {
-    entries.push({
-      time: entry.时间,
-      timeText: entry.剧情时间 || '',
-      title: entry.标题,
-      desc: entry.描述,
-      tag: entry.类型 === '互动' ? '互动' : '状态',
-      color: entry.类型 === '互动' ? 'blue' : 'green',
-      icon: entry.类型 === '互动' ? PhChatsCircle : PhStarFour,
-    });
-  }
-  // 按剧情时间倒序(最新/在场角色在最上面), 剧情时间无法解析的条目回退用现实时间
-  return entries
-    .sort((a, b) => {
-      const ats = storyTimeTs(a.timeText) ?? a.time;
-      const bts = storyTimeTs(b.timeText) ?? b.time;
-      return bts - ats;
-    })
-    .slice(0, 40);
-});
 
 /** 解析 "YYYY-MM-DD HH:mm" 剧情时间为时间戳, 失败返回 null */
 function storyTimeTs(text: string): number | null {
@@ -1230,42 +1116,20 @@ watch(worldbookExcludeDraft, value => {
     .map(item => item.trim())
     .filter(Boolean);
 });
+// 常驻世界书条目草稿: 每行一个条目名/关键词, watch 解析成列表写入设置
+const worldbookAlwaysDraft = ref((settings.value.更新.常驻世界书条目 || []).join('\n'));
+watch(worldbookAlwaysDraft, value => {
+  settings.value.更新.常驻世界书条目 = String(value ?? '')
+    .split(/[\n,，;；、]+/)
+    .map(item => item.trim())
+    .filter(Boolean);
+});
 
-// ---- 编辑提示词: 幕后更新自定义提示词段(非空时替换内置) ----
-type PromptSeg = { role: 'system' | 'user' | 'assistant'; content: string };
-const showPromptEditor = ref(false);
-// 编辑草稿: 打开时从设置载入(为空则用内置种子), 点"保存"才写回设置; 关闭未保存则丢弃
-const promptDraftUpdate = ref<PromptSeg[]>([]);
-function openPromptEditor() {
-  const updateSaved = settings.value.更新.自定义提示词;
-  promptDraftUpdate.value = updateSaved.length ? klona(updateSaved) : (getUpdatePromptSeed() as PromptSeg[]);
-  showPromptEditor.value = true;
-}
-function savePromptDraft() {
-  const target = settings.value.更新.自定义提示词;
-  target.splice(0, target.length, ...klona(promptDraftUpdate.value));
-  toastr.success('已保存幕后更新提示词', '彼方');
-}
-function addPromptSegment() {
-  promptDraftUpdate.value.push({ role: 'system', content: '' });
-}
-function removePromptSegment(i: number) {
-  promptDraftUpdate.value.splice(i, 1);
-}
-function movePromptSegment(i: number, dir: -1 | 1) {
-  const list = promptDraftUpdate.value;
-  const j = i + dir;
-  if (j < 0 || j >= list.length) return;
-  const [seg] = list.splice(i, 1);
-  list.splice(j, 0, seg);
-}
-function clearPromptSegments() {
-  promptDraftUpdate.value.splice(0);
-}
+// ---- 编辑提示词功能(自定义提示词段)已于 2026-10 删除: 历史残留, 界面与设置项一并移除 ----
 
 const savedOrb = (() => {
   try {
-    return getVariables({ type: 'global' })?.[ORB_KEY] ?? null;
+    return host.vars.get({ type: 'global' })?.[ORB_KEY] ?? null;
   } catch {
     return null;
   }
@@ -1273,6 +1137,14 @@ const savedOrb = (() => {
 
 const viewportW = (): number => parentWin.value?.innerWidth ?? window.innerWidth;
 const viewportH = (): number => parentWin.value?.innerHeight ?? window.innerHeight;
+
+/** 贴边留白: 0 = 球体真正贴到屏幕边缘(球体外侧阴影已去除, 贴边不会被裁) */
+const EDGE_GAP = 0;
+const halfOrb = (): number => CLOSED_SIZE / 2;
+const minAnchorX = (): number => halfOrb() - EDGE_GAP;
+const maxAnchorX = (): number => viewportW() - halfOrb() + EDGE_GAP;
+const minAnchorY = (): number => halfOrb() - EDGE_GAP;
+const maxAnchorY = (): number => viewportH() - halfOrb() + EDGE_GAP;
 
 const anchorX = ref<number | null>(null);
 const anchorY = ref<number | null>(null);
@@ -1295,24 +1167,31 @@ function applyFrame() {
     target.style.height = `${viewportH()}px`;
     target.style.left = '0px';
     target.style.top = '0px';
+    // 面板分支必须把圆形裁剪设回矩形圆角, 否则整个面板会被上一态的 50% 圆形裁掉
+    target.style.borderRadius = '12px';
   } else {
     target.style.width = `${CLOSED_SIZE}px`;
     target.style.height = `${CLOSED_SIZE}px`;
-    target.style.left = `${clamp(x - CLOSED_SIZE / 2, 8, viewportW() - CLOSED_SIZE - 8)}px`;
-    target.style.top = `${clamp(y - CLOSED_SIZE / 2, 8, viewportH() - CLOSED_SIZE - 8)}px`;
+    target.style.left = `${clamp(x - halfOrb(), -EDGE_GAP, viewportW() - CLOSED_SIZE + EDGE_GAP)}px`;
+    target.style.top = `${clamp(y - halfOrb(), -EDGE_GAP, viewportH() - CLOSED_SIZE + EDGE_GAP)}px`;
+    // iframe 元素本身裁成圆形(与烟火同款): replaced element 的 border-radius 会同时裁剪
+    // 渲染与鼠标命中测试——四角透明方区不再存在, 隐形方框感彻底消失
+    target.style.borderRadius = '50%';
   }
 }
 
 onMounted(() => {
   anchorX.value =
-    typeof savedOrb?.x === 'number' && savedOrb.x >= CLOSED_SIZE / 2 && savedOrb.x <= viewportW() - CLOSED_SIZE / 2
+    typeof savedOrb?.x === 'number' && savedOrb.x >= minAnchorX() && savedOrb.x <= maxAnchorX()
       ? savedOrb.x
       : viewportW() - 40;
   anchorY.value =
-    typeof savedOrb?.y === 'number' && savedOrb.y >= CLOSED_SIZE / 2 && savedOrb.y <= viewportH() - CLOSED_SIZE / 2
+    typeof savedOrb?.y === 'number' && savedOrb.y >= minAnchorY() && savedOrb.y <= maxAnchorY()
       ? savedOrb.y
       : viewportH() - 110;
   applyFrame();
+  setToastAnchor(currentX(), currentY());
+  applyToastTheme();
   parentWin.value?.addEventListener('resize', onViewportResize);
   clockTimer = window.setInterval(() => {
     now.value = Date.now();
@@ -1321,46 +1200,104 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (clockTimer !== null) window.clearInterval(clockTimer);
+  // 二次确认窗口与位置保存都是短定时器: 卸载后不该再回写组件状态或平台变量(定时器残留)
+  if (clearConfirmTimer) clearTimeout(clearConfirmTimer);
+  if (orbSaveTimer !== null) window.clearTimeout(orbSaveTimer);
 });
 
 function onViewportResize() {
-  if (anchorX.value !== null) anchorX.value = clamp(anchorX.value, CLOSED_SIZE / 2, viewportW() - CLOSED_SIZE / 2);
-  if (anchorY.value !== null) anchorY.value = clamp(anchorY.value, CLOSED_SIZE / 2, viewportH() - CLOSED_SIZE / 2);
+  const anchorChanged = anchorX.value !== null || anchorY.value !== null;
+  if (anchorX.value !== null) anchorX.value = clamp(anchorX.value, minAnchorX(), maxAnchorX());
+  if (anchorY.value !== null) anchorY.value = clamp(anchorY.value, minAnchorY(), maxAnchorY());
   applyFrame();
+  positionUpdatingPop();
+  // 视口变化把球挤出原位置时, 保存修正后的位置
+  if (anchorChanged) persistOrbPos();
 }
 
 watch([panelOpen, anchorX, anchorY], applyFrame);
 
+// 位置持久化: 只在拖动结束(pointerup)时写一次全局变量——拖动过程中每个 pointermove
+// 都写会造成数百次全局变量写入(全局变量是服务器端共享的, 每次都有序列化开销)
 watch([anchorX, anchorY], () => {
-  try {
-    insertOrAssignVariables({ [ORB_KEY]: { x: anchorX.value, y: anchorY.value } }, { type: 'global' });
-  } catch {
-    // 忽略保存失败
-  }
+  setToastAnchor(currentX(), currentY());
+  positionUpdatingPop();
 });
+
+let orbSaveTimer: number | null = null;
+function persistOrbPos() {
+  if (orbSaveTimer !== null) window.clearTimeout(orbSaveTimer);
+  orbSaveTimer = window.setTimeout(() => {
+    orbSaveTimer = null;
+    try {
+      host.vars.insertOrAssign({ [ORB_KEY]: { x: anchorX.value, y: anchorY.value } }, { type: 'global' });
+    } catch {
+      // 忽略保存失败
+    }
+  }, 200);
+}
 
 const UPDATING_POP_ID = '彼方_更新弹窗';
 let updatingPopEl: HTMLElement | null = null;
+/** 弹条外观(胶囊形, 与烟火更新弹条同款); 配色经 --bf-toast-* 变量跟随面板主题, 由 applyPopTheme 写入 */
+const UPDATING_POP_CSS =
+  `position:fixed;top:0;left:0;z-index:2147483000;display:none;align-items:center;gap:9px;padding:7px 9px 7px 15px;border-radius:999px;background:var(${弹窗变量.bg},${弹窗兜底配色.bg});border:1px solid var(${弹窗变量.border},${弹窗兜底配色.border});color:var(${弹窗变量.text},${弹窗兜底配色.text});font:12px/1.4 "Segoe UI","Microsoft YaHei",sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.45);user-select:none;white-space:nowrap;transform-origin:left center;animation:bfPopIn .32s cubic-bezier(.34,1.56,.64,1);`;
+const UPDATING_POP_HTML = `
+    <span class="bf-pop-spin" style="width:7px;height:7px;border-radius:50%;background:var(${弹窗变量.accent},${弹窗兜底配色.accent});display:inline-block;animation:bf-pop-spin 1.4s ease-in-out infinite;flex:none;"></span>
+    <span class="bf-pop-msg"></span>
+    <button type="button" class="bf-pop-cancel" style="margin-left:2px;padding:3px 11px;border-radius:999px;border:1px solid var(${弹窗变量.accent},${弹窗兜底配色.accent});background:transparent;color:var(${弹窗变量.accent},${弹窗兜底配色.accent});font:inherit;cursor:pointer;">中断</button>`;
+
+/** 更新弹条不在弹窗容器里, 单独补主题变量 */
+function applyPopTheme(el: HTMLElement) {
+  const vars = 取弹窗配色(theme.value);
+  for (const [key, prop] of Object.entries(弹窗变量) as [keyof 弹窗配色, string][])
+    el.style.setProperty(prop, vars[key]);
+}
+
+/** 贴球弹窗容器整体同步主题配色(值来自 theme.ts, 不再从面板 DOM 里反读) */
+function applyToastTheme() {
+  setToastColors(取弹窗配色(theme.value));
+  if (updatingPopEl && updatingPopEl.isConnected) applyPopTheme(updatingPopEl);
+}
+
+/** 弹条贴着悬浮球左方弹出(左方空间不足则弹到右方), 垂直居中对齐球, 跟随球的位置 */
+function positionUpdatingPop() {
+  const el = updatingPopEl;
+  if (!el || !el.isConnected) return;
+  const vw = viewportW();
+  const vh = viewportH();
+  const w = el.offsetWidth || 220;
+  const h = el.offsetHeight || 42;
+  const ballL = currentX() - CLOSED_SIZE / 2;
+  const ballR = currentX() + CLOSED_SIZE / 2;
+  let left = ballL - w - 10;
+  if (left < 8) left = ballR + 10;
+  left = clamp(left, 8, Math.max(8, vw - w - 8));
+  const top = clamp(currentY() - h / 2, 8, Math.max(8, vh - h - 8));
+  el.style.left = `${Math.round(left)}px`;
+  el.style.top = `${Math.round(top)}px`;
+}
 
 function ensureUpdatingPop(doc: Document): HTMLElement {
   let el = doc.getElementById(UPDATING_POP_ID);
-  if (el) return el;
+  if (el) {
+    // 热重载/重进脚本时可能复用旧版式的残留元素: 重刷为当前样式与主题色(顺带重置旧按钮监听)
+    el.style.cssText = UPDATING_POP_CSS;
+    el.innerHTML = UPDATING_POP_HTML;
+    applyPopTheme(el);
+    return el;
+  }
   el = doc.createElement('div');
   el.id = UPDATING_POP_ID;
-  el.dataset.theme = theme.value;
-  el.style.cssText =
-    'position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:2147483000;display:flex;align-items:center;gap:10px;padding:10px 16px;border-radius:12px;background:var(--bf-pop-bg);color:var(--bf-pop-text);font:13px/1.4 system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.35);user-select:none;';
-  el.innerHTML = `
-    <span class="bf-pop-spin" style="width:14px;height:14px;border:2px solid var(--bf-pop-border);border-top-color:var(--bf-pop-accent);border-radius:50%;display:inline-block;animation:bf-pop-spin .8s linear infinite;flex:none;"></span>
-    <span class="bf-pop-msg"></span>
-    <button type="button" class="bf-pop-cancel" style="margin-left:2px;padding:4px 10px;border:none;border-radius:8px;background:var(--bf-pop-accent);color:#fff;font:inherit;cursor:pointer;">中断</button>`;
+  el.style.cssText = UPDATING_POP_CSS;
+  applyPopTheme(el);
+  el.innerHTML = UPDATING_POP_HTML;
   if (!doc.querySelector('style[data-bf-pop]')) {
     const style = doc.createElement('style');
     style.setAttribute('data-bf-pop', '1');
     style.textContent = `
-      #彼方_更新弹窗 { --bf-pop-bg: rgba(16, 23, 19, 0.96); --bf-pop-text: #eae5da; --bf-pop-border: rgba(234, 229, 218, 0.3); --bf-pop-accent: #b07a33; }
-      #彼方_更新弹窗[data-theme="light"] { --bf-pop-bg: rgba(255, 253, 248, 0.97); --bf-pop-text: #2e2a22; --bf-pop-border: rgba(46, 42, 34, 0.25); --bf-pop-accent: #8a551f; }
-      @keyframes bf-pop-spin{to{transform:rotate(360deg)}}`;
+      @keyframes bf-pop-spin{0%,100%{opacity:.35}50%{opacity:1}}
+      @keyframes bfPopIn{from{opacity:0;transform:translateX(14px) scale(.9)}to{opacity:1;transform:none}}`;
     doc.head.appendChild(style);
   }
   doc.body.appendChild(el);
@@ -1377,6 +1314,11 @@ watch([updatingActive, updatingMessage], ([active, message]) => {
     const cancelBtn = updatingPopEl.querySelector('.bf-pop-cancel');
     if (cancelBtn) cancelBtn.addEventListener('click', () => updatingStore.cancel());
     updatingPopEl.style.display = 'flex';
+    // 重新播放弹出动画(display 切换不会重放 CSS animation)
+    updatingPopEl.style.animation = 'none';
+    void updatingPopEl.offsetWidth;
+    updatingPopEl.style.animation = '';
+    positionUpdatingPop();
   } else if (updatingPopEl && updatingPopEl.isConnected) {
     updatingPopEl.style.display = 'none';
   }
@@ -1418,8 +1360,8 @@ function onOrbPointerDown(e: PointerEvent) {
 function onMove(e: PointerEvent) {
   const point = parentClient(e);
   if (Math.abs(point.x - startX) + Math.abs(point.y - startY) > 4) moved = true;
-  anchorX.value = clamp(startAnchorX + (point.x - startX), CLOSED_SIZE / 2, viewportW() - CLOSED_SIZE / 2);
-  anchorY.value = clamp(startAnchorY + (point.y - startY), CLOSED_SIZE / 2, viewportH() - CLOSED_SIZE / 2);
+  anchorX.value = clamp(startAnchorX + (point.x - startX), minAnchorX(), maxAnchorX());
+  anchorY.value = clamp(startAnchorY + (point.y - startY), minAnchorY(), maxAnchorY());
 }
 
 function onUp() {
@@ -1428,6 +1370,7 @@ function onUp() {
   frameWin.value?.removeEventListener('pointerup', onUp);
   parentWin.value?.removeEventListener('pointermove', onMove);
   parentWin.value?.removeEventListener('pointerup', onUp);
+  if (moved) persistOrbPos();
   window.setTimeout(() => {
     moved = false;
   }, 200);
@@ -1455,7 +1398,7 @@ async function copyText(text: string) {
   if (clipboard && typeof clipboard.writeText === 'function') {
     try {
       await clipboard.writeText(text);
-      toastr.success('已复制到剪贴板', '彼方');
+      toastSuccess('已复制到剪贴板');
       return;
     } catch {
       // 继续走兜底
@@ -1472,13 +1415,13 @@ async function copyText(text: string) {
     const ok = document.execCommand('copy');
     textarea.remove();
     if (ok) {
-      toastr.success('已复制到剪贴板', '彼方');
+      toastSuccess('已复制到剪贴板');
       return;
     }
   } catch {
     // 忽略
   }
-  toastr.error('复制失败，请手动选中复制', '彼方');
+  toastError('复制失败，请手动选中复制');
 }
 
 function buildErrorReport(): string {
@@ -1508,7 +1451,7 @@ async function copyErrorReport() {
 
 async function loadModels() {
   if (!settings.value.接口.地址) {
-    toastr.warning('请先填写接口地址', '彼方');
+    toastWarning('请先填写接口地址');
     return;
   }
   fetchingModels.value = true;
@@ -1518,10 +1461,10 @@ async function loadModels() {
     if (!list.includes(settings.value.接口.模型)) {
       settings.value.接口.模型 = list[0] ?? '';
     }
-    toastr.success(`获取到 ${list.length} 个模型`, '彼方');
+    toastSuccess(`获取到 ${list.length} 个模型`);
   } catch (error) {
     console.error('[彼方] 获取模型列表失败:', error);
-    toastr.error(error instanceof Error ? error.message : String(error), '彼方');
+    toastError(error instanceof Error ? error.message : String(error), '彼方·获取模型失败');
   } finally {
     fetchingModels.value = false;
   }
@@ -1529,16 +1472,16 @@ async function loadModels() {
 
 async function testConnection() {
   if (!settings.value.接口.地址 || !settings.value.接口.模型) {
-    toastr.warning('请先填写接口地址并选择模型', '彼方');
+    toastWarning('请先填写接口地址并选择模型');
     return;
   }
   testing.value = true;
   try {
     const reply = await chatCompletion([{ role: 'user', content: '请只回复两个字: 正常' }], { max_tokens: 16 });
-    toastr.success(`连接正常, 模型回复: ${reply.trim().slice(0, 50)}`, '彼方');
+    toastSuccess(`连接正常, 模型回复: ${reply.trim().slice(0, 50)}`);
   } catch (error) {
     console.error('[彼方] 测试连接失败:', error);
-    toastr.error(error instanceof Error ? error.message : String(error), '彼方');
+    toastError(error instanceof Error ? error.message : String(error), '彼方·测试失败');
   } finally {
     testing.value = false;
   }
@@ -1546,15 +1489,10 @@ async function testConnection() {
 
 async function manualUpdate() {
   if (!settings.value.启用幕后) {
-    toastr.warning('幕后系统已关闭(设置→启用幕后), 如需更新请先开启', '彼方');
+    toastWarning('幕后系统已关闭(设置→启用幕后), 如需更新请先开启');
     return;
   }
-  updating.value = true;
-  try {
-    await updateNpcStates(true);
-  } finally {
-    updating.value = false;
-  }
+  await updateNpcStates(true);
 }
 
 function reload() {
@@ -1562,29 +1500,29 @@ function reload() {
 }
 
 const clearing = ref(false);
+/** 「再点一次确认清空」的确认窗口定时器: 确认或重新计时前必须先清掉旧的——
+ *  否则上一次的定时器会在新确认窗口中途把 clearing 提前复位, 玩家第二次点击就变成"重新计时"而不是清空 */
+let clearConfirmTimer: ReturnType<typeof setTimeout> | null = null;
 
 function clearAll() {
   if (!clearing.value) {
     clearing.value = true;
-    window.setTimeout(() => {
+    if (clearConfirmTimer) clearTimeout(clearConfirmTimer);
+    clearConfirmTimer = setTimeout(() => {
       clearing.value = false;
     }, 3000);
     return;
   }
   clearing.value = false;
-  const empty = freshClearData();
-  data.value = empty;
-  stateStore.save();
-  // 清空后无 NPC, 删除世界书里的幕后状态条目
-  syncNpcStatesWorldbook(data.value, false).catch(error => {
-    console.error('[彼方] 同步世界书条目失败:', error);
-  });
-  const reloaded = loadData();
-  if (Object.keys(reloaded.NPC).length === 0 && reloaded.名单.length === 0) {
-    toastr.success('彼方: 数据已清空，清空后只分析清空之后的新楼层', '彼方');
-  } else {
-    toastr.error('彼方: 清空后检测到仍有数据残留，请查看浏览器控制台并重新加载脚本', '彼方');
+  if (clearConfirmTimer) {
+    clearTimeout(clearConfirmTimer);
+    clearConfirmTimer = null;
   }
+  // 清空 = 物理删除所有楼层的快照 + 重置元数据(记录清空层) + 删掉世界书条目——协议在 数据变更.ts;
+  // 这里不再重读存储做启发式校验(持久层自己负责正确性, 失败会记录日志)
+  const 结果 = 清空彼方数据(建变更环境());
+  data.value = 结果.数据;
+  toastSuccess(结果.说明);
 }
 </script>
 
@@ -1597,69 +1535,22 @@ function clearAll() {
   overflow: hidden;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   user-select: none;
-  /* 深色主题 (默认) —— 夜幕暖灯：深蓝黑夜幕底 + 暖黄灯光点缀 + 月白文字 */
+  /* 深色主题 (默认) —— 夜幕暖灯：深蓝黑夜幕底 + 暖黄灯光点缀 + 月白文字
+     具体色值统一写在 theme.ts(一份数据同时生成这里的变量与弹窗配色), 这里不再列一遍 */
   color-scheme: dark;
-  --bf-bg: #0c1120;
-  --bf-bg2: #121a2e;
-  --bf-card: #172039;
-  --bf-hover: #1f2a4a;
-  --bf-accent: #f0b45a;
-  --bf-accent-strong: #c98a2e;
-  --bf-accent-soft: rgba(240, 180, 90, 0.14);
-  --bf-accent-text: #f7cf8a;
-  --bf-success: #7fb08a;
-  --bf-warning: #d4a94e;
-  --bf-danger: #cc7a5e;
-  --bf-text: #e8edf5;
-  --bf-dim: #9aa8c0;
-  --bf-faint: #5c6a85;
-  --bf-border: rgba(232, 237, 245, 0.1);
-  --bf-border-strong: rgba(232, 237, 245, 0.2);
-  --bf-shadow: 0 24px 80px rgba(4, 8, 20, 0.75);
-  --bf-orb-bg: rgba(18, 26, 46, 0.92);
-  --bf-orb-ring: rgba(247, 207, 138, 0.32);
-  --bf-orb-ring-strong: rgba(247, 207, 138, 0.55);
-  --bf-orb-comp: rgba(240, 180, 90, 0.55);
-  --bf-code: #0a0e1a;
-  --bf-radius-sm: 8px;
-  --bf-radius: 12px;
-  --bf-radius-lg: 16px;
   color: var(--bf-text);
 }
 
-/* 白天模式 —— 冷白月光基底，琥珀灯光点缀 */
+/* 白天模式 —— 冷白月光基底，琥珀灯光点缀(token 值见 theme.ts) */
 .bf-root[data-theme='light'] {
   color-scheme: light;
-  --bf-bg: #f4f6fa;
-  --bf-bg2: #e9edf4;
-  --bf-card: #ffffff;
-  --bf-hover: #dfe5ee;
-  --bf-accent: #b0762a;
-  --bf-accent-strong: #92591a;
-  --bf-accent-soft: rgba(176, 118, 42, 0.12);
-  --bf-accent-text: #8a5518;
-  --bf-success: #4d7a56;
-  --bf-warning: #9c7a1e;
-  --bf-danger: #b25f43;
-  --bf-text: #2b3340;
-  --bf-dim: #67738a;
-  --bf-faint: #a0abc0;
-  --bf-border: rgba(43, 51, 64, 0.1);
-  --bf-border-strong: rgba(43, 51, 64, 0.18);
-  --bf-shadow: 0 24px 80px rgba(43, 51, 64, 0.18);
-  --bf-orb-bg: rgba(255, 255, 255, 0.94);
-  --bf-orb-ring: rgba(146, 89, 26, 0.35);
-  --bf-orb-ring-strong: rgba(146, 89, 26, 0.6);
-  --bf-orb-comp: rgba(146, 89, 26, 0.5);
-  --bf-code: #f8fafc;
 }
 
 /* ---------- 悬浮球 (深色星盘 + 细环 + 渐变描边星) ---------- */
 .bf-orb {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
+  /* 定位由内联样式控制: 关闭时 left/top=0 填满圆形 iframe, 打开时=锚点-20 (相对全屏 iframe)。
+     不用 left:50%+translate 居中——打开态内联 left/top 会与 translate 叠加导致球跳动 */
   width: 40px;
   height: 40px;
   border-radius: 50%;
@@ -1672,27 +1563,30 @@ function clearAll() {
     radial-gradient(circle at 50% 40%, var(--bf-accent-soft), transparent 62%),
     var(--bf-orb-bg);
   box-shadow:
-    0 0 0 1px var(--bf-orb-ring),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1),
-    0 1px 4px rgba(4, 8, 5, 0.3);
+    inset 0 0 0 1px var(--bf-orb-ring),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
   color: var(--bf-accent);
-  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  transition: box-shadow 0.25s ease;
   touch-action: none;
 }
+/* hover/拖动不放大球体(放大会被 40px 命中框裁剪出方形边缘), 改为黄色边线发光:
+   内环加亮加粗 + 内侧泛光, 全部用 inset 阴影实现, 不会被 iframe 边缘裁掉 */
 .bf-orb:hover {
-  transform: translate(-50%, -50%) scale(1.06);
   box-shadow:
-    0 0 0 1px var(--bf-orb-ring-strong),
-    inset 0 1px 0 rgba(255, 255, 255, 0.14),
-    0 2px 6px rgba(4, 8, 5, 0.35);
+    inset 0 0 0 2px var(--bf-orb-ring-strong),
+    inset 0 0 9px var(--bf-orb-ring-strong),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 .bf-orb.dragging {
   cursor: grabbing;
-  transform: translate(-50%, -50%) scale(1.09);
+  box-shadow:
+    inset 0 0 0 2px var(--bf-orb-ring-strong),
+    inset 0 0 12px var(--bf-orb-ring-strong),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 .bf-orb-icon {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   filter: drop-shadow(0 1px 2px rgba(4, 8, 5, 0.45));
 }
 .bf-orb-comp {
@@ -1706,20 +1600,6 @@ function clearAll() {
 }
 .bf-orb:hover .bf-orb-comp {
   color: var(--bf-accent);
-}
-.bf-orb-close-badge {
-  position: absolute;
-  right: -2px;
-  bottom: -2px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--bf-bg);
-  border: 1px solid var(--bf-border-strong);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--bf-dim);
 }
 .bf-orb-spinner {
   position: absolute;
@@ -2592,151 +2472,72 @@ function clearAll() {
   word-break: break-word;
 }
 
-/* ---------- 互动聊天流 ---------- */
-.bf-flow {
+
+/* ---------- 事实档案 ---------- */
+.bf-page-hint {
+  font-size: 12px;
+  color: var(--bf-dim);
+  margin: -4px 0 14px;
+  line-height: 1.6;
+  opacity: 0.85;
+}
+.bf-consistency-list {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-}
-.bf-flow-item {
-  display: flex;
   gap: 12px;
-  align-items: flex-start;
 }
-.bf-flow-time {
-  width: 64px;
-  flex: none;
-  padding-top: 14px;
-  font-size: 11px;
-  color: var(--bf-dim);
-  text-align: right;
-  line-height: 1.4;
-  font-variant-numeric: tabular-nums;
+.bf-consistency-card {
+  padding: 14px 16px;
 }
-.bf-flow-participants {
+.bf-consistency-head {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--bf-border);
 }
-.bf-flow-avatar {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
+.bf-consistency-name {
+  font-size: 14px;
   font-weight: 600;
-  color: #ffffff;
-  border: 2px solid var(--bf-card);
-  margin-left: -8px;
-  background: linear-gradient(145deg, var(--bf-accent), var(--bf-accent-strong));
-}
-.bf-flow-participants .bf-flow-avatar:first-child {
-  margin-left: 0;
-}
-.bf-flow-body {
-  flex: 1;
-  min-width: 0;
-  background: var(--bf-card);
-  border: 1px solid var(--bf-border);
-  border-radius: var(--bf-radius);
-  padding: 12px 14px;
-}
-.bf-flow-head {
-  margin-bottom: 6px;
-}
-.bf-flow-name {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--bf-accent-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.bf-flow-content {
-  font-size: 13.5px;
   color: var(--bf-text);
-  line-height: 1.7;
+}
+.bf-consistency-anchor {
+  font-size: 12px;
+  color: var(--bf-accent);
+  opacity: 0.9;
+}
+.bf-consistency-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bf-consistency-row {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 10px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  align-items: start;
+}
+.bf-consistency-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--bf-dim);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.bf-consistency-value {
+  color: var(--bf-text);
   white-space: pre-wrap;
   word-break: break-word;
 }
-
-/* ---------- 时间轴 ---------- */
-.bf-timeline {
-  position: relative;
-  padding-left: 28px;
-}
-.bf-timeline::before {
-  content: '';
-  position: absolute;
-  left: 10px;
-  top: 6px;
-  bottom: 6px;
-  width: 2px;
-  background: linear-gradient(180deg, var(--bf-accent), var(--bf-accent-soft));
-}
-.bf-tl-item {
-  position: relative;
-  display: flex;
-  gap: 14px;
-  padding-bottom: 18px;
-}
-.bf-tl-icon {
-  position: absolute;
-  left: -28px;
-  top: 2px;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--bf-card);
-  border: 2px solid var(--bf-accent);
-  box-shadow: 0 0 0 3px var(--bf-accent-soft);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  color: var(--bf-accent-text);
-}
-.bf-tl-content {
-  flex: 1;
-  min-width: 0;
-  background: var(--bf-card);
-  border: 1px solid var(--bf-border);
-  border-radius: var(--bf-radius);
-  padding: 10px 14px;
-  transition: background 0.16s ease, border-color 0.16s ease;
-}
-.bf-tl-item:hover .bf-tl-content {
-  background: var(--bf-hover);
-  border-color: var(--bf-border-strong);
-}
-.bf-tl-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 3px;
-}
-.bf-tl-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--bf-text);
-}
-.bf-tl-time {
-  font-size: 11px;
+.bf-consistency-empty .bf-consistency-value {
   color: var(--bf-dim);
-  margin-left: auto;
-  font-variant-numeric: tabular-nums;
-}
-.bf-tl-desc {
-  font-size: 12.5px;
-  color: var(--bf-text);
-  opacity: 0.85;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
+  opacity: 0.6;
+  font-style: italic;
 }
 
 /* ---------- 日志 ---------- */
@@ -3355,94 +3156,4 @@ function clearAll() {
 }
 
 
-/* ---------- 编辑提示词弹层 ---------- */
-.bf-prompt-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 300;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(3px);
-  -webkit-backdrop-filter: blur(3px);
-}
-.bf-prompt-modal {
-  width: min(680px, 96vw);
-  max-height: 86vh;
-  display: flex;
-  flex-direction: column;
-  background: var(--bf-panel);
-  border: 1px solid var(--bf-border);
-  border-radius: var(--bf-radius);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-}
-.bf-prompt-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  font-size: 14px;
-  font-weight: 600;
-  border-bottom: 1px solid var(--bf-border);
-}
-.bf-prompt-tabs {
-  display: flex;
-  gap: 8px;
-  padding: 10px 16px 0;
-}
-.bf-prompt-ph {
-  margin-top: 4px;
-  color: var(--bf-text-3, #8a8680);
-  font-size: 11.5px;
-  font-family: ui-monospace, Consolas, monospace;
-}
-.bf-prompt-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 10px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.bf-prompt-seg {
-  border: 1px solid var(--bf-border);
-  border-radius: var(--bf-radius-sm);
-  background: color-mix(in srgb, var(--bf-panel, #1e1e22) 60%, #000);
-  padding: 10px;
-}
-.bf-prompt-seg-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-.bf-prompt-move {
-  display: flex;
-  gap: 4px;
-  margin-left: auto;
-}
-.bf-prompt-move .bf-btn {
-  padding: 2px 8px;
-  min-width: 26px;
-}
-.bf-input-role {
-  width: 130px;
-  flex: none;
-}
-.bf-prompt-seg textarea {
-  width: 100%;
-  min-height: 84px;
-  resize: vertical;
-}
-.bf-prompt-actions {
-  display: flex;
-  gap: 10px;
-  padding: 12px 16px;
-  border-top: 1px solid var(--bf-border);
-}
-.bf-prompt-spacer {
-  flex: 1;
-}
 </style>

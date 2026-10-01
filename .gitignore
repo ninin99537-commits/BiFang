@@ -15,7 +15,13 @@ components.d.ts
 # 构建产物
 dist
 
+# 用例的临时打包产物(pnpm test 生成)
+tests/.build/
+
 # 本地临时文件
 tools/*.png
 tools/*.txt
 tools/*.log
+
+# tool hook state (not source)
+.mimosa/

@@ -2,6 +2,7 @@
 import * as _pinia__WEBPACK_IMPORTED_MODULE_0__ from './pinia';
 import * as _vue__WEBPACK_IMPORTED_MODULE_1__ from './悬浮球界面.vue';
 import * as vue__WEBPACK_IMPORTED_MODULE_2__ from 'vue';
+import { useHost } from './host';
 
 const SRCDOC = `<!DOCTYPE html><html><head><style>*,*::before,*::after{box-sizing:border-box;}html,body{margin:0;padding:0;height:100%;overflow:hidden;background:transparent;}body:focus,html:focus{outline:none;}</style></head><body></body></html>`;
 function copyStylesTo(nestedDoc) {
@@ -33,13 +34,13 @@ $(() => {
         document.head.appendChild(style);
     }
     const $app = $(`<iframe>`)
-        .attr({ script_id: getScriptId(), frameborder: 0, tabindex: -1, srcdoc: SRCDOC })
+        .attr({ script_id: useHost().vars.scriptId(), frameborder: 0, tabindex: -1, srcdoc: SRCDOC })
         .css({
         position: 'fixed',
         left: '0px',
         top: '0px',
-        width: '64px',
-        height: '64px',
+        width: '40px',
+        height: '40px',
         border: 'none',
         outline: 'none',
         boxShadow: 'none',
@@ -57,6 +58,20 @@ $(() => {
     $(window).on('pagehide', () => {
         app.unmount();
         $app.remove();
+        // 清理彼方写到酒馆页面(父文档)上的元素: 弹窗容器/锚点/更新弹窗/样式,
+        // 脚本停用后不留残迹(重载时会重新创建, 不影响热重载)
+        try {
+            const pdoc = window.parent !== window ? window.parent.document : null;
+            if (pdoc) {
+                ['bf-toast-stack', 'bf-toast-anchor', '彼方_更新弹窗', 'bf-orb-force-style'].forEach(id => {
+                    pdoc.getElementById(id)?.remove();
+                });
+                pdoc.querySelector('style[data-bf-pop]')?.remove();
+            }
+        }
+        catch {
+            // 跨域等异常忽略
+        }
     });
 });
 
