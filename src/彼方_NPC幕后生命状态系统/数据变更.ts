@@ -8,7 +8,7 @@
 // 测试里换成假的就能把四种变更各跑一遍, 不需要酒馆。
 import { useHost } from './host';
 import { getSettings } from './settings';
-import { CARD_FIELDS } from './卡字段';
+import { CARD_FIELDS, 扩展编辑字段 } from './卡字段';
 import { clearAllData, emptyData, saveData } from './快照';
 import type { 彼方数据 } from './快照';
 import { syncNpcStatesWorldbook } from './worldbook-inject';
@@ -16,7 +16,7 @@ import { syncNpcStatesWorldbook } from './worldbook-inject';
 export type { 彼方数据 };
 
 /** 状态卡里可手动编辑、但不在 CARD_FIELDS 中的字段(由彼方/AI 维护, 玩家可手动覆盖) */
-export const 扩展编辑字段 = ['受孕日期', '生理周期日期', '怀孕知晓', '孕程周数', '哺乳期月数'];
+export { 扩展编辑字段 };
 
 export interface 变更环境 {
     /** 是否开启「写入世界书条目」——变更后要不要重同步世界书, 只由这一处决定 */

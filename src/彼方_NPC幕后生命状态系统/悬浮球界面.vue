@@ -272,41 +272,11 @@
 
                     <!-- 分组字段 -->
                     <div class="bf-detail-groups">
-                      <div v-if="detailFields['生活']" class="bf-field-group">
-                        <div class="bf-field-group-title"><PhSuitcaseSimple :size="13" weight="duotone" /> 生活动态</div>
+                      <div v-for="组 in detailFields" :key="组.key" class="bf-field-group">
+                        <div class="bf-field-group-title"><component :is="组.图标" :size="13" weight="duotone" /> {{ 组.标题 }}</div>
                         <div class="bf-field-grid">
-                          <div v-for="field in detailFields['生活']" :key="field" v-show="selectedNpcCard[field] || editingNpc" class="bf-field">
-                            <span class="bf-field-label">{{ field }}</span>
-                            <textarea
-                              v-if="editingNpc"
-                              v-model="editDraft[field]"
-                              class="bf-textarea bf-textarea-short"
-                              rows="2"
-                            ></textarea>
-                            <span v-else class="bf-field-value">{{ cleanText(selectedNpcCard[field]) }}</span>
-                          </div>
-                        </div>
-                      </div>
-                      <div v-if="detailFields['内心']" class="bf-field-group">
-                        <div class="bf-field-group-title"><PhBrain :size="13" weight="duotone" /> 内心世界</div>
-                        <div class="bf-field-grid">
-                          <div v-for="field in detailFields['内心']" :key="field" v-show="selectedNpcCard[field] || editingNpc" class="bf-field">
-                            <span class="bf-field-label">{{ field }}</span>
-                            <textarea
-                              v-if="editingNpc"
-                              v-model="editDraft[field]"
-                              class="bf-textarea bf-textarea-short"
-                              rows="2"
-                            ></textarea>
-                            <span v-else class="bf-field-value">{{ cleanText(selectedNpcCard[field]) }}</span>
-                          </div>
-                        </div>
-                      </div>
-                      <div v-if="detailFields['生理']" class="bf-field-group">
-                        <div class="bf-field-group-title"><PhHeartStraight :size="13" weight="duotone" /> 生理状态</div>
-                        <div class="bf-field-grid">
-                          <div v-for="field in detailFields['生理']" :key="field" v-show="selectedNpcCard[field] || editingNpc" class="bf-field">
-                            <span class="bf-field-label">{{ field }}</span>
+                          <div v-for="field in 组.字段" :key="field" v-show="selectedNpcCard[field] || editingNpc" class="bf-field">
+                            <span class="bf-field-label" :title="字段说明表[field] || field">{{ field }}</span>
                             <textarea
                               v-if="editingNpc"
                               v-model="editDraft[field]"
@@ -708,25 +678,10 @@
           <span class="bf-label">名字</span>
           <input v-model="addDraft['名字']" class="bf-input" placeholder="NPC名字" />
         </label>
-        <label class="bf-row">
-          <span class="bf-label">身份锚点</span>
-          <textarea v-model="addDraft['身份锚点']" class="bf-textarea bf-textarea-short" rows="2" placeholder="一句话概括 NPC 的独立身份与日常(职业/家庭/作息), 如: 35岁急诊科护士, 独自抚养5岁女儿"></textarea>
-        </label>
-        <label class="bf-row">
-          <span class="bf-label">当前在做</span>
-          <textarea v-model="addDraft['当前在做']" class="bf-textarea bf-textarea-short" rows="2"></textarea>
-        </label>
-        <label class="bf-row">
-          <span class="bf-label">当前状态</span>
-          <textarea v-model="addDraft['当前状态']" class="bf-textarea bf-textarea-short" rows="2"></textarea>
-        </label>
-        <label class="bf-row">
-          <span class="bf-label">位置</span>
-          <input v-model="addDraft['位置']" class="bf-input" placeholder="当前位置" />
-        </label>
-        <label class="bf-row">
-          <span class="bf-label">接下来想做</span>
-          <textarea v-model="addDraft['接下来想做']" class="bf-textarea bf-textarea-short" rows="2"></textarea>
+        <label v-for="字段 in 建档字段" :key="字段.名" class="bf-row">
+          <span class="bf-label" :title="字段.说明">{{ 字段.名 }}</span>
+          <input v-if="字段.输入 === 'input'" v-model="addDraft[字段.名]" class="bf-input" :placeholder="字段.占位 || 字段.说明" />
+          <textarea v-else v-model="addDraft[字段.名]" class="bf-textarea bf-textarea-short" rows="2" :placeholder="字段.占位 || 字段.说明"></textarea>
         </label>
         <div class="bf-hint">初始状态可后续在 NPC 详情中补充或编辑（不含生理监测字段）</div>
         <div class="bf-row bf-actions">
@@ -782,6 +737,7 @@ import { useStateStore } from './数据仓';
 import { useConsoleStore, useDebugStore, useMainPromptStore } from './日志仓';
 import { useUpdatingStore } from './任务中断';
 import { 加NPC, 移除NPC, 更新状态卡, 清空彼方数据, 建变更环境 } from './数据变更';
+import { 字段分组表, 字段说明表, 建档字段 } from './卡字段';
 import type { NpcStateCard } from './卡字段';
 import { updateNpcStates } from './update';
 import { syncNpcStatesWorldbook } from './worldbook-inject';
@@ -1032,19 +988,20 @@ function npcStatusText(card: NpcStateCard): string {
   return card['当前状态'] || card['当前在做'] || '状态未知';
 }
 
-/** NPC 详情字段分组：生活动态 / 内心世界 / 生理状态（核心状态字段单独处理） */
-const DETAIL_GROUPS: Record<string, string[]> = {
-  生活: ['身份锚点', '持有物', '近期关键事件', '生活状态', '接下来想做', '当前目标', '未完成事项'],
-  内心: ['心里惦记', '秘密想法', '隐藏目标'],
-  生理: ['生理周期', '生理周期日期', '受孕日期', '是否怀孕', '怀孕知晓', '孕程周数', '哺乳期月数', '周期影响', '当前防护', '近期性行为'],
-};
+/** NPC 详情字段分组: 分组标题与图标是展示(留在这里), "哪个字段属于哪一组"来自 卡字段.ts 的字段表 */
+const 分组展示 = [
+  { key: '生活', 标题: '生活动态', 图标: PhSuitcaseSimple },
+  { key: '内心', 标题: '内心世界', 图标: PhBrain },
+  { key: '生理', 标题: '生理状态', 图标: PhHeartStraight },
+];
 
 const detailFields = computed(() =>
-  Object.fromEntries(
-    Object.entries(DETAIL_GROUPS)
-      .map(([group, fields]) => [group, fields.filter(f => (selectedNpcCard.value as NpcStateCard)?.[f] || editingNpc.value)])
-      .filter(([, fields]) => (fields as string[]).length > 0),
-  ),
+  分组展示
+    .map(组 => ({
+      ...组,
+      字段: (字段分组表[组.key] || []).filter(f => (selectedNpcCard.value as NpcStateCard)?.[f] || editingNpc.value),
+    }))
+    .filter(组 => 组.字段.length > 0),
 );
 
 /** 折叠连续空行并去掉首尾空白，避免字段值里的多行换行造成大片空行 */
