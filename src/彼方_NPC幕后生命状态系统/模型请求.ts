@@ -8,6 +8,7 @@ import * as json5__WEBPACK_IMPORTED_MODULE_0__ from 'json5';
 import { CARD_FIELDS } from './卡字段';
 import { PHYSIO_FIELDS } from './生理规则';
 import { parseStoryTime } from './剧情时间';
+import { 请求并校验 as 共用请求并校验 } from '../共用/模型往返';
 
 /* harmony export */
 
@@ -297,90 +298,20 @@ type 请求参数 = {
     /** 报进度(线上是 updatingStore.message = 文字) */
     报进度: (文字: string) => void;
 };
+/** 彼方这一侧要告诉共用模块的只有"怎么解析、怎么校验、文案叫什么";
+ *  重试节奏、回喂文案、预填充拼回这些两边一样的部分都在 共用/模型往返.ts 里。 */
 async function 请求并校验(params: 请求参数): Promise<{ parsed: any; 请求耗时: number; 请求次数: number }> {
-    const { messages, 锚点, 预填充, 现有卡, 名单, 玩家名, 自动建档, signal: abortSignal, 发请求, 记日志, 报进度 } = params;
-    let parsed = null;
-    let parseError = null;
-    // 本次请求拿到的原始输出(每次 try 里都会先赋值再读, 所以不写初值)
-    let content;
-    let lastErrorReason = '';
-    let lastErrorOutput = '';
-    let 请求耗时 = 0;
-    let 请求次数 = 0;
-    // JSON 解析失败或结构不符合预期时自动重试（最多 3 次）; 重试时把上次的错误输出和原因回喂给 AI, 让它知道格式错在哪
-    for (let attempt = 1; attempt <= 3; attempt++) {
-        // 重试: 错误反馈要追加到**任务 user 消息**上, 而非消息数组末尾——
-        // 破限开启时尾部是 system(SPECIAL NOTE)+assistant(承诺), 不能把它们顶掉或改写。
-        // "任务在哪"由提示词形状自己声明(锚点), 这里不再比对收尾文案的字面量。
-        let attemptMessages;
-        if (attempt === 1 || !lastErrorOutput) {
-            attemptMessages = [...messages];
-        }
-        else {
-            const taskIdx = 锚点.任务下标;
-            if (taskIdx >= 0) {
-                attemptMessages = [
-                    ...messages.slice(0, taskIdx),
-                    {
-                        role: 'user',
-                        content: `${messages[taskIdx].content}\n\n【上次输出不符合要求, 请根据错误原因修正后重新输出】\n错误原因: ${lastErrorReason}\n上次输出(仅 JSON 部分):\n\`\`\`json\n${lastErrorOutput}\n\`\`\``,
-                    },
-                    ...messages.slice(taskIdx + 1), // 保留尾部的 SPECIAL NOTE + 承诺/收尾(若开启)
-                ];
-            }
-            else {
-                // 兜底(内置形状必有任务 user, 正常情况下走不到这里; 留着以防以后改形状时越界)
-                attemptMessages = [
-                    ...messages,
-                    {
-                        role: 'user',
-                        content: `【上次输出不符合要求, 请根据错误原因修正后重新输出】\n错误原因: ${lastErrorReason}\n上次输出(仅 JSON 部分):\n\`\`\`json\n${lastErrorOutput}\n\`\`\``,
-                    },
-                ];
-            }
-        }
-        // 预填充(prefill): 开启时在最后追加一条 assistant 消息 '{', 引导模型直接从 JSON 开头开始输出
-        // (提示词要求"只输出 JSON、不用 markdown 围栏", 所以 prefill 直接用 { 开头而非 ```json)。
-        // - 末位是 user(无破限): '{' 作为唯一尾 assistant;
-        // - 末位是 assistant 承诺(破限): 连续两条 assistant——OpenAI 兼容接口合法(Anthropic 原生
-        //   Messages API 会自动合并, 效果等同"承诺 + 起手"一条), 模型从承诺与 { 的衔接处开始续写。
-        // 注意: prefill 的 { 只作为提示发给模型, 模型不会在输出里重复它 → 返回后需把 { 拼回开头,
-        // 否则 parseModelResponse 的 indexOf('{') 会切到"剧情时间"的子对象导致 JSON 不完整。
-        const last = attemptMessages[attemptMessages.length - 1];
-        const prefill = 预填充 && attemptMessages.length > 0 && (last.role === 'user' || last.role === 'assistant')
-            ? '{\n'
-            : '';
-        if (prefill)
-            attemptMessages.push({ role: 'assistant', content: prefill });
-        try {
-            const requestStart = Date.now();
-            content = await 发请求(attemptMessages, { signal: abortSignal });
-            请求耗时 += Date.now() - requestStart;
-            请求次数 += 1;
-            // 拼回 prefill 的 { (仅当模型输出不是以 { 开头, 避免双 { )
-            if (prefill && String(content).trim().charAt(0) !== '{')
-                content = prefill + content;
-            记日志({ time: Date.now(), response: content });
-        }
-        catch (error) {
-            // 接口调用失败(网络/网关/超时/政策拦): 没有有效输出可回喂, 等待加长后直接重试
-            if (abortSignal.aborted)
-                throw Error('用户已中断本次更新', { cause: error });
-            parsed = null;
-            parseError = error instanceof Error ? error : Error(String(error));
-            lastErrorReason = parseError.message;
-            lastErrorOutput = '';
-            记日志({ time: Date.now(), error: `接口调用失败(第 ${attempt}/3 次): ${parseError.message}` });
-            if (attempt < 3 && !abortSignal.aborted) {
-                报进度(`接口调用失败，正在重试（${attempt}/3）…`);
-                console.warn(`[彼方] 接口调用失败(第 ${attempt} 次), 正在重试…:`, parseError.message);
-                await new Promise(resolve => setTimeout(resolve, 2000 * attempt));
-            }
-            continue;
-        }
-        try {
-            // 解析与校验放在同一处: 这两类失败都"有输出可以回喂", 统一走下面的错误反馈重试
-            parsed = parseModelResponse(content);
+    const { 现有卡, 名单, 玩家名, 自动建档 } = params;
+    return await 共用请求并校验({
+        messages: params.messages,
+        锚点: params.锚点,
+        预填充: params.预填充,
+        signal: params.signal,
+        发请求: params.发请求,
+        记日志: params.记日志,
+        报进度: params.报进度,
+        解析: content => parseModelResponse(content),
+        校验: (parsed) => {
             // 自动建档关闭: 构造将被跳过的新角色名单(未追踪且不在已有卡中), 校验时不按新建口径要求全字段
             let skipCheckNames: Set<string> | null = null;
             if (自动建档 === false) {
@@ -412,38 +343,20 @@ async function 请求并校验(params: 请求参数): Promise<{ parsed: any; 请
                 }
             }
             validateParsedFormat(parsed, 现有卡 ?? {}, skipCheckNames);
-            break;
-        }
-        catch (error) {
-            parsed = null;
-            parseError = error instanceof Error ? error : Error(String(error));
-            lastErrorReason = parseError.message;
-            // 每次失败都记录原因到日志页, 便于排查(不再等 3 次都失败才输出)
-            记日志({ time: Date.now(), error: `更新失败(第 ${attempt}/3 次): ${parseError.message}` });
-            // 只回喂 JSON 部分, 不带思维链/正文等杂质
-            const jsonSnippet = extractJsonSnippet(content);
-            lastErrorOutput = jsonSnippet
-                ? jsonSnippet.length > 3000
-                    ? `${jsonSnippet.slice(0, 3000)}\n…(过长已截断)`
-                    : jsonSnippet
-                : '（上次输出中未找到可解析的 JSON 结构）';
-            if (attempt < 3 && !abortSignal.aborted) {
-                const errMsg = parseError.message ?? '';
-                const reason = errMsg.includes('JSON') || errMsg.includes('解析')
-                    ? 'AI 返回的 JSON 不完整'
-                    : errMsg.includes('格式不正确')
-                        ? 'AI 输出格式不符合要求(如剧情时间格式)'
-                        : 'AI 返回格式不符合要求';
-                报进度(`正在重试（${attempt}/3）：${reason}`);
-                console.warn(`[彼方] ${reason}(第 ${attempt} 次)，正在重试…`);
-                await new Promise(resolve => setTimeout(resolve, 600));
-            }
-        }
-    }
-    if (parsed === null) {
-        throw parseError ?? Error('解析失败');
-    }
-    return { parsed, 请求耗时, 请求次数 };
+            return parsed;
+        },
+        取JSON片段: content => extractJsonSnippet(content),
+        名字: '彼方',
+        结构失败标签: '更新失败',
+        中断文案: '用户已中断本次更新',
+        取重试理由: (error) => {
+            const errMsg = error.message ?? '';
+            return errMsg.includes('JSON') || errMsg.includes('解析')
+                ? 'AI 返回的 JSON 不完整'
+                : errMsg.includes('格式不正确')
+                    ? 'AI 输出格式不符合要求(如剧情时间格式)'
+                    : 'AI 返回格式不符合要求';
+        },
+    });
 }
-
 export { isReservedTopLevelKey, THINKING_FIELD_KEYS, 请求并校验 };
