@@ -1,30 +1,22 @@
-// 已从酒馆导出的打包产物恢复 (webpack 编译形态还原)
-import * as _api__WEBPACK_IMPORTED_MODULE_1__ from './api';
-import * as _settings__WEBPACK_IMPORTED_MODULE_3__ from './settings';
-import * as _worldbook_inject__WEBPACK_IMPORTED_MODULE_5__ from './worldbook-inject';
+// 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
+import { chatCompletion } from './api';
+import { getSettings } from './settings';
+import { syncNpcStatesWorldbook } from './worldbook-inject';
 import { writeStateSnapshot } from './快照';
 import { useStateStore } from './数据仓';
 import { useDebugStore } from './日志仓';
 import { useUpdatingStore } from './任务中断';
-import * as _toast__WEBPACK_IMPORTED_MODULE_7__ from './toast';
+import { toastError, toastInfo, toastSuccess, toastWarning } from './toast';
 import { useHost } from './host';
 import { THINKING_FIELD_KEYS, 请求并校验 } from './模型请求';
 import { applyUpdate, extractCurrentTimeHint, maskBaseUrl } from './应用更新';
-
 import { 收集本轮输入 } from './更新输入';
-/* harmony export */ 
 
 // 这里属于流水线顶层(收尾时要写世界书), 按边界处理, 所以自己构造一次真实宿主。
 // 待 updateNpcStates 拆分(候选2)后, 宿主应从调用方传进来, 而不是在本文件里自己造。
 // 当前宿主: 在 updateNpcStates 开头重新取一次(用例会替换它, 见 host.ts 的 injectHostForTest)。
 // 刻意不在模块加载时抓死: 那样用例注入的假平台到不了这条流水线, 整条更新流程就只能靠真酒馆验证。
 let host = useHost();
-
-
-
-
-
-
 
 let isUpdating = false;
 const TIME_JUMP_PATTERN = /(一夜之间|第二天一早|第二天|次日|隔天|几天后|数天后|十几天后|一两周后|两周后|几周后|数周后|几个星期后|几个礼拜后|一个月后|两个月后|数月后|几个月后|半年后|一年后|两年后|几年后|数年后|多年后|若干年后)/;
@@ -165,8 +157,8 @@ function getAllAssistantMessages() {
 function getAllAssistantMessagesCached() {
     return getAllAssistantMessages();
 }
-/** 脱敏接口地址(隐藏地址中可能携带的 token/key 查询参数), 用于错误日志 */
-async function updateNpcStates(force = false) {    if (isUpdating) {
+async function updateNpcStates(force = false) {
+    if (isUpdating) {
         console.warn('[彼方] 上一次更新尚未完成, 已跳过本次更新');
         return;
     }
@@ -180,10 +172,10 @@ async function updateNpcStates(force = false) {    if (isUpdating) {
     let parsed = null;
     let parseError = null;
     try {
-        const settings = _settings__WEBPACK_IMPORTED_MODULE_3__.getSettings();
+        const settings = getSettings();
         const { 地址, 模型 } = settings.接口;
         if (!地址 || !模型) {
-            _toast__WEBPACK_IMPORTED_MODULE_7__.toastWarning('彼方: 尚未配置接口地址或模型, 请先在设置中完成配置', '彼方');
+            toastWarning('彼方: 尚未配置接口地址或模型, 请先在设置中完成配置', '彼方');
             return;
         }
         const 输入 = await 收集本轮输入({
@@ -195,9 +187,7 @@ async function updateNpcStates(force = false) {    if (isUpdating) {
             },
         });
         if (!输入) return; // 前置条件不满足(如没有可用的 AI 回复): 上面已经提示过用户
-        const { 
-锚点, data, messages, playerName, recent, timeJump
- } = 输入;
+        const { 锚点, data, messages, playerName, recent, timeJump } = 输入;
         let 请求结果;
         try {
             // 取模型输出这一段已独立成模块(模型请求.ts): 发请求 → 解析 → 校验, 不合格就带着错误原因重试
@@ -210,7 +200,7 @@ async function updateNpcStates(force = false) {    if (isUpdating) {
                 玩家名: playerName,
                 自动建档: settings.更新.自动建档 !== false,
                 signal: abortSignal,
-                发请求: _api__WEBPACK_IMPORTED_MODULE_1__.chatCompletion,
+                发请求: chatCompletion,
                 记日志: (partial) => debugStore.record(partial),
                 报进度: (文字) => { updatingStore.message = 文字; },
             });
@@ -289,7 +279,7 @@ async function updateNpcStates(force = false) {    if (isUpdating) {
         }
         // 同步幕后状态到角色卡主世界书(蓝灯常驻条目), 供主AI与数据库剧情推进读取
         if (settings.更新.注入世界书条目) {
-            _worldbook_inject__WEBPACK_IMPORTED_MODULE_5__.syncNpcStatesWorldbook(host, newData, true).catch(error => {
+            syncNpcStatesWorldbook(host, newData, true).catch(error => {
                 console.error('[彼方] 同步世界书条目失败:', error);
             });
         }
@@ -297,7 +287,7 @@ async function updateNpcStates(force = false) {    if (isUpdating) {
         const secs = (ms) => (ms / 1000).toFixed(1);
         console.info(`[彼方] 本次更新总耗时 ${secs(Date.now() - timing.start)}s = 前置 ${secs(timing.前置)}s + 世界书 ${secs(timing.世界书)}s + 接口请求 ${secs(timing.请求)}s(${timing.请求次数}次) + 解析应用 ${secs(timing.解析应用)}s + 收尾 ${secs(timing.收尾)}s`);
         console.info(`[彼方] 幕后NPC状态更新完成: ${updatedNpcs.join('、') || '(本次无重要NPC变化)'}${removedNpcs.length > 0 ? `; 已移除: ${removedNpcs.join('、')}` : ''}`);
-        _toast__WEBPACK_IMPORTED_MODULE_7__.toastSuccess(updatedNpcs.length > 0
+        toastSuccess(updatedNpcs.length > 0
             ? `彼方: 已更新 ${updatedNpcs.length} 个NPC的幕后状态${removedNpcs.length > 0 ? `，移除 ${removedNpcs.length} 个NPC` : ''}`
             : removedNpcs.length > 0
                 ? `彼方: 已移除 ${removedNpcs.length} 个NPC`
@@ -308,11 +298,11 @@ async function updateNpcStates(force = false) {    if (isUpdating) {
             const message = '更新已中断';
             console.warn(`[彼方] 更新被中断: 已进行 ${((Date.now() - timing.start) / 1000).toFixed(1)}s(接口请求 ${timing.请求次数} 次, 累计 ${((timing.请求) / 1000).toFixed(1)}s)`);
             debugStore.record({ time: Date.now(), error: message });
-            _toast__WEBPACK_IMPORTED_MODULE_7__.toastInfo(`彼方: ${message}`, '彼方');
+            toastInfo(`彼方: ${message}`, '彼方');
             return;
         }
         console.error('[彼方] 更新失败:', error);
-        const settingsNow = _settings__WEBPACK_IMPORTED_MODULE_3__.getSettings();
+        const settingsNow = getSettings();
         const stack = error instanceof Error ? (error.stack ?? '') : '';
         const message = error instanceof Error ? error.message : String(error);
         const detail = [
@@ -324,7 +314,7 @@ async function updateNpcStates(force = false) {    if (isUpdating) {
             ...(stack ? ['堆栈:', stack] : []),
         ].join('\n');
         debugStore.record({ time: Date.now(), error: detail });
-        _toast__WEBPACK_IMPORTED_MODULE_7__.toastError(message, '彼方更新失败');
+        toastError(message, '彼方更新失败');
     }
     finally {
         isUpdating = false;

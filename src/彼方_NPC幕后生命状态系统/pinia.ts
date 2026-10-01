@@ -1,7 +1,5 @@
-// 已从酒馆导出的打包产物恢复 (webpack 编译形态还原)
-import * as pinia__WEBPACK_IMPORTED_MODULE_0__ from 'pinia';
+// 彼方 · 脚本入口(index.ts)与悬浮球界面共用的 pinia 实例: setActivePinia 激活的就是它。
+// 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)。
+import { createPinia } from 'pinia';
 
-/* harmony export */ 
-const pinia = pinia__WEBPACK_IMPORTED_MODULE_0__.createPinia();
-
-export { pinia };
+export const pinia = createPinia();

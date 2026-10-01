@@ -1,10 +1,8 @@
-// 已从酒馆导出的打包产物恢复 (webpack 编译形态还原)
 import type { Host } from './host';
-import * as _prompts__WEBPACK_IMPORTED_MODULE_0__ from './prompts';
+// 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
+import { buildInjectionPrompt } from './prompts';
 import { BIFANG_WORLDBOOK_ENTRY_NAME, isBifangEntry, sanitizeBifangEntryName } from './彼方条目';
 import { useMainPromptStore } from './日志仓';
-
-/* harmony export */ 
 
 /**
  * 把彼方幕后状态写入**当前角色卡主世界书**里的常驻条目(蓝灯常开):
@@ -30,7 +28,7 @@ async function syncNpcStatesWorldbook(host: Pick<Host, 'worldbook' | 'toast'>, d
             await host.worldbook.remove(wbName, isBifangEntry);
             return;
         }
-        const content = _prompts__WEBPACK_IMPORTED_MODULE_0__.buildInjectionPrompt(npcEntries);
+        const content = buildInjectionPrompt(npcEntries);
         // 日志页「彼方写入世界书的内容」记录: 与写入条目的内容完全一致(同一个渲染函数),
         // 主AI 以及任何读取该世界书的环节读到的就是这一段
         useMainPromptStore().record(content);

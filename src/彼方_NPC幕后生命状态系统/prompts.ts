@@ -1,4 +1,3 @@
-// 已从酒馆导出的打包产物恢复 (webpack 编译形态还原)
 import doupoText from './gemini37f_doupo.txt?raw';
 import referenceText from './gemini37f_reference.txt?raw';
 import { useHost } from './host';

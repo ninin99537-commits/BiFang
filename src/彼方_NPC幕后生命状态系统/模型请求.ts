@@ -4,13 +4,13 @@
 //  - 接口出错(网络/网关/超时/政策拦): 没有有效输出可回喂, 只等更久(2 秒 × 第几次)后重试;
 //  - 解析/校验失败: 把上次输出里的 JSON 片段连同错误原因回喂给 AI, 让它自己改(等 0.6 秒后重试)。
 // 发请求、写日志、报进度都由调用方传进来, 所以这一整套重试协议不装酒馆也能单独跑。
-import * as json5__WEBPACK_IMPORTED_MODULE_0__ from 'json5';
+// 依赖按实际用到的符号具名导入/默认导入(形态守卫见 tests/no-bundle-artifacts.test.ts)。
+// json5 走默认导入: 原先是从命名空间取 ["default"], 默认导入编译出的取值路径与它完全一致。
+import JSON5 from 'json5';
 import { CARD_FIELDS } from './卡字段';
 import { PHYSIO_FIELDS } from './生理规则';
 import { parseStoryTime } from './剧情时间';
 import { 请求并校验 as 共用请求并校验 } from '../共用/模型往返';
-
-/* harmony export */
 
 /** 模型可能把内部思考当成顶层字段输出的键名(非彼方数据): 解析兜底时剥离, 也作为保留键不参与 NPC 建档 */
 const THINKING_FIELD_KEYS = ['静默思考流程', '思考流程', '思考过程', '思维链', '推理过程'];
@@ -84,7 +84,7 @@ function parseModelResponse(content) {
         // 剥离/修复后必须仍是彼方 JSON(含数据键), 否则说明切坏了, 换下一候选
         if (!candidate.includes('"剧情时间"') && !candidate.includes("'剧情时间'") && !candidate.includes('"移除NPC"'))
             continue;
-        for (const parse of [(t) => JSON.parse(t), (t) => json5__WEBPACK_IMPORTED_MODULE_0__["default"].parse(t)]) {
+        for (const parse of [(t) => JSON.parse(t), (t) => JSON5.parse(t)]) {
             try {
                 return parse(candidate);
             }

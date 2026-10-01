@@ -8,8 +8,9 @@
 // - 状态本体(名单/NPC卡/统计/剧情时间)整体存在**楼层变量**里, 每次更新写入本次
 //   分析的最后一条楼层。快照随楼层存亡——删除楼层/重roll(新swipe页没有快照)时状态
 //   自动回退到更早楼层的快照, 因此不再需要任何自建的回滚/检测逻辑。
-import * as klona__WEBPACK_IMPORTED_MODULE_0__ from 'klona';
-import * as _toast__WEBPACK_IMPORTED_MODULE_3__ from './toast';
+// 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
+import { klona } from 'klona';
+import { toastError } from './toast';
 import { useHost } from './host';
 
 const STORAGE_KEY = '彼方';
@@ -32,13 +33,13 @@ function saveMeta(meta) {
     try {
         // 整体赋值该键(避免 insertOrAssign 深合并残留旧字段), 其他聊天变量键不动
         useHost().vars.update(variables => {
-            variables[STORAGE_KEY] = klona__WEBPACK_IMPORTED_MODULE_0__.klona(meta);
+            variables[STORAGE_KEY] = klona(meta);
             return variables;
         }, { type: 'chat' });
     }
     catch (error) {
         console.error('[彼方] 保存元数据失败:', error);
-        _toast__WEBPACK_IMPORTED_MODULE_3__.toastError(`彼方: 保存元数据失败 ${error instanceof Error ? error.message : String(error)}`, '彼方');
+        toastError(`彼方: 保存元数据失败 ${error instanceof Error ? error.message : String(error)}`, '彼方');
     }
 }
 function loadMeta() {
@@ -86,7 +87,7 @@ function migrateLegacyData(raw) {
     // 兜底备份: 迁移前后无论发生什么(部分失败后被新快照覆盖等), 原始旧数据都有一份完整副本可找回
     try {
         useHost().vars.update(variables => {
-            variables['彼方_旧版备份'] = klona__WEBPACK_IMPORTED_MODULE_0__.klona(raw);
+            variables['彼方_旧版备份'] = klona(raw);
             return variables;
         }, { type: 'chat' });
     }
@@ -298,7 +299,7 @@ function buildSnapshotPayload(data, anchorFloor, processedFloor) {
         楼层hash: hashString(String(message.message ?? '')),
         处理到楼层: processedFloor,
         名单: [...(data.名单 ?? [])],
-        NPC: klona__WEBPACK_IMPORTED_MODULE_0__.klona(cleanedNpc),
+        NPC: klona(cleanedNpc),
         统计: { 更新次数: data.统计?.更新次数 ?? 0, 最后更新: data.统计?.最后更新 ?? 0 },
         剧情时间: data.剧情时间 ?? '',
     };
@@ -362,7 +363,7 @@ function saveData(data) {
     }
     catch (error) {
         console.error('[彼方] 保存NPC状态失败:', error);
-        _toast__WEBPACK_IMPORTED_MODULE_3__.toastError(`彼方: 保存失败 ${error instanceof Error ? error.message : String(error)}`, '彼方');
+        toastError(`彼方: 保存失败 ${error instanceof Error ? error.message : String(error)}`, '彼方');
     }
 }
 /** 单独更新清空层(不动快照): 清空层自适应下移等场景使用 */

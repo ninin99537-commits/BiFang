@@ -9,6 +9,8 @@ import { applyConceptionCheck, CYCLE_STAGE_INFLUENCE, correctPhysioByStoryTime, 
 import { fmtStoryTime, parseStoryTime, parseStoryTimeRange, withStoryDate } from './剧情时间';
 import { isReservedTopLevelKey } from './模型请求';
 
+/** 脱敏接口地址(隐藏地址中可能携带的 token/key 查询参数), 用于错误日志。
+ *  这行注释原先落在 update.ts 的 updateNpcStates 头上(从导出脚本还原时串了行, 文档挂到了它不描述的函数上), 这里归位。 */
 function maskBaseUrl(url) {
     const value = String(url || '').trim();
     return value.replace(/([?&](?:key|token|api_key|apiKey|apikey)=)[^&]*/gi, '$1***');

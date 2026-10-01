@@ -1,13 +1,11 @@
-// 已从酒馆导出的打包产物恢复 (webpack 编译形态还原)
-//
 // 接口调用只走一条路: 请求交给酒馆服务器转发(酒馆助手接口的 getModelList / generateRaw /
 // stopGenerationById, 都收在 host.ts 里)。以前还有一条"浏览器直接 fetch 接口"的支路,
 // 需要自己处理 CORS、自己写流式 SSE 解析、自己按 token 数缩放超时——两条路行为不一致
 // (报错文案、超时、中断时机都不同), 已于 2026-09 删除。
-import * as _settings__WEBPACK_IMPORTED_MODULE_0__ from './settings';
+// 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
+import { getSettings } from './settings';
 import { useHost } from './host';
 
-/* harmony export */ 
 function normalizeBaseUrl(url) {
     const trimmed = (url ?? '').trim().replace(/\/+$/, '');
     if (!trimmed)
@@ -16,7 +14,7 @@ function normalizeBaseUrl(url) {
 }
 /** 请求上下文(脱敏), 附加到错误信息方便排查 */
 function requestContext() {
-    const { 模型, 最大token } = _settings__WEBPACK_IMPORTED_MODULE_0__.getSettings().接口;
+    const { 模型, 最大token } = getSettings().接口;
     return `模型=${模型 || '(未选)'}, 最大token=${最大token}`;
 }
 /** 检测接口/模型的成人内容政策拦截(如 Google Gemini 的 Prohibited Use policy), 返回友好提示 */
@@ -26,7 +24,7 @@ function policyBlockHint(message) {
         : '';
 }
 async function fetchModelList() {
-    const { 地址, 密钥 } = _settings__WEBPACK_IMPORTED_MODULE_0__.getSettings().接口;
+    const { 地址, 密钥 } = getSettings().接口;
     const base = normalizeBaseUrl(地址);
     if (!base)
         throw Error('请先填写接口地址');
@@ -52,7 +50,7 @@ async function chatCompletion(messages, options) {
     }
 }
 async function chatCompletionInner(messages, options) {
-    const baseCfg = _settings__WEBPACK_IMPORTED_MODULE_0__.getSettings().接口;
+    const baseCfg = getSettings().接口;
     const 地址 = options?.接口?.地址 ?? baseCfg.地址;
     const 密钥 = options?.接口?.密钥 ?? baseCfg.密钥;
     const 模型 = options?.接口?.模型 ?? baseCfg.模型;

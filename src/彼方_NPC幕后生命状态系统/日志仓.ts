@@ -3,11 +3,12 @@
 // - useDebugStore: 最近一次更新的请求 / 响应 / 错误 / 更新了哪些 NPC / 移除了哪些
 // - useMainPromptStore: 最近一次写进世界书的幕后状态内容(与条目内容逐字相同)
 // - useConsoleStore + captureConsole: 彼方自己的 console 输出(不改变原始输出, 记录失败也不影响打印)
-import * as pinia__WEBPACK_IMPORTED_MODULE_1__ from 'pinia';
-import * as vue__WEBPACK_IMPORTED_MODULE_2__ from 'vue';
+// 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
+import { defineStore } from 'pinia';
+import { ref } from 'vue';
 
-const useDebugStore = pinia__WEBPACK_IMPORTED_MODULE_1__.defineStore('bifang-debug', () => {
-    const log = vue__WEBPACK_IMPORTED_MODULE_2__.ref(null);
+const useDebugStore = defineStore('bifang-debug', () => {
+    const log = ref(null);
     function record(partial) {
         const base = {
             time: 0,
@@ -28,10 +29,10 @@ const useDebugStore = pinia__WEBPACK_IMPORTED_MODULE_1__.defineStore('bifang-deb
     return { log, record, clear };
 });
 /** 记录最近一次彼方写入世界书条目(供主AI及任何读取该世界书的环节读取)的幕后状态内容, 供日志页查看 */
-const useMainPromptStore = pinia__WEBPACK_IMPORTED_MODULE_1__.defineStore('bifang-main-prompt', () => {
-    const prompt = vue__WEBPACK_IMPORTED_MODULE_2__.ref('');
-    const time = vue__WEBPACK_IMPORTED_MODULE_2__.ref(0);
-    const count = vue__WEBPACK_IMPORTED_MODULE_2__.ref(0);
+const useMainPromptStore = defineStore('bifang-main-prompt', () => {
+    const prompt = ref('');
+    const time = ref(0);
+    const count = ref(0);
     function record(text) {
         prompt.value = text;
         time.value = Date.now();
@@ -40,8 +41,8 @@ const useMainPromptStore = pinia__WEBPACK_IMPORTED_MODULE_1__.defineStore('bifan
     return { prompt, time, count, record };
 });
 /** 捕获彼方脚本自身的 console 输出，让日志页可见（不再只进控制台） */
-const useConsoleStore = pinia__WEBPACK_IMPORTED_MODULE_1__.defineStore('bifang-console', () => {
-    const lines = vue__WEBPACK_IMPORTED_MODULE_2__.ref([]);
+const useConsoleStore = defineStore('bifang-console', () => {
+    const lines = ref([]);
     function record(type, ...args) {
         const text = args
             .map(a => {

@@ -2,13 +2,14 @@
 //
 // 支持多个任务并发: 每个任务独立中断, 互不干扰。界面的"更新中"弹窗与取消按钮都读它;
 // update.ts 用它避免"自动重试"在解析进行中重复请求/误中断。
-import * as pinia__WEBPACK_IMPORTED_MODULE_1__ from 'pinia';
-import * as vue__WEBPACK_IMPORTED_MODULE_2__ from 'vue';
+// 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
+import { defineStore } from 'pinia';
+import { ref } from 'vue';
 
 /** 彼方后台任务状态与中断控制（供界面显示弹窗、取消请求）。支持多个任务并发: 每个任务独立中断, 互不干扰。 */
-const useUpdatingStore = pinia__WEBPACK_IMPORTED_MODULE_1__.defineStore('bifang-updating', () => {
-    const active = vue__WEBPACK_IMPORTED_MODULE_2__.ref(false);
-    const message = vue__WEBPACK_IMPORTED_MODULE_2__.ref('');
+const useUpdatingStore = defineStore('bifang-updating', () => {
+    const active = ref(false);
+    const message = ref('');
     /** 进行中的任务: 任务名 → 独立的 AbortController(各自可独立取消, 不会误中断其他任务) */
     const tasks = new Map();
     const DEFAULT_TASK = '幕后';
