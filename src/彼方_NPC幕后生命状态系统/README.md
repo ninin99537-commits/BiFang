@@ -42,6 +42,23 @@
 2. 在酒馆助手中新建脚本, 将打包后的 `index.js` 内容填入并启用。
 3. 也可以把脚本文件夹放进 `src/彼方_NPC幕后生命状态系统` 后使用本项目的实时监听 / 热重载功能。
 
+## 发布到 GitHub（重要 · 别忘了）
+
+本项目发布到 **`https://github.com/ninin99537-commits/BiFang`**（别名 **BiFang**）。用户通过 jsdelivr 直接 import 该仓库的发行产物：
+
+```
+import 'https://cdn.jsdelivr.net/gh/ninin99537-commits/BiFang@master/dist/彼方_NPC幕后生命状态系统/index.js';
+```
+
+**上传前**：
+1. 改动源码（`src/彼方_NPC幕后生命状态系统/**`，涉及共用时连 `src/共用/**` 一起）。
+2. `pnpm build`，确认 `dist/彼方_NPC幕后生命状态系统/index.js`（+ `.js.map`）重新生成、含你的改动。
+3. 提交内容 = **源码改动 + 重新构建的 `dist/彼方_NPC幕后生命状态系统/index.js`**（这个仓库 git 跟踪 dist，jsdelivr 导入的正是它）。
+4. 推送到 `BiFang` 的 `master`（fast-forward，一格一提交）。
+
+> ⚠️ 同名仓库 `YanHuo`（`ninin99537-commits/YanHuo`）里也有本插件源码——那里是烟火的主场，
+> 彼方的「官方发布仓库」是 `BiFang`，上传彼方改动以 BiFang 为准。
+
 ## 配置
 
 在酒馆网页中会出现一个可拖动的**悬浮球（彼方）**，点击后从页面中央弹出精美的前端面板，包含全部功能：
