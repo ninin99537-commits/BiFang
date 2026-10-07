@@ -56,6 +56,10 @@ import 'https://cdn.jsdelivr.net/gh/ninin99537-commits/BiFang@master/dist/彼方
 3. 提交内容 = **源码改动 + 重新构建的 `dist/彼方_NPC幕后生命状态系统/index.js`**（这个仓库 git 跟踪 dist，jsdelivr 导入的正是它）。
 4. 推送到 `BiFang` 的 `master`（fast-forward，一格一提交）。
 
+> 🤖 该仓库有 `[bot] bundle` 工作流：推源后机器人会自动重建 dist 并补一个提交。所以即使
+> 偶尔漏提交 dist，机器人也会兜底重建；但**仍建议手动提交最新 dist**，避免中间态。
+> 推送被拒（non-fast-forward）时，多半是机器人刚补过一行：`git rebase origin/master` 后再推。
+
 > ⚠️ 同名仓库 `YanHuo`（`ninin99537-commits/YanHuo`）里也有本插件源码——那里是烟火的主场，
 > 彼方的「官方发布仓库」是 `BiFang`，上传彼方改动以 BiFang 为准。
 
