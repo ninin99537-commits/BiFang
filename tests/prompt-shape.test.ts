@@ -1,8 +1,9 @@
-// 彼方 · 提示词形状(候选3) —— 四个开关组合出的消息形状, 以及形状自己声明的"任务在哪"
+// 彼方 · 提示词形状 —— 四个开关组合出的消息形状, 以及"任务"那条 user 落在哪里
 //
-// 以前定位"任务 user 消息"是靠比对一句硬编码的收尾文案(update.ts), 开关组合一变就可能接错地方。
-// 现在由 prompts.ts 的 buildUpdateMessages 返回 { messages, 锚点 }, 这里就是那条约定的验收线:
-// 不管破限/预填充/头部填充怎么组合, 锚点都必须指向真正写着任务的那条 user 消息。
+// 不管破限/预填充/头部填充怎么组合, 任务消息都必须还在它该在的位置(收尾 user 不是任务,
+// 头部填充那条 user 也不是)。以前这里断言的是 buildUpdateMessages 返回的 { messages, 锚点 };
+// 2026-10-09 去掉重试回喂后锚点没了(它的唯一用途就是把反馈接到任务那条上), 改成直接从消息
+// 内容里认任务那条 —— 断言的是同一件事, 而且不再依赖一个只为回喂存在的返回值。
 import { buildUpdateMessages } from '../src/彼方_NPC幕后生命状态系统/prompts';
 
 let pass = 0;
@@ -46,69 +47,66 @@ const 造 = (覆盖: Record<string, unknown> = {}) => buildUpdateMessages({ ...�
 const 角色序列 = (messages: { role: string }[]) => messages.map(m => m.role);
 /** 任务消息的特征: 内置任务正文里有这句 */
 const 是任务 = (messages: { content: string }[], i: number) => !!messages[i] && messages[i].content.includes('请根据最近剧情、最近正文回复和更新原则');
+/** 任务那条 user 的下标(-1 = 没找到) */
+const 任务下标 = (messages: { role: string; content: string }[]) => messages.findIndex(m => m.role === 'user' && 是任务([m], 0));
 const 承诺特征 = '我彼方向User保证';
 
 console.log('\n[1] 四个开关全关: system(主提示词) → system(用户输入) → user(任务)');
 {
-  const { messages, 锚点 } = 造();
+  const { messages } = 造();
   check('角色序列', 角色序列(messages), ['system', 'system', 'user']);
-  check('锚点指向任务', 锚点.任务下标, 2);
-  ok('锚点确实是任务那条', 是任务(messages, 锚点.任务下标));
+  check('任务在下标 2', 任务下标(messages), 2);
 }
 
-console.log('\n[2] 破限开 + 预填充关 → 尾部是 收尾user(重试反馈必须接在任务上, 不能接在尾部)');
+console.log('\n[2] 破限开 + 预填充关 → 尾部是 收尾user(它不是任务)');
 {
-  const { messages, 锚点 } = 造({ 破限: true });
+  const { messages } = 造({ 破限: true });
   check('角色序列', 角色序列(messages), ['system', 'system', 'user', 'system', 'assistant', 'user']);
-  check('锚点指向任务(不是最后那条收尾 user)', 锚点.任务下标, 2);
-  ok('锚点确实是任务那条', 是任务(messages, 锚点.任务下标));
-  check('尾条不是任务', 锚点.任务下标 === messages.length - 1, false);
+  check('任务在下标 2(不是最后那条收尾 user)', 任务下标(messages), 2);
+  check('尾条不是任务', 任务下标(messages) === messages.length - 1, false);
   ok('承诺在消息里', messages.some(m => m.content.includes(承诺特征)));
 }
 
 console.log('\n[3] 破限开 + 预填充开 → 尾部是 assistant(承诺), 没有收尾 user');
 {
-  const { messages, 锚点 } = 造({ 破限: true, 预填充: true });
+  const { messages } = 造({ 破限: true, 预填充: true });
   check('角色序列', 角色序列(messages), ['system', 'system', 'user', 'system', 'assistant']);
-  check('锚点指向任务', 锚点.任务下标, 2);
-  ok('锚点确实是任务那条', 是任务(messages, 锚点.任务下标));
+  check('任务在下标 2', 任务下标(messages), 2);
 }
 
-console.log('\n[4] 头部填充开(第一条是 user) → 锚点不能指到那条填充上');
+console.log('\n[4] 头部填充开(第一条是 user) → 任务不能认成那条填充');
 {
-  const { messages, 锚点 } = 造({ 头部填充: true });
+  const { messages } = 造({ 头部填充: true });
   check('角色序列', 角色序列(messages)[0], 'user');
-  check('锚点指向任务(跳过头部填充那条 user)', 锚点.任务下标, 3);
-  ok('锚点确实是任务那条', 是任务(messages, 锚点.任务下标));
+  check('任务在下标 3(跳过头部填充那条 user)', 任务下标(messages), 3);
   ok('第一条不是任务', 是任务(messages, 0) === false);
   const 自定义文本 = 造({ 头部填充: true, 头部填充文本: '这是自定义的头部文本' });
   check('自定义头部文本被用上', 自定义文本.messages[0].content, '这是自定义的头部文本');
 }
 
-console.log('\n[5] 头部填充 + 破限 + 预填充全开 → 锚点仍然只在任务上');
+console.log('\n[5] 头部填充 + 破限 + 预填充全开 → 任务仍然只在它自己那条上');
 {
-  const { messages, 锚点 } = 造({ 头部填充: true, 破限: true, 预填充: true });
+  const { messages } = 造({ 头部填充: true, 破限: true, 预填充: true });
   check('角色序列', 角色序列(messages), ['user', 'system', 'system', 'user', 'system', 'assistant']);
-  check('锚点指向任务', 锚点.任务下标, 3);
-  ok('锚点确实是任务那条', 是任务(messages, 锚点.任务下标));
+  check('任务在下标 3', 任务下标(messages), 3);
 }
 
-console.log('\n[6] 防截断: 只影响主 system 的长度, 不影响锚点');
+console.log('\n[6] 防截断: 只影响主 system 的长度, 不影响任务的位置');
 {
   const 关 = 造();
   const 开 = 造({ 防截断: true });
   ok('防截断开启后主 system 变长(缝进了免责声明段)', 开.messages[0].content.length > 关.messages[0].content.length);
   check('角色序列不变', 角色序列(开.messages), 角色序列(关.messages));
-  check('锚点不变', 开.锚点.任务下标, 关.锚点.任务下标);
+  check('任务下标不变', 任务下标(开.messages), 任务下标(关.messages));
 }
 
-console.log('\n[7] 生理监测: 只影响主提示词内容, 不影响锚点');
+console.log('\n[7] 生理监测: 只影响主提示词内容, 不影响任务的位置');
 {
   const 关 = 造();
   const 开 = 造({ physioEnabled: true });
   check('关闭时不出现生理段', 关.messages[0].content.includes('生理周期日期'), false);
   check('开启时出现生理段', 开.messages[0].content.includes('生理周期日期'), true);
-  check('锚点不变', 开.锚点.任务下标, 关.锚点.任务下标);
+  check('任务下标不变', 任务下标(开.messages), 任务下标(关.messages));
 }
 
 console.log('\n[8] 破限段只在任务之后出现, 不在主 system 里');

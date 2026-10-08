@@ -3,7 +3,7 @@
 // 更新主流程以前一条用例都没有: 它要聊天楼层、变量表、世界书、模型接口四样东西齐备才能跑,
 // 所以拆它之前先在这里把"能观察到的行为"钉住:
 //   成功一轮 → 状态落进聊天变量与新楼层快照、提示文案、统计;
-//   模型第一次输出坏 JSON → 带着错误原因重试一次就成功;
+//   模型第一次输出坏 JSON → 原样重试一次就成功;
 //   三次都坏 → 报错提示, 且**数据一个字段都不许动**;
 //   接口没配置 / 没有可分析的回复 → 提前退出, 一次模型都不调;
 //   关闭自动建档 → 新角色不建档, 也不计入"已更新"。
@@ -219,12 +219,12 @@ console.log('\n[2] 接口出错(网络/超时) → 自动重试, 第二次成功
   await updateNpcStates(true);
 
   check('调了两次模型', p.记录.raw.length, 2);
-  ok('接口出错没有可回喂的输出, 第二次请求不带"上次输出"那段', !JSON.stringify(p.记录.raw[1] ?? '').includes('上次输出不符合要求'));
+  ok('接口出错后重试: 第二次请求里没有任何回喂内容', !JSON.stringify(p.记录.raw[1] ?? '').includes('上次输出不符合要求'));
   check('这次成功', 取日志().updatedNpcs, ['爱丽丝']);
   check('数据照常更新', (取状态() as any).NPC['爱丽丝']['当前在做'], '整理书架');
 }
 
-console.log('\n[3] 输出不是 JSON → 带着错误原因重试, 第二次成功');
+
 {
   const p = 造平台({ 生成序列: ['爱丽丝在整理书架, 但我没有输出 JSON', 正常输出] });
   injectHostForTest(p.host);
@@ -235,7 +235,9 @@ console.log('\n[3] 输出不是 JSON → 带着错误原因重试, 第二次成�
   await updateNpcStates(true);
 
   check('调了两次模型', p.记录.raw.length, 2);
-  ok('第二次请求带上了错误原因与上次输出', JSON.stringify(p.记录.raw[1] ?? '').includes('上次输出不符合要求'));
+  ok('第二次请求里不再回喂「上次输出不符合要求」', !JSON.stringify(p.记录.raw[1] ?? '').includes('上次输出不符合要求'));
+  ok('第二次请求与第一次完全一样(原样重发; 只有每次自动生成的请求 id 不同)',
+    JSON.stringify(p.记录.raw[1]).replace(/"generation_id":"[^"]*"/g, '') === JSON.stringify(p.记录.raw[0]).replace(/"generation_id":"[^"]*"/g, ''));
   check('这次成功', 取日志().updatedNpcs, ['爱丽丝']);
   check('数据照常更新', (取状态() as any).NPC['爱丽丝']['当前在做'], '整理书架');
 }
