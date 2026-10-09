@@ -4,7 +4,7 @@
 // 头部填充那条 user 也不是)。以前这里断言的是 buildUpdateMessages 返回的 { messages, 锚点 };
 // 2026-10-09 去掉重试回喂后锚点没了(它的唯一用途就是把反馈接到任务那条上), 改成直接从消息
 // 内容里认任务那条 —— 断言的是同一件事, 而且不再依赖一个只为回喂存在的返回值。
-import { buildUpdateMessages } from '../src/彼方_NPC幕后生命状态系统/prompts';
+import { buildInjectionPrompt, buildUpdateMessages } from '../src/彼方_NPC幕后生命状态系统/prompts';
 
 let pass = 0;
 let fail = 0;
@@ -125,6 +125,101 @@ console.log('\n[9] 用户输入与任务分开: 玩家输入只出现在那条�
   const { messages } = 造();
   check('独立 system 含用户输入', messages[1].content.includes('玩家的最新输入'), true);
   check('任务消息里不含用户输入原文', messages[2].content.includes('玩家的最新输入'), false);
+}
+
+console.log('\n[10] 恋爱: 没有标记时, 全开关矩阵与从前逐字节相同(验收红线)');
+{
+  // 缺省参数(输入里根本没有 恋爱对象名单 这个键) ≡ 显式空名单: 新参数缺省时输出一个字节都不变
+  check('不带恋爱参数 ≡ 恋爱名单为空', JSON.stringify(造().messages), JSON.stringify(造({ 恋爱对象名单: [] }).messages));
+
+  // 全开关矩阵: 破限 × 预填充 × 头部填充 × 防截断 × 生理监测 × 有无 context = 64 组
+  const 组合: Array<Record<string, unknown>> = [];
+  for (const 破限 of [false, true])
+    for (const 预填充 of [false, true])
+      for (const 头部填充 of [false, true])
+        for (const 防截断 of [false, true])
+          for (const physioEnabled of [false, true])
+            for (const context of ['玩家的最新输入', ''])
+              组合.push({ 破限, 预填充, 头部填充, 防截断, physioEnabled, context });
+  check('矩阵有 64 组', 组合.length, 64);
+  const 漏了的 = 组合.filter(c => JSON.stringify(造(c).messages).includes('【恋爱监测】'));
+  check('没有标记时, 64 种开关组合下任何消息都不含恋爱说明段', 漏了的.length, 0);
+  const 漏事件 = 组合.filter(c => JSON.stringify(造(c).messages).includes('恋爱事件'));
+  check('没有标记时也不出现「恋爱事件」这个键', 漏事件.length, 0);
+  // 空名单(界面上没有标记时真实传的就是空数组)同样干净
+  const 空名单漏了的 = 组合.filter(c => JSON.stringify(造({ ...c, 恋爱对象名单: [] }).messages).includes('【恋爱监测】'));
+  check('显式空名单同样一组都不含恋爱说明段', 空名单漏了的.length, 0);
+}
+
+console.log('\n[11] 恋爱: 有标记时只是任务 user 的尾部追加, 位置与角色序列都不变');
+{
+  const 恋爱卡 = { 甲: { 当前在做: '做饭', 恋爱对象: '是' } };
+  const 无标记 = 造();
+  const 有标记 = 造({ 恋爱对象名单: ['甲'], currentCards: 恋爱卡 });
+  const 任务 = 有标记.messages[任务下标(有标记.messages)];
+  check('无标记时任何消息都没有恋爱说明段', 无标记.messages.some(m => m.content.includes('【恋爱监测】')), false);
+  check('有标记时出现恋爱说明段', 有标记.messages.some(m => m.content.includes('【恋爱监测】')), true);
+  check('说明段只出现一次, 且就在任务那条 user 上', 有标记.messages.filter(m => m.content.includes('【恋爱监测】')).length, 1);
+  check('任务下标不变', 任务下标(有标记.messages), 任务下标(无标记.messages));
+  check('角色序列不变', 角色序列(有标记.messages), 角色序列(无标记.messages));
+  check('两条 system 里都不含恋爱说明段', 有标记.messages.slice(0, 2).filter(m => m.content.includes('【恋爱监测】')).length, 0);
+  const 任务正文位置 = 任务.content.indexOf('请根据最近剧情、最近正文回复和更新原则');
+  const 恋爱段位置 = 任务.content.indexOf('【恋爱监测】');
+  ok('恋爱段排在任务正文之后', 任务正文位置 >= 0 && 恋爱段位置 > 任务正文位置);
+  ok('恋爱段一直排到任务消息末尾', 任务.content.trimEnd().endsWith('四、防全知同样适用: 她不知道正文里她没参与的事。'));
+  check('名单里的 NPC 名字出现在说明段里', 任务.content.includes('恋爱对象: 甲'), true);
+  // 与生理段的先后: 生理在前, 恋爱在后(两块都是尾部追加, 顺序固定)
+  const 两块 = 造({ physioEnabled: true, 恋爱对象名单: ['甲'], currentCards: 恋爱卡 }).messages[2].content;
+  ok('生理段排在恋爱段之前', 两块.indexOf('【生理监测】') >= 0 && 两块.indexOf('【生理监测】') < 两块.indexOf('【恋爱监测】'));
+}
+
+console.log('\n[12] 注入条目: 只给阶段名/名分/标签/态度, 绝不给 0–100 的裸数值');
+{
+  const 卡 = {
+    当前在做: '做饭',
+    恋爱对象: '是',
+    好感值: '73.5',
+    情欲值: '42.1',
+    好感阶段: '暧昧',
+    情欲阶段: '想要',
+    名分: '恋人',
+    恋爱标签: '冷战,占有欲',
+    恋爱态度: '嘴上说不在乎, 但你一走开就盯着门口',
+    情感倾向: '病娇',
+    恋爱动向: '好感+3.5(交心) · 2026-08-15',
+    恋爱基准日期: '2026-08-15 18:30',
+  };
+  const 注入 = buildInjectionPrompt([['甲', 卡]] as any);
+  // 「不给裸数值」的扫描范围**只到 恋爱: … 那一段**(阶段/名分/标签三段, 到 恋爱态度 之前为止),
+  // 见 §10 口径: 恋爱态度 是自由文本, 里面的数字("3 个陌生人")不算违规——
+  // 拿整段注入做正则扫描会误报, 而 恋爱态度 与前三段恰好落在同一行, 所以按"段"切而不是按行。
+  const 恋爱段 = (文本: string) => {
+    const 起 = 文本.indexOf('恋爱: ');
+    if (起 < 0)
+      return '';
+    const 止 = 文本.indexOf('恋爱态度:', 起);
+    return 文本.slice(起, 止 < 0 ? undefined : 止);
+  };
+  const 恋爱行 = 恋爱段(注入);
+  ok('带上了好感阶段', 恋爱行.includes('好感 暧昧'));
+  ok('带上了情欲阶段', 恋爱行.includes('情欲 想要'));
+  ok('带上了名分', 恋爱行.includes('名分 恋人'));
+  ok('带上了标签', 恋爱行.includes('标签 冷战,占有欲'));
+  ok('带上了恋爱态度(标签用全名)', 注入.includes('恋爱态度: 嘴上说不在乎'));
+  check('阶段/名分/标签段里没有裸数值 73.5', 恋爱行.includes('73.5'), false);
+  check('阶段/名分/标签段里没有裸数值 42.1', 恋爱行.includes('42.1'), false);
+  check('阶段/名分/标签段里没有裸数值 42', 恋爱行.includes('42'), false);
+  // 恋爱态度 里的数字不是裸数值, 不得因此判违规(否则自由文本会把这条例行断言变成假阳性)
+  const 带数字态度 = buildInjectionPrompt([['甲', { ...卡, 恋爱态度: '她说"3 个陌生人"都比你强' }]] as any);
+  ok('恋爱态度带数字时, 该段仍然干净(扫描范围没外溢)', !恋爱段(带数字态度).includes('73.5') && !恋爱段(带数字态度).includes('42'));
+  ok('恋爱态度照原样注入', 带数字态度.includes('3 个陌生人'));
+  check('没有"好感值"这个字段名', 注入.includes('好感值'), false);
+  check('没有"情欲值"这个字段名', 注入.includes('情欲值'), false);
+  check('没有情感倾向(幕后系数, 不给主 AI)', 注入.includes('病娇'), false);
+  check('没有恋爱动向(因果一行留在卡上, 不进注入)', 注入.includes('恋爱动向'), false);
+  // 未标记的 NPC: 一个恋爱字样都不该有
+  const 未标记注入 = buildInjectionPrompt([['乙', { 当前在做: '整理货架' }]] as any);
+  check('未标记的 NPC 注入里没有恋爱段', 未标记注入.includes('恋爱'), false);
 }
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);

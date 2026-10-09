@@ -11,6 +11,7 @@
 import { useHost } from './host';
 import { getSettings } from './settings';
 import { CARD_FIELDS, 扩展编辑字段 } from './卡字段';
+import { 校验标签 } from './恋爱规则';
 import { clearAllData, emptyData, saveData } from './快照';
 import type { 彼方数据 } from './快照';
 import { syncNpcStatesWorldbook } from './worldbook-inject';
@@ -61,6 +62,10 @@ export interface 变更返回 {
  * 旧格式字符串草稿都先经 读取台账 归一, 再按 空值即删除 决定写还是删。以前这里只认字符串,
  * 数组草稿会被整段跳过——玩家改了这个字段却"改完没生效、也没有任何反馈"。现在无论拿到哪种形态,
  * 要么写进卡里、要么按空值规则删掉, 不存在第三种"悄悄不写"的结果。
+ *
+ * 「恋爱标签」是**闭合词表**字段: 这是除 AI 之外的第二条写入路径, 所以这里也要过一遍 校验标签,
+ * 否则玩家能把词表外的词/数字塞进卡里, 再随注入条目喂给主 AI——"闭合词表"就名存实亡。
+ * 归一化后为空(null 个合法词)不当"清空"处理: 保留旧值, 与 AI 路径同一口径(§3.7 v7)。
  */
 function 合并草稿(卡: Record<string, any>, 草稿: Record<string, any>, 空值即删除: boolean) {
     for (const 字段 of [...CARD_FIELDS, ...扩展编辑字段]) {
@@ -78,8 +83,19 @@ function 合并草稿(卡: Record<string, any>, 草稿: Record<string, any>, 空
         }
         if (typeof 值 !== 'string')
             continue;
-        if (值.trim())
-            卡[字段] = 值.trim();
+        const 去空白 = 值.trim();
+        if (去空白) {
+            // 恋爱标签 是闭合词表字段: 玩家手输照样可能塞进词表外的词甚至数字, 归一化后再落库
+            // (与 AI 路径同一把尺子, 否则"闭合词表"这个前提在玩家路径上就是假的)
+            if (字段 === '恋爱标签') {
+                const 归一 = 校验标签(去空白);
+                // 归一化后为空 = 输入里一个合法词都没有, 不是"想清空": 保留旧值, 不删字段
+                if (归一)
+                    卡[字段] = 归一;
+                continue;
+            }
+            卡[字段] = 去空白;
+        }
         else if (空值即删除)
             delete 卡[字段];
     }

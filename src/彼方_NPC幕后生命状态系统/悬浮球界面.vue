@@ -219,6 +219,16 @@
                         <template v-else>更新于 {{ fmtTime(selectedNpcCard['最后更新']) }}</template>
                       </div>
                       <div class="bf-detail-actions">
+                        <button
+                          v-if="!editingNpc"
+                          class="bf-btn bf-btn-mini"
+                          :class="{ 'bf-btn-primary': 是恋爱对象 }"
+                          :disabled="updating"
+                          :title="是恋爱对象 ? '取消恋爱对象标记(此后不再折算恋爱事件)' : '标记为恋爱对象(此后每轮幕后更新折算恋爱事件)'"
+                          @click="切换恋爱对象"
+                        >
+                          <PhHeart :size="13" :weight="是恋爱对象 ? 'fill' : 'bold'" />{{ 是恋爱对象 ? '取消恋爱对象' : '标记恋爱对象' }}
+                        </button>
                         <button v-if="!editingNpc" class="bf-btn bf-btn-mini" @click="startEditNpc"><PhPencilSimple :size="13" weight="bold" />编辑</button>
                         <template v-else>
                           <button class="bf-btn bf-btn-mini bf-btn-primary" @click="saveEditNpc"><PhCheck :size="13" weight="bold" />保存</button>
@@ -325,8 +335,18 @@
                         <div class="bf-field-grid">
                           <div v-for="field in 组.字段" :key="field" v-show="selectedNpcCard[field] || editingNpc" class="bf-field">
                             <span class="bf-field-label" :title="字段说明表[field] || field">{{ field }}</span>
+                            <!-- 枚举字段用下拉(词表来自 恋爱规则.ts), 免得手打错字被代码丢弃 -->
+                            <select
+                              v-if="editingNpc && (field === '情感倾向' || field === '名分')"
+                              v-model="editDraft[field]"
+                              class="bf-input"
+                            >
+                              <option v-if="field === '情感倾向'" value="" disabled>（未设置）</option>
+                              <option v-else value="">（无 / 清空）</option>
+                              <option v-for="选项 in (field === '情感倾向' ? 情感倾向选项 : 名分词表)" :key="选项" :value="选项">{{ 选项 }}</option>
+                            </select>
                             <textarea
-                              v-if="editingNpc"
+                              v-else-if="editingNpc"
                               v-model="editDraft[field]"
                               class="bf-textarea bf-textarea-short"
                               rows="2"
@@ -763,6 +783,7 @@ import {
   PhGauge,
   PhGearSix,
   PhHandshake,
+  PhHeart,
   PhHeartStraight,
   PhMapPin,
   PhMoon,
@@ -794,6 +815,7 @@ import { 字段分组表, 字段说明表, 建档字段 } from './卡字段';
 import type { NpcStateCard } from './卡字段';
 import { 台账字段, 台账状态表, 显示台账, 状态类 } from './台账操作';
 import type { 事务状态, 幕后事务 } from './事务台账';
+import { 情感倾向表, 名分词表 } from './恋爱规则';
 import { updateNpcStates } from './update';
 import { syncNpcStatesWorldbook } from './worldbook-inject';
 import { setToastAnchor, setToastColors, toastError, toastInfo, toastSuccess, toastWarning } from './toast';
@@ -1165,6 +1187,7 @@ const 分组展示 = [
   { key: '生活', 标题: '生活动态', 图标: PhSuitcaseSimple },
   { key: '内心', 标题: '内心世界', 图标: PhBrain },
   { key: '生理', 标题: '生理状态', 图标: PhHeartStraight },
+  { key: '恋爱', 标题: '恋爱', 图标: PhHeart },
 ];
 
 /** NPC 详情字段分组: 分组标题与图标是展示(留在这里), "哪个字段属于哪一组"来自 卡字段.ts 的字段表。
@@ -1177,6 +1200,22 @@ const detailFields = computed(() =>
     }))
     .filter(组 => 组.字段.length > 0),
 );
+
+/** 情感倾向的下拉选项: 枚举由 恋爱规则.ts 持有(系数也在那边), 界面不重复写词表 */
+const 情感倾向选项 = Object.keys(情感倾向表);
+/** 当前详情页的 NPC 是否已被标记为恋爱对象(标记即开关, 没有全局设置项) */
+const 是恋爱对象 = computed(() => String(selectedNpcCard.value?.['恋爱对象'] ?? '').trim() === '是');
+
+/** 标记/取消恋爱对象: 只写「恋爱对象」一个字段(其余恋爱字段由首轮更新惰性补齐),
+ *  取消标记写空值 = 删掉该字段(空值即删除), 于是提示词与合并逻辑都回到"未标记"路径。 */
+function 切换恋爱对象() {
+  if (!selectedNpc.value || !selectedNpcCard.value) return;
+  const 名字 = selectedNpc.value;
+  const 标记 = String(selectedNpcCard.value['恋爱对象'] ?? '').trim() === '是';
+  const 结果 = 更新状态卡(data.value, 名字, { 恋爱对象: 标记 ? '' : '是' }, 建变更环境());
+  data.value = 结果.数据;
+  toastSuccess(标记 ? `已取消 ${名字} 的恋爱对象标记` : `已把 ${名字} 标记为恋爱对象(下一轮更新开始折算恋爱事件)`);
+}
 
 /** 折叠连续空行并去掉首尾空白，避免字段值里的多行换行造成大片空行 */
 function cleanText(text: string): string {

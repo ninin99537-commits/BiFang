@@ -7,6 +7,7 @@
 import { APPEND_CARD_FIELDS, CARD_FIELDS, LEGACY_CARD_FIELDS } from './卡字段';
 import { applyConceptionCheck, CYCLE_STAGE_INFLUENCE, correctPhysioByStoryTime, ensurePregnancyKnowledge, extractLactationMonths, extractPregnancyWeek, cycleStageName, lactationExpired, normalizeRaceScale, PHYSIO_CYCLE_MAX, PHYSIO_CYCLE_MIN, PHYSIO_FIELDS, PREGNANCY_KNOWN_CONFIRMED, PREGNANCY_KNOWN_SUSPECT, PREGNANCY_KNOWN_UNKNOWN, PREGNANCY_KNOWN_VALUES, RACE_SCALE_FIELDS } from './生理规则';
 import { fmtStoryTime, parseStoryTime, parseStoryTimeRange, withStoryDate } from './剧情时间';
+import { 应用恋爱回合, 校验标签 } from './恋爱规则';
 import { isReservedTopLevelKey } from './模型请求';
 import { 合并台账, 读取台账 } from './事务台账';
 
@@ -436,6 +437,53 @@ function mergeCard(oldCard, update, storyTimeText = '') {
     }
     else {
         delete merged['生理周期日期'];
+    }
+    // ==== 恋爱子系统(标记即开关: 没有 恋爱对象="是" 的卡一个字段都不碰) ====
+    // 一整块自包含代码: 只读写恋爱字段, 与上面的生理块零字段交集, 所以放末尾没有任何顺序顾虑,
+    // 也不拆成多个插入点(独立性一目了然, 一处代码一处用例)。
+    // **闸必须在"复制恋爱事件入卡"之前**: 恋爱事件不在 CARD_FIELDS 里, mergeCard 的字符串循环
+    // 不管它——一旦进了卡就没有任何路径会删它, 会随每份快照一路膨胀。未标记时连复制都不做。
+    if (String(merged['恋爱对象'] ?? '').trim() === '是') {
+        const 恋爱事件 = update['恋爱事件'];
+        const 事件数组 = Array.isArray(恋爱事件)
+            ? 恋爱事件.filter(item => item && typeof item === 'object' && !Array.isArray(item))
+            : (恋爱事件 && typeof 恋爱事件 === 'object' ? [恋爱事件] : []);
+        if (事件数组.length > 0)
+            merged['恋爱事件'] = _.cloneDeep(事件数组);
+        else if (恋爱事件 !== undefined && 恋爱事件 !== null)
+            console.warn(`[彼方] ${merged['曾用名'] || ''} 「恋爱事件」形态不合法(应为事件数组), 已忽略`);
+        // 结算(纯函数返回补丁): 逐条折算 → 单轮上限只夹涨 → 时间回落 → 夹0-100 → 情欲地板 → 阶段重算 → 恋爱动向
+        Object.assign(merged, 应用恋爱回合(merged, merged['恋爱事件'] ?? [], storyTimeText));
+        // 恋爱标签归一化: 词表过滤 → 去重 → 截断到 5(放在合并之后跑, 见 prompts 里的词表说明)
+        // "归一化后为空"与"想清空"是两件事(§3.7 v7):
+        //   本轮报的词一个都不在词表里 = AI 报错了 → **保留旧标签**(不能把卡上已有的合法标签删掉);
+        //   本轮没报(mergeCard 的字符串循环对空串一律跳过) → 沿用旧值, 但旧值也过一遍归一化。
+        const 标签本轮 = typeof update['恋爱标签'] === 'string' ? update['恋爱标签'].trim() : '';
+        if (标签本轮) {
+            const 归一 = 校验标签(标签本轮);
+            if (归一) {
+                merged['恋爱标签'] = 归一;
+            }
+            else {
+                const 旧标签 = String(oldCard?.['恋爱标签'] ?? '').trim();
+                if (旧标签)
+                    merged['恋爱标签'] = 旧标签;
+                else
+                    delete merged['恋爱标签'];
+                console.warn(`[彼方] ${merged['曾用名'] || ''} 「恋爱标签」全是词表外的词, 已忽略: ${标签本轮}`);
+            }
+        }
+        else if (merged['恋爱标签'] !== undefined) {
+            const 归一 = 校验标签(String(merged['恋爱标签'] ?? ''));
+            if (归一)
+                merged['恋爱标签'] = 归一;
+            else
+                delete merged['恋爱标签']; // 旧值本身就是空的/全非法 → 不留空字段
+        }
+        delete merged['恋爱事件']; // 消费后删除, 永不落盘(照 受孕事件)
+    }
+    else if (update['恋爱事件'] !== undefined && update['恋爱事件'] !== null) {
+        console.warn(`[彼方] ${merged['曾用名'] || ''} 未标记为恋爱对象却返回了「恋爱事件」, 已忽略`);
     }
     merged['最后更新'] = Date.now();
     return merged;
