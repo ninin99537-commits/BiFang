@@ -283,7 +283,8 @@
                     <!-- 事务台账: 「未完成事项」是数组(见 事务台账.ts), 不是字符串——单独成区块按台账渲染,
                          不能塞进下面的通用字段网格(那会把数组插值成一串 JSON)。一条一行: 编号/时间/内容/状态/结果,
                          进行中在前且醒目、已完成/已作废压暗; 改状态与结果立刻走 数据变更.ts 的 改事务状态 落进快照 -->
-                    <div v-if="台账条目.length > 0 || editingNpc" class="bf-ledger">
+                    <!-- 空台账也要显示这一块: 否则"手动新增第一条"没有入口(下面那行输入框就是入口) -->
+                    <div v-if="selectedNpc || 台账条目.length > 0 || editingNpc" class="bf-ledger">
                       <div class="bf-ledger-head">
                         <span class="bf-ledger-title"><PhHandshake :size="13" weight="duotone" /> 未完成事项 · 事务台账</span>
                         <span class="bf-ledger-hint">内容写下即冻结; 改状态/结果即时生效(不必点「编辑」)</span>
@@ -307,7 +308,7 @@
                             <input
                               v-model="结果草稿[事务.编号]"
                               class="bf-input bf-ledger-result"
-                              :placeholder="事务.结果 ? '改写结果(提交即覆盖)' : '结果(可选)'"
+                              :placeholder="事务.结果 ? '改写结果/作废原因(提交即覆盖)' : '结果/作废原因(可选; 与 AI 写的同格式)'"
                               :disabled="updating"
                             />
                             <div class="bf-seg bf-ledger-seg">
@@ -325,6 +326,25 @@
                             </div>
                           </div>
                         </div>
+                      </div>
+                      <!-- 手动新增一条: 玩家侧的"另开新条"(改内容的唯一正路是作废旧条 + 另开新条,
+                           此前这一半只有 AI 走得通)。编号与时间由代码分配, 内容写下即冻结 -->
+                      <div class="bf-ledger-add">
+                        <input
+                          v-model="新增事务草稿"
+                          class="bf-input bf-ledger-add-input"
+                          placeholder="手动新增一条事务(写内容即可; 编号与时间由彼方分配)"
+                          :disabled="updating"
+                          @keyup.enter="新增一条事务()"
+                        />
+                        <button
+                          class="bf-btn bf-btn-mini"
+                          :disabled="updating || !新增事务草稿.trim()"
+                          title="新增一条事务(内容写下即冻结)"
+                          @click="新增一条事务()"
+                        >
+                          新增
+                        </button>
                       </div>
                     </div>
 
@@ -810,7 +830,7 @@ import { useSettingsStore } from './settings';
 import { useStateStore } from './数据仓';
 import { useConsoleStore, useDebugStore, useMainPromptStore } from './日志仓';
 import { useUpdatingStore } from './任务中断';
-import { 加NPC, 移除NPC, 更新状态卡, 改事务状态, 清空彼方数据, 建变更环境 } from './数据变更';
+import { 加NPC, 移除NPC, 更新状态卡, 改事务状态, 新增事务, 清空彼方数据, 建变更环境 } from './数据变更';
 import { 字段分组表, 字段说明表, 建档字段 } from './卡字段';
 import type { NpcStateCard } from './卡字段';
 import { 台账字段, 台账状态表, 显示台账, 状态类 } from './台账操作';
@@ -1147,6 +1167,25 @@ function 改事务(事务: 幕后事务, 新状态: 事务状态) {
   // 提交成功后把这行的输入草稿清掉: 输入框回到"空 + 占位符显示当前结果", 免得留着一条已入库的
   // 文本让人以为还没提交(进行中不带结果, 草稿也必须跟着清)
   delete 结果草稿.value[事务.编号];
+  toastSuccess(结果.说明);
+}
+
+/** 手动新增一条事务的输入草稿(提交成功后清空) */
+const 新增事务草稿 = ref('');
+
+/** 手动新增一条事务: 编号/时间由代码分配(与 AI 路径同一个 合并台账)。
+ *  没新增成(内容与账上重复/内容为空)时 新增事务 会把原数据对象原样返回——据此提示, 不假装成功。 */
+function 新增一条事务() {
+  if (!selectedNpc.value) return;
+  const 文本 = 新增事务草稿.value.trim();
+  if (!文本) return;
+  const 结果 = 新增事务(data.value, selectedNpc.value, 文本, 建变更环境());
+  if (结果.数据 === data.value) {
+    toastWarning(结果.说明);
+    return;
+  }
+  data.value = 结果.数据;
+  新增事务草稿.value = '';
   toastSuccess(结果.说明);
 }
 
@@ -2770,6 +2809,19 @@ function clearAll() {
   color: var(--bf-dim);
   opacity: 0.6;
   font-style: italic;
+}
+/* 手动新增一条: 台账卡片底部的一行(输入框 + 按钮) */
+.bf-ledger-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--bf-border);
+}
+.bf-ledger-add-input {
+  flex: 1;
+  min-width: 0;
 }
 .bf-ledger-list {
   display: flex;
