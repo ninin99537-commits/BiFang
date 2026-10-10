@@ -64,26 +64,74 @@
 2. 在酒馆助手中新建脚本, 将打包后的 `index.js` 内容填入并启用。
 3. 也可以把脚本文件夹放进 `src/彼方_NPC幕后生命状态系统` 后使用本项目的实时监听 / 热重载功能。
 
-## 发布到 GitHub（重要 · 别忘了）
+## 仓库与发布（重要 · 动手前先读这一节）
 
-本项目发布到 **`https://github.com/ninin99537-commits/BiFang`**（别名 **BiFang**）。用户通过 jsdelivr 直接 import 该仓库的发行产物：
+### 三个仓库
+
+| 仓库 | 是什么 | `src/` 里装什么 | 谁是主场 |
+| ---- | ---- | ---- | ---- |
+| **工作区**（你本地这份目录） | 全量开发工作区 | 8 个插件 | —— |
+| **BiFang** `ninin99537-commits/BiFang` | **彼方的官方发布仓**（投影仓） | 彼方全量 + 共用 + 烟火的 4 文件残桩 | **彼方** |
+| **YanHuo** `ninin99537-commits/YanHuo` | 烟火的官方发布仓（投影仓） | 烟火全量 + 共用 + **彼方全量** | 烟火 |
+
+用户通过 jsdelivr 直接 import **BiFang** 的发行产物：
 
 ```
 import 'https://cdn.jsdelivr.net/gh/ninin99537-commits/BiFang@master/dist/彼方_NPC幕后生命状态系统/index.js';
 ```
 
-**上传前**：
-1. 改动源码（`src/彼方_NPC幕后生命状态系统/**`，涉及共用时连 `src/共用/**` 一起）。
-2. `pnpm build`，确认 `dist/彼方_NPC幕后生命状态系统/index.js`（+ `.js.map`）重新生成、含你的改动。
-3. 提交内容 = **源码改动 + 重新构建的 `dist/彼方_NPC幕后生命状态系统/index.js`**（这个仓库 git 跟踪 dist，jsdelivr 导入的正是它）。
-4. 推送到 `BiFang` 的 `master`（fast-forward，一格一提交）。
+### ⚠️ 为什么不能直接 `git push`
 
-> 🤖 该仓库有 `[bot] bundle` 工作流：推源后机器人会自动重建 dist 并补一个提交。所以即使
-> 偶尔漏提交 dist，机器人也会兜底重建；但**仍建议手动提交最新 dist**，避免中间态。
+工作区的 `git remote -v` **只有一个 `origin`，它指向 YanHuo**。所以在工作区里敲 `git push origin master`，既不是发布彼方、也不是发布烟火。三个原因：
+
+1. **投影仓不是工作区的镜像。** 工作区 `src/` 下有 8 个插件，投影仓只装 3 个。直接推会把剧情导演 / 正文美化 / 直播弹幕 / 自定义状态栏一并带过去。
+2. **两者历史已经分叉。** 工作区与 `origin/master` 各有独有提交（实测 `git rev-list --left-right --count HEAD...origin/master` = `223 20`），普通 push 会被拒。
+3. **`dist/` 的跟踪状态相反。** 工作区 `.gitignore` 里写着 `dist`（不跟踪），而两个投影仓都**跟踪** `dist/`——jsdelivr 导入的正是它。
+
+所以发布 = **投影**：把文件复制到目标仓的检出里，在那里重新提交、再推。**不是** push 工作区。
+
+### 投影怎么做（照抄）
+
+1. 把 BiFang 克隆到工作区**之外**（或工作区内一个不被跟踪的目录，如 `.work/`）：
+
+   ```bash
+   git clone https://github.com/ninin99537-commits/BiFang.git <工作区外>/BiFang-recon
+   ```
+
+2. `pnpm build`，确认 `dist/彼方_NPC幕后生命状态系统/index.js`（+ `.js.map`）重新生成、含你的改动。
+
+3. 从工作区**复制**下列内容到检出：
+
+   | 复制什么 | 说明 |
+   | ---- | ---- |
+   | `src/彼方_NPC幕后生命状态系统/**` | 本插件全部源码 |
+   | `src/共用/**` | 两家共用（4 个文件），**有改动才需要** |
+   | `tests/**` | 公共骨架 4 个（`build.mjs` / `run.mjs` / `platform-usage.mjs` / `tag-filter.test.ts`）+ 本插件全部 `*.test.ts` |
+   | `dist/彼方_NPC幕后生命状态系统/index.js` + `.js.map` | 第 2 步的产物 |
+   | `docs/仓库首页-彼方.md` | **改名为 `README.md`**（投影仓的首页就是它） |
+   | `docs/彼方-*.md` / `.html` | 本插件的设计文档 |
+
+4. 在检出里提交并推送：
+
+   ```bash
+   git -C <检出> add -A
+   git -C <检出> commit -m "..."
+   git -C <检出> push origin master
+   ```
+
+### 陷阱清单
+
+- **`dist` 必须一起带上。** 工作区不跟踪它、投影仓跟踪它。漏了会让 jsdelivr 继续发旧产物（`[bot] bundle` 能兜底重建，但中间态期间线上是旧的）。
+- **别把其他插件带过去。** 剧情导演 / 正文美化 / 直播弹幕 / 自定义状态栏不属于这个投影。
+- **`.github/workflows/` 只放 `bundle.yaml`。** 工作区里另有 `bump_deps.yaml` / `sync_template.yaml`，那是模板上游维护用的，两个投影仓都没有它们。
+- **`tests/platform-usage.mjs` 在投影仓里必然失败。** 它硬编码了四个项目（含 `src/剧情导演`），而投影仓没有该目录，`pnpm test` 最后那道「平台直连检查」会抛 `ENOENT`。这是既存问题、与本插件无关；`bundle.yaml` 只跑 `pnpm install && pnpm build`、不跑测试，所以不影响发布。
+- **jsdelivr 有缓存。** `@master` 是非版本号引用，缓存较久；`[bot] bundle` 会自动打版本 tag，把刷新压到 12 小时内。要立刻验证，就用 **commit hash 或 tag** 直接 import。
+- **推完要真机验证。** jsdelivr 刷新前，酒馆里跑的还是旧产物。
+
+> 🤖 两个投影仓都有 `[bot] bundle` 工作流：推源后机器人会自动 `rm -rf dist && pnpm install && pnpm build` 并补一个提交，所以即使偶尔漏提交 dist 也会被兜底重建；但它只重建**仓内存在 `index.ts` 的插件**，而产物由 `webpack.config.ts:54` 的 `globSync('{示例,src}/**/index.{ts,tsx,js,jsx}')` 决定——这就是为什么 YanHuo 的 `dist/` 有两份、BiFang 只有彼方一份。
 > 推送被拒（non-fast-forward）时，多半是机器人刚补过一行：`git rebase origin/master` 后再推。
 
-> ⚠️ 同名仓库 `YanHuo`（`ninin99537-commits/YanHuo`）里也有本插件源码——那里是烟火的主场，
-> 彼方的「官方发布仓库」是 `BiFang`，上传彼方改动以 BiFang 为准。
+> ⚠️ 同名仓库 `YanHuo` 里也有彼方全量源码（历史沿革，它的 `dist/` 因此也会构建出彼方产物）——但那里是烟火的主场，彼方的「官方发布仓库」是 `BiFang`，上传彼方改动以 BiFang 为准，YanHuo 里那份副本不保证同步。
 
 ## 配置
 
@@ -115,9 +163,9 @@ import 'https://cdn.jsdelivr.net/gh/ninin99537-commits/BiFang@master/dist/彼方
 
 ## 2026-10-10 — 恋爱子系统（标记即开关：不标记则提示词逐字节不变）
 
-新增 `src/彼方_NPC幕后生命状态系统/恋爱规则.ts`（纯函数）+ `tests/bifang-love-rules.test.ts`，其余改动落在 13 个既有文件里（含 `数据变更.ts`：玩家手改 `恋爱标签` 也要过闭合词表）。设计口径见 `docs/彼方-恋爱子系统-策划案-v1.md`（v7）。
+新增 `src/彼方_NPC幕后生命状态系统/恋爱规则.ts`（纯函数）+ `tests/bifang-love-rules.test.ts`，其余改动落在 13 个既有文件里（含 `数据变更.ts`：玩家手改 `恋爱标签` 也要过闭合词表）。设计口径见 `docs/彼方-恋爱子系统-策划案-v1.md`（v9）。
 
-- **没有全局开关**：在 NPC 详情页点「标记恋爱对象」写 `恋爱对象=是`，取消标记写空值（空值即删除）。**没有任何 NPC 被标记时，提示词与从前逐字节相同**——恋爱说明段只做「任务 user 消息」的尾部追加，未标记时输出空串。这条由一次性 byte-diff（全开关矩阵 64 组合，改动前后 `JSON.stringify(messages)` 零差异）+ `tests/prompt-shape.test.ts` 的常驻结构断言双重守住。
+- **没有全局开关**：在 NPC 详情页点「标记恋爱对象」写 `恋爱对象=是`，取消标记写空值（空值即删除）。**没有任何 NPC 被标记时，提示词与从前逐字节相同**——恋爱说明段只做「任务 user 消息」的尾部追加，未标记时输出空串。这条由一次性 byte-diff（全开关矩阵 **192** 组合 = 64 组开关 × 3 变体，改动前后 `JSON.stringify(messages)` 逐字节相同、长度均 `6554671`、SHA256 均 `8F9B47E9…`）+ `tests/prompt-shape.test.ts` 的常驻结构断言双重守住。
 - **AI 只报事实，代码算数值**：AI 只返回 `恋爱事件`（轴/类型/强度/依据），代码折算成两条轴：好感（存量，不衰减）与情欲（状态量，会被满足与时间回落）。代码持有阶段表、±2 滞回、情感倾向的 (敏感度, 粘性) 系数、单轮上限、情欲地板。
 - **单轮上限只夹涨方向**（好感 +8 / 情欲 +20）：落方向不设限，一条「性行为(大)」情欲真的掉 −35 而不是被夹成 −20（用例钉住）。
 - **系数怎么乘（v4）**：好感涨/落与情欲涨 × 敏感度；**情欲落（满足回落 + 时间回落）只 × 粘性，不乘敏感度**——否则"外放(1.4)"会变成"性爱之后冷却得更快"，语义正好反了。病娇的「性行为(大)」= −35 × 0.2 = −7。
