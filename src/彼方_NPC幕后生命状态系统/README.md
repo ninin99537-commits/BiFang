@@ -80,8 +80,9 @@
 | 仓库 | 是什么 | `src/` 里装什么 | 谁是主场 |
 | ---- | ---- | ---- | ---- |
 | **工作区**（你本地这份目录） | 全量开发工作区 | 8 个插件 | —— |
-| **BiFang** `ninin99537-commits/BiFang` | **彼方的官方发布仓**（投影仓） | 彼方全量 + 共用 + 烟火的 4 文件残桩 | **彼方** |
-| **YanHuo** `ninin99537-commits/YanHuo` | 烟火的官方发布仓（投影仓） | 烟火全量 + 共用 + **彼方全量** | 烟火 |
+| **BiFang** `ninin99537-commits/BiFang` | **彼方的官方发布仓**（投影仓） | 彼方全量 + 共用 | **彼方** |
+| **YanHuo** `ninin99537-commits/YanHuo` | 烟火的官方发布仓（投影仓） | 烟火全量 + 共用（2026-10-11 起**不再装彼方**，历史搭车已摘） | 烟火 |
+| **DaoYan** `ninin99537-commits/DaoYan` | 剧情导演的发布仓（投影仓） | 剧情导演全量 + 共用（源码在仓内 `Source/` 下，`dist/` 在仓根） | 剧情导演 |
 
 用户通过 jsdelivr 直接 import **BiFang** 的发行产物：
 
@@ -118,7 +119,7 @@ import 'https://cdn.jsdelivr.net/gh/ninin99537-commits/BiFang@master/dist/彼方
    | `tests/**` | 公共骨架 4 个（`build.mjs` / `run.mjs` / `platform-usage.mjs` / `tag-filter.test.ts`）+ 本插件全部 `*.test.ts` |
    | `dist/彼方_NPC幕后生命状态系统/index.js` + `.js.map` | 第 2 步的产物 |
    | `docs/仓库首页-彼方.md` | **改名为 `README.md`**（投影仓的首页就是它） |
-   | `docs/彼方-*.md` / `.html` | 本插件的设计文档 |
+   | `docs/彼方-*.md` / `.html` | 本插件的**开发文档**（策划案 / 架构复核 / 正式稿）。**内部过程稿不投**：讨论稿、回复 vN、合流稿草案只留工作区——2026-10-11 用户决定「发布仓只放项目和开发文档」，别再把过程稿带回去 |
 
 4. 在检出里提交并推送：
 
