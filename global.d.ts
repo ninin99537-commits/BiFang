@@ -30,6 +30,9 @@ declare module '*.vue' {
 
 declare const YAML: typeof import('yaml');
 
+/** 构建时注入(webpack.config.ts 的 DefinePlugin): 打包那一刻的 commit 与本地时间 */
+declare const __构建信息__: { commit: string; 构建时间: string };
+
 declare const z: typeof import('zod');
 declare namespace z {
   export type infer<T> = import('zod').infer<T>;

@@ -1,4 +1,4 @@
-// 彼方 · 测试打包器(esbuild JS API)
+// 测试打包器(esbuild JS API)
 //
 // 为什么不用 esbuild 命令行 —— 两个坑:
 //  1. 源码里有 `import x from './y.txt?raw'`(webpack raw-loader 的写法), 命令行会把 `?raw`

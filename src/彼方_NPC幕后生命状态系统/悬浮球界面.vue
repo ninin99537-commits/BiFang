@@ -4,7 +4,11 @@
     <div
       class="bf-orb"
       :class="{ dragging: isDragging }"
-      :style="panelOpen ? { left: anchorX - CLOSED_SIZE / 2 + 'px', top: anchorY - CLOSED_SIZE / 2 + 'px' } : { left: '0px', top: '0px' }"
+      :style="
+        panelOpen
+          ? { left: anchorX - CLOSED_SIZE / 2 + 'px', top: anchorY - CLOSED_SIZE / 2 + 'px' }
+          : { left: '0px', top: '0px' }
+      "
       :title="panelOpen ? '收起彼方' : '打开彼方'"
       @pointerdown="onOrbPointerDown"
       @click="onOrbClick"
@@ -78,7 +82,12 @@
               :class="{ active: tab === item.key }"
               @click="tab = item.key"
             >
-              <component :is="item.icon" class="bf-nav-icon" :size="16" :weight="tab === item.key ? 'fill' : 'regular'" />
+              <component
+                :is="item.icon"
+                class="bf-nav-icon"
+                :size="16"
+                :weight="tab === item.key ? 'fill' : 'regular'"
+              />
               <span class="bf-nav-label">{{ item.label }}</span>
             </button>
           </nav>
@@ -123,12 +132,25 @@
                         <span class="bf-panel-card-count">{{ npcList.length }}</span>
                       </div>
                       <div class="bf-row">
-                        <input v-model="newNpcName" class="bf-input" placeholder="输入NPC名字后回车或点添加" @keyup.enter="openAddDialog" />
-                        <button class="bf-btn" @click="openAddDialog"><PhUserPlus :size="15" weight="bold" />添加</button>
+                        <input
+                          v-model="newNpcName"
+                          class="bf-input"
+                          placeholder="输入NPC名字后回车或点添加"
+                          @keyup.enter="openAddDialog"
+                        />
+                        <button class="bf-btn" @click="openAddDialog">
+                          <PhUserPlus :size="15" weight="bold" />添加
+                        </button>
                       </div>
                       <div v-if="npcList.length === 0" class="bf-empty">
                         <div class="bf-empty-text">还没有追踪任何 NPC</div>
-                        <div class="bf-empty-hint">{{ autoTrackEnabled ? '添加名字，或留空让 AI 自动识别重要NPC后点「手动更新」' : '「正文新角色自动建档」已关闭，新角色不会自动加入，需在此手动添加名字' }}</div>
+                        <div class="bf-empty-hint">
+                          {{
+                            autoTrackEnabled
+                              ? '添加名字，或留空让 AI 自动识别重要NPC后点「手动更新」'
+                              : '「正文新角色自动建档」已关闭，新角色不会自动加入，需在此手动添加名字'
+                          }}
+                        </div>
                       </div>
                       <div v-else class="bf-dash-npcs">
                         <div v-for="name in npcList" :key="name" class="bf-dash-npc" @click="openNpc(name)">
@@ -137,7 +159,9 @@
                             <div class="bf-dash-npc-name">{{ name }}</div>
                             <div class="bf-dash-npc-loc">{{ data.NPC?.[name]?.['位置'] || '未知位置' }}</div>
                           </div>
-                          <button class="bf-icon-btn bf-npc-del" title="从追踪名单删除" @click.stop="removeNpc(name)"><PhX :size="13" weight="bold" /></button>
+                          <button class="bf-icon-btn bf-npc-del" title="从追踪名单删除" @click.stop="removeNpc(name)">
+                            <PhX :size="13" weight="bold" />
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -147,7 +171,9 @@
                         <span v-if="updating" class="bf-spinner"></span>
                         <PhArrowsClockwise v-else :size="15" weight="bold" />{{ updating ? '更新中…' : '手动更新' }}
                       </button>
-                      <button class="bf-btn" :disabled="updating" @click="reload"><PhArrowsClockwise :size="15" weight="bold" />刷新</button>
+                      <button class="bf-btn" :disabled="updating" @click="reload">
+                        <PhArrowsClockwise :size="15" weight="bold" />刷新
+                      </button>
                       <button class="bf-btn bf-btn-danger" :disabled="updating" @click="clearAll">
                         <PhTrash :size="15" weight="bold" />{{ clearing ? '再点一次确认清空' : '清空' }}
                       </button>
@@ -177,7 +203,13 @@
                 <div class="bf-npc-list">
                   <div v-if="npcEntries.length === 0" class="bf-empty">
                     <div class="bf-empty-text">还没有 NPC</div>
-                    <div class="bf-empty-hint">{{ autoTrackEnabled ? '在仪表盘「追踪 NPC 管理」添加，或留空让 AI 自动识别后点「手动更新」' : '「正文新角色自动建档」已关闭，在仪表盘手动添加名字后更新即可建档' }}</div>
+                    <div class="bf-empty-hint">
+                      {{
+                        autoTrackEnabled
+                          ? '在仪表盘「追踪 NPC 管理」添加，或留空让 AI 自动识别后点「手动更新」'
+                          : '「正文新角色自动建档」已关闭，在仪表盘手动添加名字后更新即可建档'
+                      }}
+                    </div>
                   </div>
                   <div
                     v-for="[name, card] in npcEntries"
@@ -193,12 +225,18 @@
                         <span class="bf-online-dot" title="追踪中"></span>
                       </div>
                       <div class="bf-npc-sub">
-                        <span class="bf-npc-loc"><PhMapPin :size="11" weight="duotone" /><span class="bf-npc-loc-text">{{ card['位置'] || '未知位置' }}</span></span>
+                        <span class="bf-npc-loc"
+                          ><PhMapPin :size="11" weight="duotone" /><span class="bf-npc-loc-text">{{
+                            card['位置'] || '未知位置'
+                          }}</span></span
+                        >
                         <span class="bf-npc-sep">·</span>
                         <span class="bf-npc-status">{{ npcStatusText(card) }}</span>
                       </div>
                       <div class="bf-npc-tags">
-                        <span v-for="t in npcTags(card)" :key="t.label" class="bf-tag" :class="'bf-tag-' + t.color">{{ t.label }}</span>
+                        <span v-for="t in npcTags(card)" :key="t.label" class="bf-tag" :class="'bf-tag-' + t.color">{{
+                          t.label
+                        }}</span>
                       </div>
                     </div>
                   </div>
@@ -211,7 +249,13 @@
                       <div class="bf-detail-head-text">
                         <div class="bf-detail-name">{{ selectedNpc }}</div>
                         <div class="bf-npc-tags">
-                          <span v-for="t in npcTags(selectedNpcCard)" :key="t.label" class="bf-tag" :class="'bf-tag-' + t.color">{{ t.label }}</span>
+                          <span
+                            v-for="t in npcTags(selectedNpcCard)"
+                            :key="t.label"
+                            class="bf-tag"
+                            :class="'bf-tag-' + t.color"
+                            >{{ t.label }}</span
+                          >
                         </div>
                       </div>
                       <div v-if="data.剧情时间 || selectedNpcCard['最后更新']" class="bf-detail-updated">
@@ -224,15 +268,27 @@
                           class="bf-btn bf-btn-mini"
                           :class="{ 'bf-btn-primary': 是恋爱对象 }"
                           :disabled="updating"
-                          :title="是恋爱对象 ? '取消恋爱对象标记(此后不再折算恋爱事件)' : '标记为恋爱对象(此后每轮幕后更新折算恋爱事件)'"
+                          :title="
+                            是恋爱对象
+                              ? '取消恋爱对象标记(此后不再折算恋爱事件)'
+                              : '标记为恋爱对象(此后每轮幕后更新折算恋爱事件)'
+                          "
                           @click="切换恋爱对象"
                         >
-                          <PhHeart :size="13" :weight="是恋爱对象 ? 'fill' : 'bold'" />{{ 是恋爱对象 ? '取消恋爱对象' : '标记恋爱对象' }}
+                          <PhHeart :size="13" :weight="是恋爱对象 ? 'fill' : 'bold'" />{{
+                            是恋爱对象 ? '取消恋爱对象' : '标记恋爱对象'
+                          }}
                         </button>
-                        <button v-if="!editingNpc" class="bf-btn bf-btn-mini" @click="startEditNpc"><PhPencilSimple :size="13" weight="bold" />编辑</button>
+                        <button v-if="!editingNpc" class="bf-btn bf-btn-mini" @click="startEditNpc">
+                          <PhPencilSimple :size="13" weight="bold" />编辑
+                        </button>
                         <template v-else>
-                          <button class="bf-btn bf-btn-mini bf-btn-primary" @click="saveEditNpc"><PhCheck :size="13" weight="bold" />保存</button>
-                          <button class="bf-btn bf-btn-mini" @click="cancelEditNpc"><PhX :size="13" weight="bold" />取消</button>
+                          <button class="bf-btn bf-btn-mini bf-btn-primary" @click="saveEditNpc">
+                            <PhCheck :size="13" weight="bold" />保存
+                          </button>
+                          <button class="bf-btn bf-btn-mini" @click="cancelEditNpc">
+                            <PhX :size="13" weight="bold" />取消
+                          </button>
                         </template>
                       </div>
                     </div>
@@ -275,7 +331,9 @@
                             class="bf-textarea bf-textarea-short"
                             rows="1"
                           ></textarea>
-                          <div v-else class="bf-spot-value bf-spot-value-loc">{{ cleanText(selectedNpcCard['位置']) }}</div>
+                          <div v-else class="bf-spot-value bf-spot-value-loc">
+                            {{ cleanText(selectedNpcCard['位置']) }}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -286,7 +344,9 @@
                     <!-- 空台账也要显示这一块: 否则"手动新增第一条"没有入口(下面那行输入框就是入口) -->
                     <div v-if="selectedNpc || 台账条目.length > 0 || editingNpc" class="bf-ledger">
                       <div class="bf-ledger-head">
-                        <span class="bf-ledger-title"><PhHandshake :size="13" weight="duotone" /> 未完成事项 · 事务台账</span>
+                        <span class="bf-ledger-title"
+                          ><PhHandshake :size="13" weight="duotone" /> 未完成事项 · 事务台账</span
+                        >
                         <span class="bf-ledger-hint">内容写下即冻结; 改状态/结果即时生效(不必点「编辑」)</span>
                       </div>
                       <div v-if="台账条目.length === 0" class="bf-ledger-blank">暂无</div>
@@ -308,7 +368,9 @@
                             <input
                               v-model="结果草稿[事务.编号]"
                               class="bf-input bf-ledger-result"
-                              :placeholder="事务.结果 ? '改写结果/作废原因(提交即覆盖)' : '结果/作废原因(可选; 与 AI 写的同格式)'"
+                              :placeholder="
+                                事务.结果 ? '改写结果/作废原因(提交即覆盖)' : '结果/作废原因(可选; 与 AI 写的同格式)'
+                              "
                               :disabled="updating"
                             />
                             <div class="bf-seg bf-ledger-seg">
@@ -351,9 +413,16 @@
                     <!-- 分组字段 -->
                     <div class="bf-detail-groups">
                       <div v-for="组 in detailFields" :key="组.key" class="bf-field-group">
-                        <div class="bf-field-group-title"><component :is="组.图标" :size="13" weight="duotone" /> {{ 组.标题 }}</div>
+                        <div class="bf-field-group-title">
+                          <component :is="组.图标" :size="13" weight="duotone" /> {{ 组.标题 }}
+                        </div>
                         <div class="bf-field-grid">
-                          <div v-for="field in 组.字段" :key="field" v-show="selectedNpcCard[field] || editingNpc" class="bf-field">
+                          <div
+                            v-for="field in 组.字段"
+                            :key="field"
+                            v-show="selectedNpcCard[field] || editingNpc"
+                            class="bf-field"
+                          >
                             <span class="bf-field-label" :title="字段说明表[field] || field">{{ field }}</span>
                             <!-- 枚举字段用下拉(词表来自 恋爱规则.ts), 免得手打错字被代码丢弃 -->
                             <select
@@ -363,7 +432,13 @@
                             >
                               <option v-if="field === '情感倾向'" value="" disabled>（未设置）</option>
                               <option v-else value="">（无 / 清空）</option>
-                              <option v-for="选项 in (field === '情感倾向' ? 情感倾向选项 : 名分词表)" :key="选项" :value="选项">{{ 选项 }}</option>
+                              <option
+                                v-for="选项 in field === '情感倾向' ? 情感倾向选项 : 名分词表"
+                                :key="选项"
+                                :value="选项"
+                              >
+                                {{ 选项 }}
+                              </option>
                             </select>
                             <textarea
                               v-else-if="editingNpc"
@@ -413,15 +488,22 @@
                           >
                             <span class="bf-ledger-no">{{ 事务.编号 }}</span>
                             <span class="bf-ledger-state" :class="'is-' + 状态类(事务.状态)">{{ 事务.状态 }}</span>
-                            <span class="bf-ledger-line-text">{{ 事务.内容 }}<template v-if="事务.结果"> → {{ 事务.结果 }}</template></span>
+                            <span class="bf-ledger-line-text"
+                              >{{ 事务.内容 }}<template v-if="事务.结果"> → {{ 事务.结果 }}</template></span
+                            >
                           </div>
                         </div>
                       </div>
                       <div v-if="item.近期关键事件" class="bf-consistency-row">
-                        <span class="bf-consistency-label"><PhBookmarkSimple :size="12" weight="duotone" /> 近期关键事件</span>
+                        <span class="bf-consistency-label"
+                          ><PhBookmarkSimple :size="12" weight="duotone" /> 近期关键事件</span
+                        >
                         <span class="bf-consistency-value">{{ item.近期关键事件 }}</span>
                       </div>
-                      <div v-if="item.未完成事项.length === 0 && !item.近期关键事件" class="bf-consistency-row bf-consistency-empty">
+                      <div
+                        v-if="item.未完成事项.length === 0 && !item.近期关键事件"
+                        class="bf-consistency-row bf-consistency-empty"
+                      >
                         <span class="bf-consistency-value">该 NPC 暂无事实档案(可在 NPC 详情页手动添加)</span>
                       </div>
                     </div>
@@ -439,7 +521,9 @@
                     <template v-if="debugLog">
                       <div class="bf-panel-card">
                         <div class="bf-debug-head bf-debug-head-section">
-                          <span class="bf-debug-head-label"><PhClipboardText :size="15" weight="duotone" /> 彼方更新记录</span>
+                          <span class="bf-debug-head-label"
+                            ><PhClipboardText :size="15" weight="duotone" /> 彼方更新记录</span
+                          >
                         </div>
                         <div class="bf-debug-meta">
                           <div class="bf-debug-meta-row">
@@ -471,8 +555,12 @@
 
                       <div class="bf-panel-card">
                         <div class="bf-debug-head">
-                          <span class="bf-debug-head-label"><PhPaperPlaneRight :size="14" weight="duotone" /> 发送给 AI 的内容</span>
-                          <button class="bf-btn bf-btn-mini" @click="copyText(debugLog.request)"><PhCopy :size="12" weight="bold" />复制</button>
+                          <span class="bf-debug-head-label"
+                            ><PhPaperPlaneRight :size="14" weight="duotone" /> 发送给 AI 的内容</span
+                          >
+                          <button class="bf-btn bf-btn-mini" @click="copyText(debugLog.request)">
+                            <PhCopy :size="12" weight="bold" />复制
+                          </button>
                         </div>
                         <details>
                           <summary class="bf-debug-summary">展开查看（{{ debugLog.request.length }} 字）</summary>
@@ -482,8 +570,12 @@
 
                       <div class="bf-panel-card">
                         <div class="bf-debug-head">
-                          <span class="bf-debug-head-label"><PhChatText :size="14" weight="duotone" /> AI 输出内容</span>
-                          <button class="bf-btn bf-btn-mini" @click="copyText(debugLog.response)"><PhCopy :size="12" weight="bold" />复制</button>
+                          <span class="bf-debug-head-label"
+                            ><PhChatText :size="14" weight="duotone" /> AI 输出内容</span
+                          >
+                          <button class="bf-btn bf-btn-mini" @click="copyText(debugLog.response)">
+                            <PhCopy :size="12" weight="bold" />复制
+                          </button>
                         </div>
                         <details>
                           <summary class="bf-debug-summary">展开查看（{{ debugLog.response.length }} 字）</summary>
@@ -494,13 +586,17 @@
                       <div v-if="debugLog.error" class="bf-panel-card bf-debug-error">
                         <div class="bf-debug-head">
                           <span class="bf-debug-head-label"><PhWarning :size="14" weight="duotone" /> 报错内容</span>
-                          <button class="bf-btn bf-btn-mini" @click="copyText(debugLog.error)"><PhCopy :size="12" weight="bold" />复制</button>
+                          <button class="bf-btn bf-btn-mini" @click="copyText(debugLog.error)">
+                            <PhCopy :size="12" weight="bold" />复制
+                          </button>
                         </div>
                         <pre class="bf-debug-pre">{{ debugLog.error }}</pre>
                       </div>
 
                       <div class="bf-dash-actions">
-                        <button class="bf-btn bf-btn-primary" @click="copyErrorReport"><PhClipboardText :size="14" weight="bold" />复制报错内容发给助手</button>
+                        <button class="bf-btn bf-btn-primary" @click="copyErrorReport">
+                          <PhClipboardText :size="14" weight="bold" />复制报错内容发给助手
+                        </button>
                         <button class="bf-btn" @click="debugStore.clear()">清空更新记录</button>
                       </div>
                     </template>
@@ -516,12 +612,20 @@
                   <div class="bf-logs-side">
                     <div class="bf-panel-card">
                       <div class="bf-debug-head">
-                        <span class="bf-debug-head-label"><PhBrain :size="14" weight="duotone" /> 彼方写入世界书的内容</span>
+                        <span class="bf-debug-head-label"
+                          ><PhBrain :size="14" weight="duotone" /> 彼方写入世界书的内容</span
+                        >
                         <template v-if="mainPrompt">
-                          <button class="bf-btn bf-btn-mini" @click="copyText(mainPrompt)"><PhCopy :size="12" weight="bold" />复制</button>
+                          <button class="bf-btn bf-btn-mini" @click="copyText(mainPrompt)">
+                            <PhCopy :size="12" weight="bold" />复制
+                          </button>
                         </template>
                       </div>
-                      <div v-if="mainPrompt" class="bf-hint">记录时间: {{ fmtTime(mainPromptTime) }} · 已记录 {{ mainPromptCount }} 次（写入角色卡主世界书常驻条目的幕后状态；主AI 与任何读取该世界书的环节读到的就是这一段）</div>
+                      <div v-if="mainPrompt" class="bf-hint">
+                        记录时间: {{ fmtTime(mainPromptTime) }} · 已记录
+                        {{ mainPromptCount }} 次（写入角色卡主世界书常驻条目的幕后状态；主AI
+                        与任何读取该世界书的环节读到的就是这一段）
+                      </div>
                       <template v-if="mainPrompt">
                         <details>
                           <summary class="bf-debug-summary">展开查看（{{ mainPrompt.length }} 字）</summary>
@@ -530,20 +634,29 @@
                       </template>
                       <div v-else class="bf-empty">
                         <div class="bf-empty-text">还没有写入世界书的内容</div>
-                        <div class="bf-empty-hint">开启「写入世界书条目」并在更新后，这里显示彼方写入的幕后状态内容</div>
+                        <div class="bf-empty-hint">
+                          开启「写入世界书条目」并在更新后，这里显示彼方写入的幕后状态内容
+                        </div>
                       </div>
                     </div>
 
                     <div class="bf-panel-card">
                       <div class="bf-debug-head">
-                        <span class="bf-debug-head-label"><PhTerminalWindow :size="14" weight="duotone" /> 控制台输出（彼方脚本自身）</span>
+                        <span class="bf-debug-head-label"
+                          ><PhTerminalWindow :size="14" weight="duotone" /> 控制台输出（彼方脚本自身）</span
+                        >
                         <button class="bf-btn bf-btn-mini" @click="consoleStore.clear()">清空控制台</button>
                       </div>
                       <div v-if="consoleLines.length === 0" class="bf-empty">
                         <div class="bf-empty-text">暂无控制台输出</div>
                       </div>
                       <div v-else class="bf-console">
-                        <div v-for="(line, index) in consoleLinesReversed" :key="index" class="bf-console-line" :class="'bf-console-' + line.type">
+                        <div
+                          v-for="(line, index) in consoleLinesReversed"
+                          :key="index"
+                          class="bf-console-line"
+                          :class="'bf-console-' + line.type"
+                        >
                           <span class="bf-console-time">{{ fmtTime(line.time) }}</span>
                           <span class="bf-console-text">{{ line.text }}</span>
                         </div>
@@ -574,7 +687,9 @@
                           :type="showKey ? 'text' : 'password'"
                           placeholder="sk-..."
                         />
-                        <button class="bf-btn bf-btn-mini" @click="showKey = !showKey">{{ showKey ? '隐藏' : '显示' }}</button>
+                        <button class="bf-btn bf-btn-mini" @click="showKey = !showKey">
+                          {{ showKey ? '隐藏' : '显示' }}
+                        </button>
                       </div>
                       <div class="bf-row">
                         <span class="bf-label">模型</span>
@@ -594,11 +709,24 @@
                       <div class="bf-row-pair">
                         <div class="bf-pair">
                           <span class="bf-label">温度</span>
-                          <input v-model.number="settings.接口.温度" class="bf-input bf-input-num" type="number" min="0" max="2" step="0.1" />
+                          <input
+                            v-model.number="settings.接口.温度"
+                            class="bf-input bf-input-num"
+                            type="number"
+                            min="0"
+                            max="2"
+                            step="0.1"
+                          />
                         </div>
                         <div class="bf-pair">
                           <span class="bf-label">最大输出Token</span>
-                          <input v-model.number="settings.接口.最大token" class="bf-input bf-input-num" type="number" min="1" max="131072" />
+                          <input
+                            v-model.number="settings.接口.最大token"
+                            class="bf-input bf-input-num"
+                            type="number"
+                            min="1"
+                            max="131072"
+                          />
                         </div>
                       </div>
                       <label class="bf-toggle">
@@ -606,10 +734,15 @@
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">流式输出</span>
                       </label>
-                      <div class="bf-hint">请求走酒馆服务器转发，不会遇到跨域(CORS)问题；关闭流式则等整段返回</div>
+                      <div class="bf-hint">请求走酒馆服务器转发</div>
                       <div class="bf-row">
                         <span class="bf-label">配置预设</span>
-                        <input v-model="presetName" class="bf-input" placeholder="预设名，如 DeepSeek" @keyup.enter="saveApiPreset" />
+                        <input
+                          v-model="presetName"
+                          class="bf-input"
+                          placeholder="预设名，如 DeepSeek"
+                          @keyup.enter="saveApiPreset"
+                        />
                         <button class="bf-btn bf-btn-mini" @click="saveApiPreset">保存当前</button>
                       </div>
                       <div v-if="presetNames.length > 0" class="bf-row">
@@ -625,33 +758,37 @@
 
                     <div class="bf-group">
                       <div class="bf-group-title"><PhStarFour :size="14" weight="duotone" /> 提示词强化</div>
-                      <div class="bf-hint">改变发给彼方接口的提示词结构，用于对位特定预设/绕过限制；无需改动时保持默认</div>
+                      <div class="bf-hint">改变发给彼方接口的提示词结构；无需改动时保持默认</div>
                       <label class="bf-toggle">
                         <input v-model="settings.更新.提示词头部填充" type="checkbox" />
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">提示词头部填充</span>
                       </label>
                       <div class="bf-hint">在消息最前插入文本作为第一条消息</div>
-                      <textarea v-model="settings.更新.头部填充文本" class="bf-textarea bf-textarea-short" placeholder="留空使用内置「陨落的天才」(斗破苍穹)文本"></textarea>
-                      <div class="bf-hint">自定义头部填充文本：想换小说直接粘贴到这里，清空则恢复内置文本；支持酒馆宏替换</div>
+                      <textarea
+                        v-model="settings.更新.头部填充文本"
+                        class="bf-textarea bf-textarea-short"
+                        placeholder="留空使用内置文本"
+                      ></textarea>
+                      <div class="bf-hint">自定义头部填充文本：想换小说直接粘贴到这里，清空则恢复内置文本</div>
                       <label class="bf-toggle">
                         <input v-model="settings.更新.防截断" type="checkbox" />
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">防截断</span>
                       </label>
-                      <div class="bf-hint">gemini3.7f 对位预设[27]: 在 system 末尾缝入「牢大」免责声明段；3.6F 起不支持预填充，可关「预填充」配合</div>
+                      <div class="bf-hint">kemini防截断</div>
                       <label class="bf-toggle">
                         <input v-model="settings.更新.破限" type="checkbox" />
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">破限</span>
                       </label>
-                      <div class="bf-hint">任务后注入 SPECIAL NOTE 身份强化(防注入/思考语气/无安全限制)并预置 AI 承诺(看过任务后的应答)；关闭后只发送任务本身</div>
+                      <div class="bf-hint">izumi破限</div>
                       <label class="bf-toggle">
                         <input v-model="settings.更新.预填充" type="checkbox" />
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">预填充(prefill)</span>
                       </label>
-                      <div class="bf-hint">追加 assistant 消息引导直接从 JSON 输出，减少格式失败；DeepSeek/GLM/Qwen/Claude 大多支持，报错就关</div>
+                      <div class="bf-hint">追加 assistant 消息引导直接从 JSON 输出，报错就关</div>
                     </div>
                   </div>
 
@@ -675,7 +812,9 @@
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">正文新角色自动建档</span>
                       </label>
-                      <div class="bf-hint">开启后正文出现新角色自动建档追踪；关闭后只更新已追踪的 NPC，新角色不建档（可手动加到名单）</div>
+                      <div class="bf-hint">
+                        开启后正文出现新角色自动建档追踪；关闭后只更新已追踪的 NPC，新角色不建档（可手动加到名单）
+                      </div>
                       <label class="bf-toggle">
                         <input v-model="settings.更新.追踪当前角色" type="checkbox" />
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
@@ -699,19 +838,42 @@
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">给彼方接口注入世界书内容</span>
                       </label>
-                      <div class="bf-hint">按主AI方式激活世界书条目，让更新AI理解世界设定；不读全局世界书</div>
-                      <textarea v-model="worldbookAlwaysDraft" class="bf-textarea bf-textarea-short" placeholder="角色名/人设条目名，如「苏禾」或「人设」"></textarea>
-                      <div class="bf-hint">常驻注入：每行一个条目名/关键词，每次都强制注入(不走关键词激活)——角色人设条目通常按关键词触发，正文没提到该角色时更新AI就读不到人设；换角色卡后匹配不到会静默跳过</div>
-                      <textarea v-model="worldbookExcludeDraft" class="bf-textarea bf-textarea-short" placeholder="【彼方】NPC幕后生活"></textarea>
-                      <div class="bf-hint">排除不注入的世界书条目，每行一个条目名(或其关键词)，如「【彼方】NPC幕后生活」</div>
+                      <div class="bf-hint">按酒馆AI方式激活世界书条目，不读全局世界书</div>
+                      <textarea
+                        v-model="worldbookAlwaysDraft"
+                        class="bf-textarea bf-textarea-short"
+                        placeholder="角色名/人设条目名，如「苏禾」或「人设」"
+                      ></textarea>
+                      <div class="bf-hint">
+                        常驻注入：每行一个条目名/关键词，每次都强制注入(不走关键词激活)；匹配不到会静默跳过
+                      </div>
+                      <textarea
+                        v-model="worldbookExcludeDraft"
+                        class="bf-textarea bf-textarea-short"
+                        placeholder="【彼方】NPC幕后生活"
+                      ></textarea>
+                      <div class="bf-hint">
+                        排除不注入的世界书条目，每行一个条目名(或其关键词)，如「【彼方】NPC幕后生活」
+                      </div>
                       <div class="bf-row-pair">
                         <div class="bf-pair">
                           <span class="bf-label">更新频率</span>
-                          <input v-model.number="settings.更新.更新频率" class="bf-input bf-input-num" type="number" min="1" />
+                          <input
+                            v-model.number="settings.更新.更新频率"
+                            class="bf-input bf-input-num"
+                            type="number"
+                            min="1"
+                          />
                         </div>
                         <div class="bf-pair">
                           <span class="bf-label">读取回复数</span>
-                          <input v-model.number="settings.更新.读取最近回复数" class="bf-input bf-input-num" type="number" min="1" max="20" />
+                          <input
+                            v-model.number="settings.更新.读取最近回复数"
+                            class="bf-input bf-input-num"
+                            type="number"
+                            min="1"
+                            max="20"
+                          />
                         </div>
                       </div>
                       <div class="bf-hint">每 N 条回复更新一次 · 更新时读取最近 N 条AI回复</div>
@@ -738,9 +900,16 @@
                           </button>
                         </div>
                       </div>
-                      <textarea v-model="tagDraft" class="bf-textarea bf-textarea-short" placeholder="aftertalk&#10;thinking&#10;branches"></textarea>
+                      <textarea
+                        v-model="tagDraft"
+                        class="bf-textarea bf-textarea-short"
+                        placeholder="aftertalk&#10;thinking&#10;branches"
+                      ></textarea>
                       <div class="bf-hint">
-                        <template v-if="settings.标签.模式 === '排除'">排除这些标签内的内容，直接写标签名(如 thinking，不用尖括号)；只出现 &lt;/标签&gt; 的孤立闭合会从楼层开头删到该标签</template>
+                        <template v-if="settings.标签.模式 === '排除'"
+                          >排除这些标签内的内容，直接写标签名(如 thinking，不用尖括号)；只出现 &lt;/标签&gt;
+                          的孤立闭合会从楼层开头删到该标签</template
+                        >
                         <template v-else>只读取这些标签内的内容；没有这些标签的楼层保留原文</template>
                       </div>
                     </div>
@@ -774,8 +943,19 @@
         </label>
         <label v-for="字段 in 建档字段" :key="字段.名" class="bf-row">
           <span class="bf-label" :title="字段.说明">{{ 字段.名 }}</span>
-          <input v-if="字段.输入 === 'input'" v-model="addDraft[字段.名]" class="bf-input" :placeholder="字段.占位 || 字段.说明" />
-          <textarea v-else v-model="addDraft[字段.名]" class="bf-textarea bf-textarea-short" rows="2" :placeholder="字段.占位 || 字段.说明"></textarea>
+          <input
+            v-if="字段.输入 === 'input'"
+            v-model="addDraft[字段.名]"
+            class="bf-input"
+            :placeholder="字段.占位 || 字段.说明"
+          />
+          <textarea
+            v-else
+            v-model="addDraft[字段.名]"
+            class="bf-textarea bf-textarea-short"
+            rows="2"
+            :placeholder="字段.占位 || 字段.说明"
+          ></textarea>
         </label>
         <div class="bf-hint">初始状态可后续在 NPC 详情中补充或编辑（不含生理监测字段）</div>
         <div class="bf-row bf-actions">
@@ -924,7 +1104,14 @@ function 量球(): boolean {
     return false;
   }
   const 旧 = 球矩形.value;
-  if (旧 && Math.abs(旧.x - r.left) < 0.5 && Math.abs(旧.y - r.top) < 0.5 && Math.abs(旧.w - r.width) < 0.5 && Math.abs(旧.h - r.height) < 0.5) return false;
+  if (
+    旧 &&
+    Math.abs(旧.x - r.left) < 0.5 &&
+    Math.abs(旧.y - r.top) < 0.5 &&
+    Math.abs(旧.w - r.width) < 0.5 &&
+    Math.abs(旧.h - r.height) < 0.5
+  )
+    return false;
   球矩形.value = { x: r.left, y: r.top, w: r.width, h: r.height, cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
   return true;
 }
@@ -945,7 +1132,8 @@ function 球锚点(): { x: number; y: number; r: number } {
   const 入口 = 取收纳坞入口(parentWin.value?.document, frame.value);
   if (入口) {
     const r = 入口.getBoundingClientRect();
-    if (r.width || r.height) return { x: r.left + r.width / 2, y: r.top + r.height / 2, r: Math.max(r.width, r.height) / 2 };
+    if (r.width || r.height)
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2, r: Math.max(r.width, r.height) / 2 };
   }
   const 实 = 球矩形.value;
   if (实) return { x: 实.cx, y: 实.cy, r: Math.max(实.w, 实.h) / 2 };
@@ -1046,12 +1234,12 @@ const addDraft = ref<Record<string, any>>({});
 
 function openAddDialog() {
   addDraft.value = {
-    '名字': newNpcName.value.trim(),
-    '身份锚点': '',
-    '当前在做': '',
-    '当前状态': '',
-    '位置': '',
-    '接下来想做': '',
+    名字: newNpcName.value.trim(),
+    身份锚点: '',
+    当前在做: '',
+    当前状态: '',
+    位置: '',
+    接下来想做: '',
   };
   addDialogOpen.value = true;
 }
@@ -1096,7 +1284,9 @@ const stats = computed(() => data.value.统计 ?? { 更新次数: 0, 最后更�
 const modelList = computed(() => settings.value.接口.模型列表);
 const ready = computed(() => Boolean(settings.value.接口.地址 && settings.value.接口.模型));
 const statusTitle = computed(() =>
-  ready.value ? `接口: ${settings.value.接口.地址} · 模型: ${settings.value.接口.模型}` : '请在「设置」中配置接口地址与模型',
+  ready.value
+    ? `接口: ${settings.value.接口.地址} · 模型: ${settings.value.接口.模型}`
+    : '请在「设置」中配置接口地址与模型',
 );
 
 const now = ref(Date.now());
@@ -1142,7 +1332,9 @@ function startEditNpc() {
 }
 
 /** 详情页的事务台账(已归一、进行中在前、已办在后)——渲染用, 不写回 */
-const 台账条目 = computed<幕后事务[]>(() => 显示台账((selectedNpcCard.value as Record<string, any> | null)?.[台账字段]));
+const 台账条目 = computed<幕后事务[]>(() =>
+  显示台账((selectedNpcCard.value as Record<string, any> | null)?.[台账字段]),
+);
 
 /** 每行结果输入框的草稿: 没动过的行不在这里(于是沿用该条已有的结果, 见 取行结果) */
 const 结果草稿 = ref<Record<string, string>>({});
@@ -1235,7 +1427,9 @@ const detailFields = computed(() =>
   分组展示
     .map(组 => ({
       ...组,
-      字段: (字段分组表[组.key] || []).filter(f => f !== 台账字段 && ((selectedNpcCard.value as NpcStateCard)?.[f] || editingNpc.value)),
+      字段: (字段分组表[组.key] || []).filter(
+        f => f !== 台账字段 && ((selectedNpcCard.value as NpcStateCard)?.[f] || editingNpc.value),
+      ),
     }))
     .filter(组 => 组.字段.length > 0),
 );
@@ -1278,7 +1472,8 @@ function npcTags(card: NpcStateCard): NpcTag[] {
   const tags: NpcTag[] = [];
   const status = `${card['当前状态'] || ''} ${card['当前在做'] || ''}`;
   if (/睡|休息|就寝|午休|打盹/.test(status)) tags.push({ label: '睡眠', color: 'purple' });
-  if (/工作|巡逻|食堂|任务|执勤|值班|搬运|修理|劳作|耕种|狩猎|采集|打猎|锻炼|训练|站岗/.test(status)) tags.push({ label: '工作', color: 'blue' });
+  if (/工作|巡逻|食堂|任务|执勤|值班|搬运|修理|劳作|耕种|狩猎|采集|打猎|锻炼|训练|站岗/.test(status))
+    tags.push({ label: '工作', color: 'blue' });
   if (/吃|饭|餐|喝|用餐|就餐/.test(status)) tags.push({ label: '进食', color: 'teal' });
   if (/学习|上课|读书|复习|备考/.test(status)) tags.push({ label: '学习', color: 'teal' });
   if (/前往|走向|回家|返回|移动|离开|赶往|散步|赶路/.test(status)) tags.push({ label: '移动', color: 'orange' });
@@ -1476,8 +1671,7 @@ function persistOrbPos() {
 const UPDATING_POP_ID = '彼方_更新弹窗';
 let updatingPopEl: HTMLElement | null = null;
 /** 弹条外观(胶囊形, 与烟火更新弹条同款); 配色经 --bf-toast-* 变量跟随面板主题, 由 applyPopTheme 写入 */
-const UPDATING_POP_CSS =
-  `position:fixed;top:0;left:0;z-index:2147483000;display:none;align-items:center;gap:9px;padding:7px 9px 7px 15px;border-radius:999px;background:var(${弹窗变量.bg},${弹窗兜底配色.bg});border:1px solid var(${弹窗变量.border},${弹窗兜底配色.border});color:var(${弹窗变量.text},${弹窗兜底配色.text});font:12px/1.4 "Segoe UI","Microsoft YaHei",sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.45);user-select:none;white-space:nowrap;transform-origin:left center;animation:bfPopIn .32s cubic-bezier(.34,1.56,.64,1);`;
+const UPDATING_POP_CSS = `position:fixed;top:0;left:0;z-index:2147483000;display:none;align-items:center;gap:9px;padding:7px 9px 7px 15px;border-radius:999px;background:var(${弹窗变量.bg},${弹窗兜底配色.bg});border:1px solid var(${弹窗变量.border},${弹窗兜底配色.border});color:var(${弹窗变量.text},${弹窗兜底配色.text});font:12px/1.4 "Segoe UI","Microsoft YaHei",sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.45);user-select:none;white-space:nowrap;transform-origin:left center;animation:bfPopIn .32s cubic-bezier(.34,1.56,.64,1);`;
 const UPDATING_POP_HTML = `
     <span class="bf-pop-spin" style="width:7px;height:7px;border-radius:50%;background:var(${弹窗变量.accent},${弹窗兜底配色.accent});display:inline-block;animation:bf-pop-spin 1.4s ease-in-out infinite;flex:none;"></span>
     <span class="bf-pop-msg"></span>
@@ -1795,9 +1989,7 @@ function clearAll() {
   justify-content: center;
   cursor: grab;
   border: none;
-  background:
-    radial-gradient(circle at 50% 40%, var(--bf-accent-soft), transparent 62%),
-    var(--bf-orb-bg);
+  background: radial-gradient(circle at 50% 40%, var(--bf-accent-soft), transparent 62%), var(--bf-orb-bg);
   box-shadow:
     inset 0 0 0 1px var(--bf-orb-ring),
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
@@ -1899,7 +2091,14 @@ function clearAll() {
   left: 0;
   right: 0;
   height: 2px;
-  background: linear-gradient(90deg, transparent, var(--bf-accent-soft), var(--bf-accent), var(--bf-accent-soft), transparent);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--bf-accent-soft),
+    var(--bf-accent),
+    var(--bf-accent-soft),
+    transparent
+  );
   opacity: 0.7;
 }
 .bf-brand {
@@ -1915,9 +2114,7 @@ function clearAll() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background:
-    radial-gradient(circle at 50% 30%, var(--bf-accent-soft), transparent 72%),
-    var(--bf-bg2);
+  background: radial-gradient(circle at 50% 30%, var(--bf-accent-soft), transparent 72%), var(--bf-bg2);
   border: 1px solid var(--bf-border-strong);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
   color: var(--bf-accent);
@@ -1969,7 +2166,9 @@ function clearAll() {
   color: var(--bf-dim);
   font-size: 13px;
   cursor: pointer;
-  transition: background 0.16s ease, color 0.16s ease;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
   white-space: nowrap;
 }
 .bf-nav:hover {
@@ -2038,7 +2237,9 @@ function clearAll() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.16s ease, color 0.16s ease;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
 }
 .bf-icon-btn:hover {
   background: var(--bf-hover);
@@ -2110,7 +2311,10 @@ function clearAll() {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  transition: background 0.16s ease, transform 0.16s ease, border-color 0.16s ease;
+  transition:
+    background 0.16s ease,
+    transform 0.16s ease,
+    border-color 0.16s ease;
 }
 .bf-side-card:hover {
   background: var(--bf-hover);
@@ -2218,7 +2422,9 @@ function clearAll() {
   background: var(--bf-bg2);
   border: 1px solid var(--bf-border);
   cursor: pointer;
-  transition: background 0.16s ease, border-color 0.16s ease;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease;
   min-width: 0;
 }
 .bf-dash-npc:hover {
@@ -2272,7 +2478,9 @@ function clearAll() {
   color: var(--bf-text);
   font-size: 13px;
   cursor: pointer;
-  transition: background 0.16s ease, border-color 0.16s ease;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease;
 }
 .bf-btn:hover:not(:disabled) {
   background: var(--bf-hover);
@@ -2451,7 +2659,9 @@ function clearAll() {
   background: var(--bf-card);
   border: 1px solid var(--bf-border);
   cursor: pointer;
-  transition: background 0.16s ease, border-color 0.16s ease;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease;
 }
 .bf-npc-item:hover {
   background: var(--bf-hover);
@@ -2707,7 +2917,6 @@ function clearAll() {
   white-space: pre-wrap;
   word-break: break-word;
 }
-
 
 /* ---------- 事实档案 ---------- */
 .bf-page-hint {
@@ -3151,7 +3360,9 @@ function clearAll() {
   color: var(--bf-text);
   font-size: 13px;
   outline: none;
-  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease;
 }
 .bf-input:focus {
   border-color: var(--bf-accent);
@@ -3182,7 +3393,9 @@ function clearAll() {
   resize: vertical;
   font-family: inherit;
   box-sizing: border-box;
-  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease;
 }
 .bf-textarea:focus {
   border-color: var(--bf-accent);
@@ -3221,7 +3434,9 @@ function clearAll() {
   background: var(--bf-bg2);
   border: 1px solid var(--bf-border);
   position: relative;
-  transition: background 0.18s ease, border-color 0.18s ease;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease;
   flex: none;
 }
 .bf-toggle input:checked + .bf-toggle-track {
@@ -3319,7 +3534,14 @@ function clearAll() {
   left: 0;
   right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, var(--bf-accent-soft), var(--bf-accent), var(--bf-accent-soft), transparent);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--bf-accent-soft),
+    var(--bf-accent),
+    var(--bf-accent-soft),
+    transparent
+  );
   opacity: 0.5;
 }
 .bf-footer-spacer {
@@ -3356,7 +3578,9 @@ function clearAll() {
 }
 .bf-pagefade-enter-active,
 .bf-pagefade-leave-active {
-  transition: opacity 0.16s ease, transform 0.16s ease;
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
 }
 .bf-pagefade-enter-from {
   opacity: 0;
@@ -3555,6 +3779,4 @@ function clearAll() {
     max-height: 300px;
   }
 }
-
-
 </style>

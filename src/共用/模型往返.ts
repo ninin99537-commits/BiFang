@@ -18,12 +18,24 @@
 //    (2026-10-01 真机实测: 3284 字的世界 JSON 被砍断, 手动重推即成功)。
 //
 // 它不碰平台: 发请求 / 记日志 / 报进度 都是参数(与各自的 host 接缝接得上), 所以没有平台也能测。
+//
+// 2026-10-11 (v2.8.5 D1): 每次尝试各留一份账(`尝试: [{次, 原文, 错误}]`, 见 往返尝试),
+//    失败那次**连同完整原文**一起留 —— 以前后一次直接盖掉前一次, 线上失败查不出模型当时到底输出了什么。
 // ---------------------------------------------------------------------------
 
 /** 失败发生在哪一步 */
 type 错误阶段 = '请求' | '解析' | '校验';
 /** 一次失败怎么处理: 接口错=等久一点直接重试; 反馈=有输出可重试(原样重发); 致命=当场抛出 */
 type 错误归属 = '接口' | '反馈' | '致命';
+
+/**
+ * 一次尝试留下的账: **每一次都留一份, 失败那次也全留**。
+ *
+ * 以前每次尝试都写同一个 `response` 字段, 后一次直接盖掉前一次 —— 建档那轮第 1 次解析失败,
+ * 3593 字原文只剩报错里嵌的前 300 字, 线上失败再也没法回放(用户已经为此发过一次火)。
+ * 现在每次尝试各自一条: 有输出就留**完整原文**, 失败就把错因挂在同一条上。
+ */
+type 往返尝试 = { 次: number; 原文: string | null; 错误: string | null };
 
 type 往返参数 = {
     /** 基础消息(每次尝试都原样重发这一份) */
@@ -63,6 +75,14 @@ async function 请求并校验(参数: 往返参数): Promise<{ parsed: any; 请
     let 失败: Error | null = null;
     let 请求耗时 = 0;
     let 请求次数 = 0;
+    // 每一次尝试的账(见 往返尝试 的注释): 每次写日志都把当前这一摞带上, 谁也别盖谁
+    const 尝试记录: 往返尝试[] = [];
+    const 尝试快照 = () => 尝试记录.map(项 => ({ ...项 }));
+    /** 写日志的唯一出口: 保证"每次尝试各留一份"总是跟着记录一起进面板 */
+    const 记这次 = (额外: Record<string, unknown> = {}) => 记日志({ time: Date.now(), 尝试: 尝试快照(), ...额外 });
+    const 这次 = () => 尝试记录[尝试记录.length - 1];
+    /** 最近一次失败(用于"失败过但重试成功"的收尾: 那一轮不是失败, 别在日志上留红灯) */
+    let 最近失败: string | null = null;
 
     for (let attempt = 1; attempt <= 最多尝试; attempt++) {
         // 重试 = 原样重发同一份提示词(不回喂上次输出, 也不带错误原因)
@@ -81,16 +101,23 @@ async function 请求并校验(参数: 往返参数): Promise<{ parsed: any; 请
             请求次数 += 1;
             if (prefill && String(content).trim().charAt(0) !== '{')
                 content = prefill + content;
-            记日志({ time: Date.now(), response: content });
+            // 有输出就先留档: 后面不管解析成不成功, 这一份原文都在
+            尝试记录.push({ 次: attempt, 原文: content, 错误: null });
+            记这次({ response: content });
         }
         catch (error) {
             if (signal.aborted)
                 throw Error(中断文案, { cause: error });
             失败 = error instanceof Error ? error : Error(String(error));
             const 归属 = 判断错误(失败, '请求');
-            if (归属 === '致命')
+            尝试记录.push({ 次: attempt, 原文: null, 错误: `接口调用失败: ${失败.message}` });
+            if (归属 === '致命') {
+                // 致命也要留账再抛: 否则调用方的 catch 只留下一句错因, 这次尝试就查不到了
+                记这次();
                 throw 失败;
-            记日志({ time: Date.now(), error: `接口调用失败(第 ${attempt}/${最多尝试} 次): ${失败.message}` });
+            }
+            记这次({ error: `接口调用失败(第 ${attempt}/${最多尝试} 次): ${失败.message}` });
+            最近失败 = `第 ${attempt} 次接口调用失败`;
             if (attempt < 最多尝试 && !signal.aborted) {
                 报进度(`接口调用失败，正在重试（${attempt}/${最多尝试}）…`);
                 console.warn(`[${名字}] 接口调用失败(第 ${attempt} 次), 正在重试…:`, 失败.message);
@@ -106,9 +133,14 @@ async function 请求并校验(参数: 往返参数): Promise<{ parsed: any; 请
         catch (error) {
             失败 = error instanceof Error ? error : Error(String(error));
             const 归属 = 判断错误(失败, '解析');
-            if (归属 === '致命' || 归属 === '接口')
+            if (这次())
+                这次()!.错误 = 失败.message;
+            if (归属 === '致命' || 归属 === '接口') {
+                记这次();
                 throw 失败;
-            记日志({ time: Date.now(), error: `${结构失败标签}(第 ${attempt}/${最多尝试} 次): ${失败.message}` });
+            }
+            最近失败 = `第 ${attempt} 次解析没过`;
+            记这次({ error: `${结构失败标签}(第 ${attempt}/${最多尝试} 次): ${失败.message}` });
             if (attempt < 最多尝试 && !signal.aborted) {
                 const 理由 = 参数.取重试理由(失败);
                 报进度(`正在重试（${attempt}/${最多尝试}）：${理由}`);
@@ -126,9 +158,14 @@ async function 请求并校验(参数: 往返参数): Promise<{ parsed: any; 请
         catch (error) {
             失败 = error instanceof Error ? error : Error(String(error));
             const 归属 = 判断错误(失败, '校验');
-            if (归属 === '致命')
+            if (这次())
+                这次()!.错误 = 失败.message;
+            if (归属 === '致命') {
+                记这次();
                 throw 失败;
-            记日志({ time: Date.now(), error: `${结构失败标签}(第 ${attempt}/${最多尝试} 次): ${失败.message}` });
+            }
+            最近失败 = `第 ${attempt} 次校验没过`;
+            记这次({ error: `${结构失败标签}(第 ${attempt}/${最多尝试} 次): ${失败.message}` });
             if (attempt < 最多尝试 && !signal.aborted) {
                 const 理由 = 参数.取重试理由(失败);
                 报进度(`正在重试（${attempt}/${最多尝试}）：${理由}`);
@@ -140,8 +177,12 @@ async function 请求并校验(参数: 往返参数): Promise<{ parsed: any; 请
 
     if (parsed === null)
         throw 失败 ?? Error('解析失败');
+    // 失败过、但后来重试成功: 这一轮**不是失败**, 把红灯清掉, 只在备注里交代一声
+    // (v2.8.5 D7: 恒定/残留的 error 会训练人忽略报错; 失败那次的完整原文在 尝试 里, 一个字都没丢)
+    if (最近失败)
+        记这次({ error: '', 备注: [`${最近失败}, 重试后成功(本轮已正常返回)`] });
     return { parsed, 请求耗时, 请求次数 };
 }
 
 export { 请求并校验 };
-export type { 往返参数, 错误归属, 错误阶段 };
+export type { 往返参数, 错误归属, 错误阶段, 往返尝试 };

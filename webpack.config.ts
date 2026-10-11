@@ -3,7 +3,7 @@ import HtmlInlineScriptWebpackPlugin from 'html-inline-script-webpack-plugin';
 import HtmlWebpackPlugin from 'html-webpack-plugin';
 import _ from 'lodash';
 import MiniCssExtractPlugin from 'mini-css-extract-plugin';
-import { ChildProcess, exec, spawn } from 'node:child_process';
+import { ChildProcess, exec, execSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -28,6 +28,31 @@ interface Entry {
   script: string;
   html?: string;
 }
+
+/**
+ * 构建信息: 打进 bundle 的 commit 短哈希与构建时间(v2.8.5 D2)。
+ * 真机上跑的是打包产物, 光看源码分不出用户手上是哪一版 —— 有了它, 启动日志/报错报告就能当场对上号。
+ * CI(github actions)里优先用 GITHUB_SHA; 本地取 git; 都没有(纯 tar 包/没装 git)就退化成 unknown。
+ */
+const 构建信息 = (() => {
+  let commit = (process.env.GITHUB_SHA ?? '').slice(0, 7);
+  if (!commit) {
+    try {
+      commit = execSync('git rev-parse --short HEAD', { cwd: import.meta.dirname, stdio: ['ignore', 'pipe', 'ignore'] })
+        .toString()
+        .trim();
+    }
+    catch {
+      commit = 'unknown';
+    }
+  }
+  const 现在 = new Date();
+  const 补 = (n: number) => String(n).padStart(2, '0');
+  return {
+    commit: commit || 'unknown',
+    构建时间: `${现在.getFullYear()}-${补(现在.getMonth() + 1)}-${补(现在.getDate())} ${补(现在.getHours())}:${补(现在.getMinutes())}`,
+  };
+})();
 
 function parse_entry(script_file: string) {
   const html = path.join(path.dirname(script_file), 'index.html');
@@ -473,6 +498,8 @@ function parse_configuration(entry: Entry): (_env: any, argv: any) => webpack.Co
           __VUE_OPTIONS_API__: JSON.stringify(false),
           __VUE_PROD_DEVTOOLS__: JSON.stringify(false),
           __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: JSON.stringify(false),
+          // v2.8.5 D2: 构建那一刻的 commit 与时间, 进启动日志/报错报告(见 src/烟火_世界运转/版本.ts)
+          __构建信息__: JSON.stringify(构建信息),
         }),
       )
       .concat(
