@@ -69,9 +69,19 @@
 
 ## 安装
 
+> ⚠️ **2026-10-17 起：三个发布仓（BiFang / YanHuo / DaoYan）都已转为私有。**
+> jsdelivr 的 `gh` 通道只服务公开仓，`raw.githubusercontent.com` 取私有仓要带鉴权头，
+> 所以**旧的引子（`docs/彼方-引子.js`）与下面的 jsdelivr 导入都不再可用**。
+> 现在装法只有一条：**把构建产物手动粘进酒馆助手**。
+
 1. 运行 `pnpm build` (或 `pnpm watch` 开发) 生成 `dist/彼方_NPC幕后生命状态系统/index.js`。
-2. 在酒馆助手中新建脚本, 将打包后的 `index.js` 内容填入并启用。
+   仓里的 `dist/彼方_NPC幕后生命状态系统/index.js` 就是同一份产物（CI 每次推送会重建它）——
+   也可以直接打开仓里这个文件、全选复制，省掉本地构建。
+2. 在酒馆助手中**新建脚本**，把那份 `index.js` 的**全文粘贴**进去并启用。
 3. 也可以把脚本文件夹放进 `src/彼方_NPC幕后生命状态系统` 后使用本项目的实时监听 / 热重载功能。
+
+**更新时**重复第 1–2 步（覆盖旧脚本内容即可）。产物里 `import` 的 `pinia` / `klona` / `json5`
+走的是公开 CDN，与仓的可见性无关，粘贴这条路照常能跑。
 
 ## 仓库与发布（重要 · 动手前先读这一节）
 
@@ -84,11 +94,13 @@
 | **YanHuo** `ninin99537-commits/YanHuo` | 烟火的官方发布仓（投影仓） | 烟火全量 + 共用（2026-10-11 起**不再装彼方**，历史搭车已摘） | 烟火 |
 | **DaoYan** `ninin99537-commits/DaoYan` | 剧情导演的发布仓（投影仓） | 剧情导演全量 + 共用（源码在仓内 `Source/` 下，`dist/` 在仓根） | 剧情导演 |
 
-用户通过 jsdelivr 直接 import **BiFang** 的发行产物：
+~~用户通过 jsdelivr 直接 import **BiFang** 的发行产物：~~
 
 ```
 import 'https://cdn.jsdelivr.net/gh/ninin99537-commits/BiFang@master/dist/彼方_NPC幕后生命状态系统/index.js';
 ```
+
+> **2026-10-17 起这条通道失效**：仓已转私有，jsdelivr 只服务公开仓。装法见上面的「安装」。
 
 ### ⚠️ 为什么不能直接 `git push`
 
@@ -118,7 +130,7 @@ import 'https://cdn.jsdelivr.net/gh/ninin99537-commits/BiFang@master/dist/彼方
    | `src/共用/**` | 三边共用（6 个文件，彼方/烟火/导演都引用）。**有改动才需要**；变更记录里早期的「两家」指当时还只有彼方与烟火 |
    | `tests/**` | 公共骨架 7 个（`build.mjs` / `run.mjs` / `platform-usage.mjs` / `tag-filter.test.ts` / `提示条.test.ts` / `提示条测试台.mjs` / `去信封.test.ts`）+ 本插件全部 `*.test.ts` |
    | `dist/彼方_NPC幕后生命状态系统/index.js` + `.js.map` | 第 2 步的产物 |
-   | `docs/彼方-引子.js` | 拷到**仓根**（名字不变）—— 酒馆里贴的那段就是它 |
+   | ~~`docs/彼方-引子.js`~~ | **2026-10-17 起作废**：三个仓都转私有，jsdelivr 与 raw.githubusercontent 都不服务私有仓，引子这条通道已经不能用（装法见上面的「安装」）。文件留着只为历史，**不必再同步** |
    | ~~`docs/仓库首页-彼方.md`~~ / ~~`docs/彼方-*.md`~~ | **2026-10-16 更正：工作区 `docs/` 里已经没有这些文件**（只剩 `mockups/` / `screenshots/` / `superpowers/`），仓的 `README.md` 与 `docs/` 现在**在仓里自行维护**，不在同步清单里。原规则仍有效：发布仓只放项目和开发文档，过程稿（讨论稿 / 回复 vN / 合流稿草案）不投 |
 
 4. 在检出里提交并推送：
