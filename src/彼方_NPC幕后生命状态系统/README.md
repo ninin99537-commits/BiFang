@@ -115,11 +115,11 @@ import 'https://cdn.jsdelivr.net/gh/ninin99537-commits/BiFang@master/dist/彼方
    | 复制什么 | 说明 |
    | ---- | ---- |
    | `src/彼方_NPC幕后生命状态系统/**` | 本插件全部源码 |
-   | `src/共用/**` | 两家共用（4 个文件），**有改动才需要** |
-   | `tests/**` | 公共骨架 4 个（`build.mjs` / `run.mjs` / `platform-usage.mjs` / `tag-filter.test.ts`）+ 本插件全部 `*.test.ts` |
+   | `src/共用/**` | 两家共用（5 个文件），**有改动才需要** |
+   | `tests/**` | 公共骨架 6 个（`build.mjs` / `run.mjs` / `platform-usage.mjs` / `tag-filter.test.ts` / `提示条.test.ts` / `提示条测试台.mjs`）+ 本插件全部 `*.test.ts` |
    | `dist/彼方_NPC幕后生命状态系统/index.js` + `.js.map` | 第 2 步的产物 |
-   | `docs/仓库首页-彼方.md` | **改名为 `README.md`**（投影仓的首页就是它） |
-   | `docs/彼方-*.md` / `.html` | 本插件的**开发文档**（策划案 / 架构复核 / 正式稿）。**内部过程稿不投**：讨论稿、回复 vN、合流稿草案只留工作区——2026-10-11 用户决定「发布仓只放项目和开发文档」，别再把过程稿带回去 |
+   | `docs/彼方-引子.js` | 拷到**仓根**（名字不变）—— 酒馆里贴的那段就是它 |
+   | ~~`docs/仓库首页-彼方.md`~~ / ~~`docs/彼方-*.md`~~ | **2026-10-16 更正：工作区 `docs/` 里已经没有这些文件**（只剩 `mockups/` / `screenshots/` / `superpowers/`），仓的 `README.md` 与 `docs/` 现在**在仓里自行维护**，不在同步清单里。原规则仍有效：发布仓只放项目和开发文档，过程稿（讨论稿 / 回复 vN / 合流稿草案）不投 |
 
 4. 在检出里提交并推送：
 
@@ -134,6 +134,7 @@ import 'https://cdn.jsdelivr.net/gh/ninin99537-commits/BiFang@master/dist/彼方
 - **`dist` 必须一起带上。** 工作区不跟踪它、投影仓跟踪它。漏了会让 jsdelivr 继续发旧产物（`[bot] bundle` 能兜底重建，但中间态期间线上是旧的）。
 - **别把其他插件带过去。** 剧情导演 / 正文美化 / 直播弹幕 / 自定义状态栏不属于这个投影。
 - **`.github/workflows/` 只放 `bundle.yaml`。** 工作区里另有 `bump_deps.yaml` / `sync_template.yaml`，那是模板上游维护用的，两个投影仓都没有它们。
+- **投影仓要各自装一次 `jsdom`（测试专用依赖）。** `tests/提示条.test.ts` 用 jsdom 把酒馆父页面摆出来，第一次真跑提示条的 DOM（以前只能断言源码文本，因为它画在 `window.parent.document` 上）。工作区这边已加进 `devDependencies`，但**投影仓的 `package.json` / 锁文件不在同步清单里**（它们各活各的），所以进仓后要 `pnpm add -D jsdom`；漏了会让 `pnpm test` 在打包那一步就红。
 - **`tests/platform-usage.mjs` 已兼容"缺项目"的投影仓。** 它扫的项目目录不存在就跳过（`statSync(..., { throwIfNoEntry: false })`），不再抛 `ENOENT`。所以投影仓里 `pnpm test` 最后那道「平台直连检查」不会因为它变红；**它红了就是真的出现了 `host.ts` 之外的平台直连**——那才是它要抓的东西。
 - **新克隆没有 git identity：`commit` 会失败，而 `push` 会撒谎。** 投影检出是全新克隆，本地与全局都没配 `user.name` / `user.email` 时，`git commit` 直接 `exit 128`（`Author identity unknown`）；**紧接着的 `git push` 会报 `Everything up-to-date`** —— 看起来像推成功了，其实根本没产生提交（工作树还是脏的）。先设本地身份（`git -C <检出> config user.name "..."` 与 `user.email "..."`，**只写本地、别加 `--global`**）再提交。
 - **判断推没推上去，看 `rev-parse` / `ls-remote`，不看 `push` 的输出。** `Everything up-to-date`、`Already up to date.` 都可能出现在"什么都没发生"的场景里。推完用 `git -C <检出> rev-parse HEAD` 与 `git -C <检出> ls-remote origin master` 对一次，两边一致、且 `status --porcelain` 为空，才算真的落地。

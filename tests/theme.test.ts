@@ -3,10 +3,13 @@
 // 以前: CSS 里一套色值 + toastVars 从 DOM 反读一套 + 面板/弹窗各自再带一套手抄回退色, 改一个颜色要改三处,
 // 漏了就是"弹窗和面板不是一个主题"。现在色值只在 theme.ts 里写一次。
 // 这个用例直接读源码文本, 所以"某个 token 被用了却没定义"这类问题会在测试里就暴露, 不会等到界面上才发现。
+// [8] 是例外: 那一段把提示条**真渲染出来**(jsdom 摆出酒馆父页面)—— 渲染机制已收进 共用/提示条.ts, 测得动了。
 import vueSource from '../src/彼方_NPC幕后生命状态系统/悬浮球界面.vue?raw';
 import toastSource from '../src/彼方_NPC幕后生命状态系统/toast.ts?raw';
 import themeSource from '../src/彼方_NPC幕后生命状态系统/theme.ts?raw';
-import { 主题样式文本, 主题表, 取弹窗配色, 弹窗变量 } from '../src/彼方_NPC幕后生命状态系统/theme';
+import { 主题样式文本, 主题表, 取弹窗配色, 弹窗变量, 弹窗兜底配色, 悬浮球直径 } from '../src/彼方_NPC幕后生命状态系统/theme';
+import { setToastAnchor, toastError, toastSuccess, toastWarning } from '../src/彼方_NPC幕后生命状态系统/toast';
+import { 装父文档, 装计时器, 归一色, 取堆栈, 取提示条们 } from './提示条测试台.mjs';
 
 let pass = 0;
 let fail = 0;
@@ -117,6 +120,39 @@ console.log('\n[7] 悬浮球直径只有一处: 球宽高 / 锚点偏移 / 提�
   ok('视图侧从 theme 取直径, 不再自己写死(曾经 40)', vueSource.includes('const CLOSED_SIZE = 悬浮球直径'));
   const 球 = /\.bf-orb \{[\s\S]*?width:\s*(\d+)px;[\s\S]*?height:\s*(\d+)px;/.exec(vueSource);
   check('.bf-orb 宽高 = 直径(CSS 写不出变量引用, 只能靠这条钉住)', [Number(球?.[1]), Number(球?.[2])], [直径, 直径]);
+}
+
+console.log('\n[8] 提示条 adapter: 画出来的是 theme.ts 那套变量, 贴球按直径算');
+{
+  const doc = 装父文档();
+  const 计时 = 装计时器();
+
+  toastSuccess('世界动了', '彼方');
+  const 堆栈 = 取堆栈(doc, 'bf')!;
+  const 条 = 取提示条们(doc, 'bf')[0] as HTMLElement;
+  ok('父页面上是 bf- 那套元素(不与烟火的 yh- 撞)', !!doc.getElementById('bf-toast-style') && !!堆栈);
+  check('文案 = 标题 + 消息', 条.textContent, '彼方世界动了');
+  check('底色兜底取 theme.ts 的 弹窗兜底配色', 条.style.background, `var(${弹窗变量.bg},${弹窗兜底配色.bg})`);
+  check('文字兜底取 theme.ts 的 弹窗兜底配色', 条.style.color, `var(${弹窗变量.text},${弹窗兜底配色.text})`);
+  check('成功档左边框', 条.style.borderLeft, `3px solid ${归一色(doc, '#4f9d69')}`);
+
+  // 没写过球心 → 兜底落点 = (视口宽 - 直径, 视口高 - 110), 再按半径让开
+  const vw = doc.defaultView!.innerWidth;
+  const vh = doc.defaultView!.innerHeight;
+  check('兜底球心贴球左侧', 堆栈.style.left, `${vw - 悬浮球直径 - 悬浮球直径 / 2 - 10}px`);
+  check('兜底球心纵坐标 = 视口高 - 110', 堆栈.style.top, `${vh - 110}px`);
+
+  setToastAnchor(500, 300);
+  toastWarning('要注意');
+  const 警告条 = 取提示条们(doc, 'bf')[1] as HTMLElement;
+  check('球心一动就贴过去(球心 - 半径 - 10)', 堆栈.style.left, `${500 - 悬浮球直径 / 2 - 10}px`);
+  check('警告左边框跟着面板强调色走', 警告条.style.borderLeft, `3px solid var(${弹窗变量.accent},#b07a33)`);
+
+  toastError('炸了');
+  const 错误条 = 取提示条们(doc, 'bf')[2] as HTMLElement;
+  check('错误左边框走 errorBorder 变量', 错误条.style.borderLeft, `3px solid var(${弹窗变量.errorBorder},${弹窗兜底配色.errorBorder})`);
+  check('错误标记也是 errorBorder 变量', (错误条.children[0] as HTMLElement).style.background, `var(${弹窗变量.errorBorder},${弹窗兜底配色.errorBorder})`);
+  check('三档停留时长', 计时.待触发().map(t => t.ms), [3400, 5200, 8000]);
 }
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);

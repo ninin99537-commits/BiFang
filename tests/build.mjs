@@ -66,6 +66,9 @@ async function buildTest(entry, outfile) {
     platform: 'node',
     format: 'esm',
     logLevel: 'error',
+    // jsdom 是**测试专用**的运行时依赖(只有 提示条 那几个用例用), 别打进用例包:
+    // 它自带一整套 DOM 实现, 打进去既慢又容易踩到它的动态 require。
+    external: ['jsdom'],
     plugins: [rawLoader],
   });
 }
