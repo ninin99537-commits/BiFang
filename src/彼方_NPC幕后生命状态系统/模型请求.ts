@@ -11,6 +11,7 @@ import { CARD_FIELDS } from './卡字段';
 import { PHYSIO_FIELDS } from './生理规则';
 import { 恋爱字段 } from './恋爱规则';
 import { parseStoryTime } from './剧情时间';
+import { 去信封 } from '../共用/去信封';
 import { 请求并校验 as 共用请求并校验 } from '../共用/模型往返';
 
 /** 模型可能把内部思考当成顶层字段输出的键名(非彼方数据): 解析兜底时剥离, 也作为保留键不参与 NPC 建档 */
@@ -27,6 +28,8 @@ function parseModelResponse(content) {
     const fence = text.match(/^```(?:json|yaml)?\s*([\s\S]*?)\s*```$/);
     if (fence)
         text = fence[1].trim();
+    // 上游注入的工具调用信封(emit_complete_response_<nonce>{content:…}): 剥掉它, text 才是原本的载荷
+    text = 去信封(text);
     // 括号配平+候选轮验截取 JSON——不能用"第一个{到最后一个}"的粗切:
     // 模型受世界书格式影响时, 彼方的 JSON 前后可能跟着自带 { } 的其他格式块(UpdateVariable/思维链里的伪示例),
     // 粗切会拼出坏串, 固定取第一个 { 又可能抓到前文的示例小对象。
