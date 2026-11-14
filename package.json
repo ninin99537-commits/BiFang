@@ -9,6 +9,7 @@
     "lint": "eslint",
     "lint:fix": "eslint --fix",
     "test": "node tests/run.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "dump": "node dump_schema.ts",
     "sync": "node tavern_sync.mjs"
   },
