@@ -146,8 +146,8 @@ user:   任务 (世界状态/最近剧情/正文/世界书)
 ## 安装
 
 > ⚠️ **2026-10-17 起：三个发布仓（BiFang / YanHuo / DaoYan）都已转为私有。**
-> jsdelivr 的 `gh` 通道只服务公开仓，`raw.githubusercontent.com` 取私有仓要带鉴权头，
-> 所以**旧的引子（`docs/烟火-引子.js`）与下面的 jsdelivr 导入都不再可用**。
+> 以前那两条"从网上直接取产物"的通道（jsdelivr 引子、raw.githubusercontent）随之全部作废：
+> jsdelivr 的 `gh` 通道只服务公开仓，`raw.githubusercontent.com` 取私有仓要带鉴权头。
 > 现在装法只有一条：**把构建产物手动粘进酒馆助手**。
 
 1. 运行 `pnpm build` (或 `pnpm watch` 开发) 生成 `dist/烟火_世界运转/index.js`。
@@ -157,8 +157,11 @@ user:   任务 (世界状态/最近剧情/正文/世界书)
    （开发时也可以填 `import 'http://localhost:5500/dist/烟火_世界运转/index.js'` 走实时监听）。
 3. 页面出现悬浮球，点击进入面板，在「设置」里配好接口后点「推进世界」建立世界档案。
 
-**更新时**重复第 1–2 步（覆盖旧脚本内容即可）。产物里 `import` 的 `pinia` / `klona` / `json5`
-走的是公开 CDN，与仓的可见性无关，粘贴这条路照常能跑。
+**更新时**重复第 1–2 步（覆盖旧脚本内容即可）。
+
+**产物是自包含的**：`pinia` / `klona` / `json5` 等依赖全部打进 `index.js`，产物里没有任何
+指向外部的 `import`。粘贴后不需要联网取裸包，断网也能跑。早期版本曾让产物从公开 CDN
+取这几个依赖，那条路已经不用了。
 
 无脚本按钮——所有手动操作都在面板里。
 
@@ -173,13 +176,13 @@ user:   任务 (世界状态/最近剧情/正文/世界书)
 | **BiFang** `ninin99537-commits/BiFang` | 彼方的官方发布仓（投影仓） | 彼方全量 + 共用 | 彼方 |
 | **DaoYan** `ninin99537-commits/DaoYan` | 剧情导演的发布仓（投影仓） | 剧情导演全量 + 共用（源码在仓内 `Source/` 下，`dist/` 在仓根） | 剧情导演 |
 
-~~用户通过 jsdelivr 直接 import **YanHuo** 的发行产物：~~
+下面这段 jsdelivr import **只作历史记录保留，已作废**：
 
 ```
 import 'https://cdn.jsdelivr.net/gh/ninin99537-commits/YanHuo@master/dist/烟火_世界运转/index.js';
 ```
 
-> **2026-10-17 起这条通道失效**：仓已转私有，jsdelivr 只服务公开仓。装法见上面的「安装」。
+> **2026-10-17 起这条通道已作废**：仓已转私有，jsdelivr 只服务公开仓。**现在的装法见上面的「安装」**（把产物全文粘进酒馆助手）。
 
 ### ⚠️ 为什么不能直接 `git push`
 
@@ -187,7 +190,7 @@ import 'https://cdn.jsdelivr.net/gh/ninin99537-commits/YanHuo@master/dist/烟火
 
 1. **投影仓不是工作区的镜像。** 工作区 `src/` 下有 8 个插件，YanHuo 只装 2 个（烟火 + 共用）。直接推会把剧情导演 / 正文美化 / 直播弹幕 / 自定义状态栏一并带过去。
 2. **两者历史已经分叉。** 工作区与 `origin/master` 各有独有提交（实测 `git rev-list --left-right --count HEAD...origin/master` = `223 20`），普通 push 会被拒。
-3. **`dist/` 的跟踪状态相反。** 工作区 `.gitignore` 里写着 `dist`（不跟踪），而两个投影仓都**跟踪** `dist/`——jsdelivr 导入的正是它。
+3. **`dist/` 的跟踪状态相反。** 工作区 `.gitignore` 里写着 `dist`（不跟踪），而两个投影仓都**跟踪** `dist/`——用户粘贴的就是仓里那份。
 
 所以发布 = **投影**：把文件复制到目标仓的检出里，在那里重新提交、再推。**不是** push 工作区。
 
@@ -212,9 +215,9 @@ import 'https://cdn.jsdelivr.net/gh/ninin99537-commits/YanHuo@master/dist/烟火
    | `tests/**` | 公共骨架 7 个（`build.mjs` / `run.mjs` / `platform-usage.mjs` / `import-exports.mjs` / `提示条.test.ts` / `提示条测试台.mjs` / `去信封.test.ts`）+ 本插件全部 `*.test.ts` |
    | `tests/fixtures/**` | 本插件的冻结件与名册。**两股改动同时碰它时要合成一份再推**，否则后推的覆盖先推的 |
    | `dist/烟火_世界运转/index.js` + `.js.map` | 第 2 步的产物 |
-   | ~~`docs/烟火-引子.js`~~ | **2026-10-17 起作废**：三个仓都转私有，jsdelivr 与 raw.githubusercontent 都不服务私有仓，引子这条通道已经不能用（装法见上面的「安装」）。文件留着只为历史，**不必再同步** |
-   | ~~`docs/仓库首页-烟火.md`~~ | **2026-10-16 更正：工作区 `docs/` 里已经没有这个文件**（只剩 `mockups/` / `screenshots/` / `superpowers/`），仓的 `README.md` 现在**在仓里自行维护**，不在同步清单里 |
-   | `docs/superpowers/specs/**` | 本插件的设计稿 |
+   | ~~`docs/烟火-引子.js`~~ | **2026-10-17 起作废，且该文件已不在本工作区**：三个仓都转私有，jsdelivr 与 raw.githubusercontent 都不服务私有仓，引子这条通道已经不能用（装法见上面的「安装」）。**不必再同步**，这里留着只为记下"曾经有这一条" |
+   | ~~`docs/仓库首页-烟火.md`~~ | **2026-10-16 更正，且该文件已不在本工作区**：仓的 `README.md` 现在**在仓里自行维护**，不在同步清单里 |
+   | `docs/superpowers/specs/**` | 本插件的设计稿（**本工作区没有这个目录**，只在投影仓里；要改设计稿直接改仓里那份） |
 
 4. 在检出里提交并推送：
 
@@ -228,17 +231,17 @@ import 'https://cdn.jsdelivr.net/gh/ninin99537-commits/YanHuo@master/dist/烟火
 
 - **① 提示词里不许出现我们自己的验收语言(2026-10-11 收口)。** `prompts.ts` 里**会进请求体**的文字只允许两类：① 对世界引擎的指令；② 世界内的例子（就是世界里的句子本身）。**禁止**：真机 / 实测 / 线上 / 第N轮 / R1 / 转述 / 存档 / 用例 / 断言 / 白名单 / fixture / B栏 / 臂 / A′ / 验收 / 探针 / 这张卡 / 清单外 —— 以及 `面板`（它也是我们的词，不是世界里的词：v2.8.5 收口时正是它在请求体里漏网）。**不受限**："逐字原样带回 / 原样带回"这类**指令性**用法（那是给模型的照抄要求，不是溯源标签，删了就等于废掉增量维护规则），以及 `//` 与 `/** */` 注释里的任何话。理由：世界引擎不知道也不该知道"真机""第三轮"是什么；混进去既是噪声，又会被模型当设定去理解。护栏：`yanhuo-prompt-freeze [0]` 里那条通用断言 —— **只扫成品 `SYSTEM_PROMPT`（我们自己拼的那份文本），不许扫整份请求体**：请求体里还有用户卡的世界书与正文，那里出现"真机/面板/第N轮"是**完全正常**的（那 60 余处"威胁"就全在世界书里），扫全量必**误红**。命中哪几个词就把哪几个列出来。
 - **② 同一个测试文件不许两个方向并发编辑。** 共享用例文件（尤其 `tests/yanhuo-prompt-freeze.test.ts` 这种带白名单与段号的大文件）一律**串行**：一方在改白名单、另一方同时在加断言，就是 2026-10-11 那次"抹掉 22 条新增 + `[3]`/`[4]` 两段"的根因。配套硬规矩：**禁用跨行替换**（找起点再找下一个引号/花括号 —— 引号与花括号会落在字符串里，正则静默吃错区间），一律按整行定位。动手前先看一眼 `LastWriteTime`，别在别人刚写过之后盲落笔。真出事了的救援顺序：`git show HEAD:<path>` 拿回底稿 → 从最近一次 `tests/.build/*.mjs` 里捞数据（esbuild 把字面量原样编进产物，只是非 ASCII 转义成 `\uXXXX`，解码后 `eval` 就能取回）→ 修完必须让用例自己那两条"集合恰好等于"的断言转绿（它是重建正确与否的判据）。
-- **`dist` 必须一起带上。** 工作区不跟踪它、投影仓跟踪它。漏了会让 jsdelivr 继续发旧产物（`[bot] bundle` 能兜底重建，但中间态期间线上是旧的）。
-- **暂存闸门用"投影仓已有文件"规则，不再维护手写白名单（2026-10-11 裁决）。** 手写白名单会被版本演进打穿：v2.8.5 要同步的 `src/共用/模型往返.ts` / `webpack.config.ts` / `global.d.ts` **早就在投影仓里**，却不在旧白名单里 → 整轮推不出去。新规则两条：① 暂存的每个路径必须**已存在于 `origin/master` 的树里**（唯一例外 `dist/烟火_世界运转/**`，由 CI 重建）；② 暂存清单**逐条打印**，落在本插件地盘（`src/烟火_世界运转/`、`tests/`）之外、又不在仓里的新路径**必须人工批准**才放行（`src/剧情导演/**`、`src/彼方_*/**`、`tmp/`、`.work/`、`_verify/`、根目录的 `烟火B栏操作手册.md` 都会被它拦住）。
+- **`dist` 必须一起带上。** 工作区不跟踪它、投影仓跟踪它。漏了会让线上产物停在旧版（`[bot] bundle` 能兜底重建，但中间态期间线上是旧的）。
+- **暂存闸门用"投影仓已有文件"规则，不再维护手写白名单（2026-10-11 裁决）。** 手写白名单会被版本演进打穿：v2.8.5 要同步的 `src/共用/模型往返.ts` / `webpack.config.ts` / `global.d.ts` **早就在投影仓里**，却不在旧白名单里 → 整轮推不出去。新规则两条：① 暂存的每个路径必须**已存在于 `origin/master` 的树里**（唯一例外 `dist/烟火_世界运转/**`，由 CI 重建）；② 暂存清单**逐条打印**，落在本插件地盘（`src/烟火_世界运转/`、`tests/`）之外、又不在仓里的新路径**必须人工批准**才放行（`src/剧情导演/**`、`src/彼方_*/**`、`tmp/`、`.work/`、`_verify/`、以及根目录上任何非仓库文件都会被它拦住）。
 - **版本注入要在投影仓里当场验一次。** 投影仓自己那份 `webpack.config.ts` 若没同步，CI 重建出来的 dist 里 `__构建信息__` 会退化成 `unknown`。判据别写错：源码是模板串，产物里是 `"[烟火] 世界运转系统已加载 "+Ht()`，所以**不能查整串**"世界运转系统已加载 v"（一份完全正确的产物也会判 False）；要分开断言"启动串 + `v2.8.5`"，并从产物里取出**注入的那一份** commit 字面量（形如 `{commit:'9cd3107',…}`）判断它是不是真提交号 —— 兜底的 `{commit:'dev',…}` 是永远在产物里的，不能拿"产物里有没有 dev/unknown"当判据。
-- **CI 支路已实测（浅克隆 + 两个分支）**：`--depth 1` 检出下，`GITHUB_SHA` 存在时注入它的前 7 位；不设 `GITHUB_SHA` 时 `git rev-parse --short HEAD` 在浅克隆里照样拿得到真提交号（实测 `4313595`）——**都不会退化成 `unknown`**。推完仍要从 raw/jsdelivr 复核一次线上产物（`dist` 由 bot 重建）。
+- **CI 支路已实测（浅克隆 + 两个分支）**：`--depth 1` 检出下，`GITHUB_SHA` 存在时注入它的前 7 位；不设 `GITHUB_SHA` 时 `git rev-parse --short HEAD` 在浅克隆里照样拿得到真提交号（实测 `4313595`）——**都不会退化成 `unknown`**。推完仍要复核一次仓里的产物（`dist` 由 bot 重建）。
 - **别把其他插件带过去。** 剧情导演 / 正文美化 / 直播弹幕 / 自定义状态栏不属于这个投影。
-- **`.github/workflows/` 只放 `bundle.yaml`。** 工作区里另有 `bump_deps.yaml` / `sync_template.yaml`，那是模板上游维护用的，两个投影仓都没有它们。
+- **`.github/workflows/` 只放 `bundle.yaml`。** 模板上游另有 `bump_deps.yaml` / `sync_template.yaml`，那是模板仓维护用的，两个投影仓都没有它们（本工作区也没有 `.github/workflows/`，这几份文件只在模板仓与投影仓里）。
 - **投影仓要各自装一次 `jsdom`（测试专用依赖）。** `tests/提示条.test.ts` 用 jsdom 把酒馆父页面摆出来，第一次真跑提示条的 DOM（以前只能断言源码文本，因为它画在 `window.parent.document` 上）。工作区这边已加进 `devDependencies`，但**投影仓的 `package.json` / 锁文件不在同步清单里**（它们各活各的），所以进仓后要 `pnpm add -D jsdom`；漏了会让 `pnpm test` 在打包那一步就红。
 - **`tests/platform-usage.mjs` 已兼容"缺项目"的投影仓。** 它扫的项目目录不存在就跳过（`statSync(..., { throwIfNoEntry: false })`），不再抛 `ENOENT`。所以投影仓里 `pnpm test` 最后那道「平台直连检查」不会因为它变红；**它红了就是真的出现了 `host.ts` 之外的平台直连**——那才是它要抓的东西。
 - **新克隆没有 git identity：`commit` 会失败，而 `push` 会撒谎。** 投影检出是全新克隆，本地与全局都没配 `user.name` / `user.email` 时，`git commit` 直接 `exit 128`（`Author identity unknown`）；**紧接着的 `git push` 会报 `Everything up-to-date`** —— 看起来像推成功了，其实根本没产生提交（工作树还是脏的）。先设本地身份（`git -C <检出> config user.name "..."` 与 `user.email "..."`，**只写本地、别加 `--global`**）再提交。
 - **判断推没推上去，看 `rev-parse` / `ls-remote`，不看 `push` 的输出。** `Everything up-to-date`、`Already up to date.` 都可能出现在"什么都没发生"的场景里。推完用 `git -C <检出> rev-parse HEAD` 与 `git -C <检出> ls-remote origin master` 对一次，两边一致、且 `status --porcelain` 为空，才算真的落地。
-- **jsdelivr 有缓存。** `@master` 是非版本号引用，缓存较久；`[bot] bundle` 会自动打版本 tag，把刷新压到 12 小时内。要立刻验证，就用 **commit hash 或 tag** 直接 import。
+- **产物更新有延迟。** 投影仓的 `[bot] bundle` 会自动打版本 tag；推完要等它重建完，再在酒馆里重新粘贴一次产物才算更新到用户手上。
 
 > 🤖 该仓库有 `[bot] bundle` 工作流：推源后机器人会自动 `rm -rf dist && pnpm install && pnpm build` 并补一个提交，所以即使偶尔漏提交 dist 也会被兜底重建；但它只重建**仓内存在 `index.ts` 的插件**，而产物由 `webpack.config.ts:54` 的 `globSync('{示例,src}/**/index.{ts,tsx,js,jsx}')` 决定。
 > ⚠️ **本机构建与 CI 构建不可能逐字节相同**——webpack 的模块 ID 由模块绝对路径派生，而两台机器的检出路径不同（实测同一段代码：本机 `777(e,n,t)`、CI `463(e,n,t)`）。所以推完源码后机器人**几乎总会**再补一个提交，这是正常现象，不是出错；也不必试图靠"提交一份完全一致的 dist"来避免它。

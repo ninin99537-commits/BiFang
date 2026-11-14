@@ -207,7 +207,7 @@
 
 一本摊开在暗处的剧本、旁边搁一支红笔：**暖墨灰纸面 + 唯一的朱红**，衬线标题，层次靠**边线与留白**而不是阴影与圆角。
 
-- **规范源码**：`docs/mockups/剧情导演-风格对比.html` 的 `.sB` 块（值照抄）；施工图 `docs/剧情导演-前端改版-风格B实现说明.md`；
+- **规范源码**：`docs/mockups/剧情导演-风格对比.html` 的 `.sB` 块（值照抄；这两份过程稿**已不在本工作区**，只在投影仓里留着，改风格以当前 `主题.ts` 与实际 CSS 为准）；
   契约由 `tests/daoyan-style-b.test.ts` 钉住（改漂了会被用例抓住）。
 - **颜色只在 `主题.ts`**：面板 CSS 一律 `var(--dj-*)`、**零硬编码色**，深浅两套主题键完全一致。
   语义色分工：**危险/剧终/数据异常 = `seal`（朱红）· 警告/强度 = `gold` · 成功/已执行 = `good` · 离线/冷启动 = `inkFaint`**；
@@ -259,13 +259,13 @@
 - **用时可见**：推进开始记时刻，完成提示与失败详情都带**用时**（`编排完成：本幕节拍 → 兑现伏笔 · 用时 48s`），
   慢的时候用户知道是在等、不是卡死。档位同步有三个入口：启动时（`index.ts`，面板没打开也生效）、每轮推进（`update.ts`）、设置页 `@change`。
 - **面板辅助通道**：`编排中` 期间状态条下补一条**不确定态细进度条**（只表示“在跑”，不表示真实百分比）。
-- 规格：`docs/剧情导演-可观测性-提示条规格-v1.md`；用例：`tests/daoyan-orb-status.test.ts`。
+- 规格：`docs/剧情导演-可观测性-提示条规格-v1.md`（过程稿，**已不在本工作区**，规格以代码与用例为准）；用例：`tests/daoyan-orb-status.test.ts`。
 
 ## 安装
 
 > ⚠️ **2026-10-17 起：三个发布仓（BiFang / YanHuo / DaoYan）都已转为私有。**
-> jsdelivr 的 `gh` 通道只服务公开仓，`raw.githubusercontent.com` 取私有仓要带鉴权头，
-> 所以**旧的引子（`docs/剧情导演-引子.js`）与下面的 jsdelivr 导入都不再可用**。
+> 以前那两条"从网上直接取产物"的通道（jsdelivr 引子、raw.githubusercontent）随之全部作废：
+> jsdelivr 的 `gh` 通道只服务公开仓，`raw.githubusercontent.com` 取私有仓要带鉴权头。
 > 现在装法只有一条：**把构建产物手动粘进酒馆助手**。
 
 1. 运行 `pnpm build`（或 `pnpm watch`）生成 `dist/剧情导演/index.js`。
@@ -275,28 +275,31 @@
    （开发时也可以填 `import 'http://localhost:5500/dist/剧情导演/index.js'` 走实时监听）。
 3. 页面出现悬浮球，点击进入面板，在「设置」里配好接口后即可开始。
 
-**更新时**重复第 1–2 步（覆盖旧脚本内容即可）。产物里 `import` 的 `pinia` / `klona` / `json5`
-走的是公开 CDN，与仓的可见性无关，粘贴这条路照常能跑。
+**更新时**重复第 1–2 步（覆盖旧脚本内容即可）。
+
+**产物是自包含的**：`pinia` / `klona` / `json5` 等依赖全部打进 `index.js`，产物里没有任何
+指向外部的 `import`。粘贴后不需要联网取裸包，断网也能跑。早期版本曾让产物从公开 CDN
+取这几个依赖，那条路已经不用了。
 
 无脚本按钮——所有操作都在面板里。
 
 ## 发布到 GitHub（重要 · 别忘了）
 
-本项目发布到 **`https://github.com/ninin99537-commits/DaoYan`**（别名 **DaoYan**，**2026-10-17 起为私有仓**）。~~用户通过 jsdelivr 直接 import 该仓库的发行产物：~~
+本项目发布到 **`https://github.com/ninin99537-commits/DaoYan`**（别名 **DaoYan**，**2026-10-17 起为私有仓**）。下面这段 jsdelivr import **只作历史记录保留，已作废**：
 
 ```
 import 'https://cdn.jsdelivr.net/gh/ninin99537-commits/DaoYan@master/dist/剧情导演/index.js';
 ```
 
-> **2026-10-17 起这条通道失效**：仓已转私有，jsdelivr 只服务公开仓。装法见上面的「安装」。
+> **2026-10-17 起这条通道已作废**：仓已转私有，jsdelivr 只服务公开仓。**现在的装法见上面的「安装」**（把产物全文粘进酒馆助手）。
 > 下面这套「投影→推送」的发布流程本身不变，只是推上去之后用户要**手动粘贴产物**，不再自动更新。
 
 **上传前**（照这三个仓库套用过的「拉到临时目录→构建→fast-forward 推送」流程）：
 1. 改动源码（`src/剧情导演/**`，涉及共用时连 `src/共用/**` 一起）。
 2. `pnpm build`，确认 `dist/剧情导演/index.js`（+ `.js.map`）重新生成、含你的改动。
-3. 提交内容 = **源码改动 + 重新构建的 `dist/剧情导演/index.js`**（这个仓库 git 跟踪 dist，jsdelivr 导入的正是它）。
+3. 提交内容 = **源码改动 + 重新构建的 `dist/剧情导演/index.js`**（这个仓库 git 跟踪 dist，用户粘贴的就是它）。
 4. 推送到 `DaoYan` 的 `master`（fast-forward，一格一提交）。
-5. ~~引子 `<仓根>/剧情导演-引子.js`（酒馆里贴的那段）~~ —— **2026-10-17 起作废**：仓已转私有，引子这条通道不能用（装法见上面的「安装」）。工作区的 `docs/剧情导演-引子.js` 与仓根那份留着只为历史，不必再同步。
+5. ~~引子 `<仓根>/剧情导演-引子.js`（酒馆里贴的那段）~~ —— **2026-10-17 起作废，且该文件已不在本工作区**：仓已转私有，引子这条通道不能用（装法见上面的「安装」）。不必再同步，这里留着只为记下"曾经有这一条"。
 
 > ⚠️ 注意这个仓库的布局：源码在 `Source/` 下（`Source/src/剧情导演`、`Source/src/共用`），
 > 但**对外发布的 `dist/剧情导演/` 在仓库根目录**，两者不是同一路径——构建/上传前先分清。
@@ -307,7 +310,7 @@ import 'https://cdn.jsdelivr.net/gh/ninin99537-commits/DaoYan@master/dist/剧情
 >    `pnpm install` 之后若用 `git add -A`，它会去索引 `Source/node_modules` 的几万个文件——实测直接以「Filename too long」失败，且**有把依赖提交进去的风险**。
 >    **只按路径加**：`git add Source/src Source/tests Source/docs dist`。
 > 2. **新建的克隆没有 git 身份**，`git commit` 会以 `Author identity unknown` 失败（本仓历史身份是 `Kilo <kilo@localhost>`）：先 `git -C <clone> config user.name/user.email`。
-> 3. **构建在仓内 `Source/` 里做**（`pnpm -C Source build`），产物落在 `Source/dist/剧情导演/`，**再拷到仓根 `dist/剧情导演/`** 才是 jsdelivr 拉的那一份；`Source/dist/` 属于中间产物。
+> 3. **构建在仓内 `Source/` 里做**（`pnpm -C Source build`），产物落在 `Source/dist/剧情导演/`，**再拷到仓根 `dist/剧情导演/`** 才是用户粘贴的那一份；`Source/dist/` 属于中间产物。
 >
 > ✅ 该仓库此前缺三件套会导致「拉下来装不起来」，已补上（2026-10-07）：`Source/pnpm-workspace.yaml`
 > （pnpm-v11 的 allowBuilds，不然 install/build 因 ignored build scripts 直接失败）、
