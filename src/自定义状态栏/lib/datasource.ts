@@ -79,7 +79,14 @@ let dbMeta = new Map<string, { headers?: string[]; ddl: string }>();
 let dbMetaLoaded = false;
 /** 已尝试过读取元数据（无论成败）。失败时不反复重读模板，等表更新 / 快照导出成功再重试 */
 let dbMetaAttempted = false;
-/** 单表查询缓存：同一版本内重复读取同一张表只查一次；表更新回调时整体失效 */
+/**
+ * 单表查询缓存：同一版本内重复读取同一张表只查一次；表更新回调时整体失效。
+ *
+ * 键**只有表名，没有 chat id** —— 跨聊天之所以安全，靠的是 `util/script.ts` 的
+ * `reloadOnChatChange()` 在切聊天时整块 iframe 重载(缓存随旧 iframe 一起丢掉)。
+ * 这不是缓存自身的性质，是外部给的保证：**别把那一步去掉**。去掉之后两个聊天里
+ * 同名的表会互相串数据，而任何用例都测不到(用例不跑真实的 CHAT_CHANGED 重载)。
+ */
 const dbSheetCache = new Map<string, DbSheet | null>();
 /**
  * 运行时数据库是否处于空/冷状态（最近一次全量导出无表，如切换聊天/数据未灌入）。

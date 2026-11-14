@@ -292,9 +292,10 @@ export function loadData(excludeFloor = -1): WorldData {
         console.info(`[烟火] loadData: 楼层 #${floorId} 无快照或楼层号不符`);
         continue;
       }
-      // 楼层hash校验已移除(与彼方 v4.6 同步): 主AI楼层在烟火快照写入后仍会变动(流式收尾/
-      // 正则脚本后处理/世界书格式追加等), hash失配会把"正常游玩"误判为"楼层被编辑"导致
-      // 每轮回退空状态。快照有效性只按"楼层存在+快照键匹配"判定, 内容变了用户可手动重推。
+      // 快照有效性只按"楼层存在 + 快照键匹配 + 世代一致"判定, 不校验楼层内容 hash:
+      // 主 AI 楼层在快照写入后仍会变动(流式收尾 / 正则脚本后处理 / 世界书格式追加),
+      // 内容 hash 失配会把"正常游玩"误判成"楼层被编辑", 导致每轮回退空状态。
+      // 内容变了不自动回退, 由用户手动重推。
       if ((snapshot.世代 ?? 0) !== (meta.世代 ?? 0)) continue;
       result = { ...sanitizeSnapshot(snapshot), 锚点楼层: floorId, 处理到楼层: Number(snapshot.处理到楼层 ?? 0) || 0, 处理签名: String(snapshot.处理签名 ?? ''), ...元数据字段(meta) }; 
       break;
