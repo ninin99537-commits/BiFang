@@ -31,7 +31,7 @@ function handleChatChanged(host: Host) {
     // 关着也要走一趟: 换到的这场聊天可能还留着上一个开关状态写下的条目
     maybeInjectNpcStates(host);
 }
-async function handleMessageReceived(host: Host, message_id) {
+async function handleMessageReceived(host: Host, message_id: number) {
     const settings = getSettings(host);
     if (!settings.启用幕后)
         return; // 幕后总开关: 关闭时不调用 API 不更新
@@ -86,7 +86,7 @@ $(function () {
     //   手动删除楼层(无后续新消息)才真正刷新。
     // - MESSAGE_SWIPED(切分支): 切回旧swipe页会恢复该页当时的快照, 新页则回退到更早
     //   楼层的快照, 刷新即可。
-    let refreshTimer = null;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
     function clearPendingRefresh() {
         if (refreshTimer) {
             clearTimeout(refreshTimer);

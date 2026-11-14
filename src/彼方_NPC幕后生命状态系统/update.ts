@@ -10,7 +10,6 @@ import { toastError, toastInfo, toastSuccess, toastWarning } from './toast';
 import { 请求并校验 } from './模型请求';
 import { applyUpdate, maskBaseUrl } from './应用更新';
 import { 收集本轮输入 } from './更新输入';
-import { 全部AI楼层, 重置聊天缓存, 正文过滤 } from './聊天取料';
 import type { Host } from './host';
 
 // 流水线入口收一次宿主, 往下传(约定见 host.ts 顶部): 本文件不再自己取宿主,
@@ -93,7 +92,7 @@ async function updateNpcStates(host: Host, force = false) {
             syncNpcStatesWorldbook(host, newData, settings.更新.世界书写入, 摘要.未回票, settings.更新.生理监测).catch(error => 报告世界书失败(host, error));
         }
         timing.收尾 = Date.now() - finalizeStart;
-        const secs = (ms) => (ms / 1000).toFixed(1);
+        const secs = (ms: number) => (ms / 1000).toFixed(1);
         console.info(`[彼方] 本次更新总耗时 ${secs(Date.now() - timing.start)}s = 前置 ${secs(timing.前置)}s + 世界书 ${secs(timing.世界书)}s + 接口请求 ${secs(timing.请求)}s(${timing.请求次数}次) + 解析应用 ${secs(timing.解析应用)}s + 收尾 ${secs(timing.收尾)}s`);
         console.info(`[彼方] 幕后NPC状态更新完成: ${摘要.更新.join('、') || '(本次无重要NPC变化)'}${摘要.移除.length > 0 ? `; 已移除: ${摘要.移除.join('、')}` : ''}`);
         toastSuccess(摘要.更新.length > 0
@@ -131,9 +130,5 @@ async function updateNpcStates(host: Host, force = false) {
     }
 }
 
-/** 切聊天时重置按楼层号缓存的数据(两个聊天楼层号可能相同, 不重置会用到上一聊天的楼层内容) */
-function resetChatCaches() {
-    allAssistantCache = null;
-}
 export { updateNpcStates };
 
