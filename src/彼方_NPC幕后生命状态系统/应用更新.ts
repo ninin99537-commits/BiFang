@@ -65,7 +65,14 @@ function 空摘要(): 更新摘要 {
     return { 更新: [], 移除: [], 跳过: [], 未回票: {} };
 }
 
-function applyUpdate(data: 彼方数据, parsed: Record<string, any> | null, _timeJump: string | null = null, playerName: string | null = null, autoTrack = true, 生理监测 = true): 更新结果 {
+/**
+ * 把 AI 输出合并进数据。
+ *
+ * **参数顺序注意**: 2026-11-14 起去掉了从未被读的 `timeJump`(时间跳跃在提示词层生效:
+ * 更新输入.ts → buildPrompts → `时间跳跃: ...`, 与本函数无关)。按**位置**传参的调用点
+ * 需要同步去掉那一位, 否则后面的实参会整体左移(`autoTrack` 会收到 `null`, 等价于"自动建档关闭")。
+ */
+function applyUpdate(data: 彼方数据, parsed: Record<string, any> | null, playerName: string | null = null, autoTrack = true, 生理监测 = true): 更新结果 {
     const newData: 彼方数据 = {
         ...data,
         名单: [...data.名单],

@@ -39,7 +39,7 @@ async function updateNpcStates(host: Host, force = false) {
         }
         const 输入 = await 收集本轮输入({ host, settings, force, timing, debugStore });
         if (!输入) return; // 前置条件不满足(如没有可用的 AI 回复): 上面已经提示过用户
-        const { data, messages, playerName, recent, timeJump } = 输入;
+        const { data, messages, playerName, recent } = 输入;
         let 请求结果;
         try {
             // 取模型输出这一段已独立成模块(模型请求.ts): 发请求 → 解析 → 校验, 不合格就原样重试
@@ -71,7 +71,7 @@ async function updateNpcStates(host: Host, force = false) {
         const applyStart = Date.now();
         const autoTrack = settings.更新.自动建档 !== false;
         // applyUpdate 一处算出"这轮发生了什么"(更新/移除/跳过/未回票), 这里只消费摘要
-        const { 数据: newData, 摘要 } = applyUpdate(data, parsed, timeJump, playerName, autoTrack, settings.更新.生理监测);
+        const { 数据: newData, 摘要 } = applyUpdate(data, parsed, playerName, autoTrack, settings.更新.生理监测);
         debugStore.record({ time: Date.now(), updatedNpcs: 摘要.更新, removedNpcs: 摘要.移除 });
         timing.解析应用 = Date.now() - applyStart;
         const finalizeStart = Date.now();
