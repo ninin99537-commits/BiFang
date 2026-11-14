@@ -29,7 +29,7 @@ function 括号诊断(text: string): string {
     return `诊断: '{' ${左} / '}' ${右} / '"' ${引号}${判}`;
 }
 
-function parseModelResponse(content) {
+function parseModelResponse(content: string) {
     let text = content.trim();
     const fence = text.match(/^```(?:json|yaml)?\s*([\s\S]*?)\s*```$/);
     if (fence)
@@ -40,7 +40,7 @@ function parseModelResponse(content) {
     // 模型受世界书格式影响时, 彼方的 JSON 前后可能跟着自带 { } 的其他格式块(UpdateVariable/思维链里的伪示例),
     // 粗切会拼出坏串, 固定取第一个 { 又可能抓到前文的示例小对象。
     // 候选轮验: 逐个 { 起配平切出候选串, 含彼方核心字段且能通过解析的第一个完整对象胜出
-    const sliceBalancedJson = (text) => {
+    const sliceBalancedJson = (text: string) => {
         let start = text.indexOf('{');
         while (start !== -1) {
             let depth = 0;
@@ -86,18 +86,18 @@ function parseModelResponse(content) {
     // 其中的裸换行/未转义引号会让 JSON 与 JSON5 全部解析失败。优先剥离该字段再解析。
     const stripped = stripThinkingFields(text);
     // 字符串内的裸控制字符(换行/制表符)转义: 模型把多行文本写进数据字段时(思考之外的字段也可能出现)
-    const candidates = [];
+    const candidates: string[] = [];
     if (stripped !== text) {
         candidates.push(escapeRawControlCharsInStrings(stripped), stripped);
     }
     candidates.push(escapeRawControlCharsInStrings(text), text);
     // 逐个候选尝试: JSON 严格解析 → JSON5 宽松解析; 全部失败时用最后一次的错误报错
-    let lastError;
+    let lastError: unknown;
     for (const candidate of candidates) {
         // 剥离/修复后必须仍是彼方 JSON(含数据键), 否则说明切坏了, 换下一候选
         if (!candidate.includes('"剧情时间"') && !candidate.includes("'剧情时间'") && !candidate.includes('"移除NPC"'))
             continue;
-        for (const parse of [(t) => JSON.parse(t), (t) => JSON5.parse(t)]) {
+        for (const parse of [(t: string) => JSON.parse(t) as unknown, (t: string) => JSON5.parse(t) as unknown]) {
             try {
                 return parse(candidate);
             }
@@ -114,7 +114,7 @@ function parseModelResponse(content) {
 /** 字符串内的裸控制字符(换行/回车/制表符等)转义为合法 JSON 转义序列。
  *  模型把多行文本直接写进 JSON 字符串时会产生裸换行, JSON.parse 与 json5 都会拒绝。
  *  只在字符串内部做转义, 不改动结构字符。 */
-function escapeRawControlCharsInStrings(text) {
+function escapeRawControlCharsInStrings(text: string) {
     const src = String(text ?? '');
     let out = '';
     let inString = false;
@@ -159,7 +159,7 @@ function escapeRawControlCharsInStrings(text) {
 /** 剥离顶层"静默思考流程"等思考字段(非彼方数据, 直接无视)。
  *  优先按"下一个顶层键"定位值结尾(`,` + 换行 + `"键名"`), 找不到再退回对象结尾 `}`;
  *  切完立即由调用方用真实解析验证, 切坏则自动降级到原始文本。找不到思考键时原样返回。 */
-function stripThinkingFields(text) {
+function stripThinkingFields(text: unknown) {
     let result = String(text ?? '');
     for (const key of THINKING_FIELD_KEYS) {
         const keyRe = new RegExp(`"${key}"\\s*:`, 'g');
@@ -199,7 +199,7 @@ function stripThinkingFields(text) {
     return result;
 }
 /** 顶层保留键(非 NPC 名字): 元数据/思考字段/旧格式分组键, 不参与状态卡合并与校验 */
-function isReservedTopLevelKey(name) {
+function isReservedTopLevelKey(name: string) {
     return name === '在场NPC' || name === '后台互动' || name === '移除NPC'
         || name === '剧情时间' || name === '受孕事件' || name === '恋爱事件' || name === '人设参考'
         || THINKING_FIELD_KEYS.includes(name);
@@ -247,15 +247,17 @@ export function 认出NPC(parsed: unknown): Array<{ 名: string; 卡: Record<str
     }
     return 结果;
 }
-function validateParsedFormat(parsed, existingCards = {}, skipCheckNames = null) {
+function validateParsedFormat(parsed: unknown, existingCards: Record<string, any> = {}, skipCheckNames: Set<string> | null = null) {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
         throw Error('AI 返回的 JSON 结构不符合预期(顶层不是对象)');
     }
+    // 上面已判过"是非数组对象"; 顶层是模型给的动态字段(键=NPC 名), 形状只能到"任意键"这一层
+    const 顶层 = parsed as Record<string, any>;
     // 剧情时间: 能解析就按标准格式用; **解析不出来只警告, 不判整轮失败**。
     // 天启三年 / 第三纪元这类纪年根本写不成 "YYYY-MM-DD HH:mm", 为此重试三次再丢掉一整轮状态更新
     // (用户实测白等 68 秒、一个 NPC 都没写) 完全不划算。下游对"没有可用剧情时间"本来就有兜底:
     // 生理推进用旧基准、生活状态不补相对时间、台账不催紧迫度 —— 其余状态照常写入。
-    const storyTime = parsed['剧情时间'];
+    const storyTime = 顶层['剧情时间'];
     let storyEndTs = null;
     if (storyTime && typeof storyTime === 'object' && !Array.isArray(storyTime)) {
         const bad = [];
@@ -272,7 +274,7 @@ function validateParsedFormat(parsed, existingCards = {}, skipCheckNames = null)
         const endStr = String(storyTime['结束'] ?? '').trim();
         storyEndTs = endStr ? parseStoryTime(endStr) : null;
     }
-    const checkCard = (npcName, card, isNew = false) => {
+    const checkCard = (npcName: string, card: Record<string, any>, isNew = false) => {
         // 增量更新: 新建 NPC 要求全字段(建档补全); 已有 NPC 只要求核心三字段——
         // 其余字段未返回=沿用旧值, 属于合法行为, 不警告
         const requiredFields = isNew ? REQUIRED_CARD_FIELDS : CORE_CARD_FIELDS;
