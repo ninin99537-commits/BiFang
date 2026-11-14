@@ -9,8 +9,8 @@
 | `src/彼方_NPC幕后生命状态系统` | 脚本 | `dist/彼方_NPC幕后生命状态系统/index.js` |
 | `src/剧情导演` | 脚本 | `dist/剧情导演/index.js` |
 | `src/烟火_世界运转` | 脚本 | `dist/烟火_世界运转/index.js` |
-| `src/人设工坊` | 前端界面 | `dist/人设工坊/index.html` |
-| `src/自定义状态栏` | 前端界面 | `dist/自定义状态栏/index.html` |
+| `src/人设工坊` | 前端界面 | `dist/人设工坊/index.js` |
+| `src/自定义状态栏` | 前端界面 | `dist/自定义状态栏/index.js` |
 | `src/共用` | 共享模块 | 不产出，被彼方/导演/烟火以 `../共用` 引用 |
 
 ## 命令
@@ -19,6 +19,7 @@
 pnpm install     # 安装依赖
 pnpm build       # 生产构建（全部项目）
 pnpm watch       # 开发监听 + 酒馆热重载
+pnpm typecheck   # 类型检查（tsc --noEmit）
 pnpm test        # 用例（tests/）
 pnpm lint        # eslint
 ```
