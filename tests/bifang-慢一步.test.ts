@@ -11,6 +11,7 @@ import lodash from 'lodash';
 import { createPinia, setActivePinia } from 'pinia';
 import { updateNpcStates } from '../src/彼方_NPC幕后生命状态系统/update';
 import { useDebugStore } from '../src/彼方_NPC幕后生命状态系统/日志仓';
+import { invalidateReadCache } from '../src/彼方_NPC幕后生命状态系统/settings';
 import { 彼方假宿主, 种已有状态, STORAGE_KEY } from './helpers/彼方假宿主';
 
 (globalThis as any)._ = lodash;
@@ -64,6 +65,8 @@ console.log('\n[1] 开: 3 条可见回复 → 送进模型的正文不含第 3 �
 
 console.log('\n[2] 关: 3 条 → 3 条都在(对照)');
 {
+  // [1] 调用过 getSettings, 500ms 读缓存里存着 [1] 的 慢一步=true —— 跨场景显式失效(同 总开关清理 钉的处理)
+  invalidateReadCache();
   setActivePinia(createPinia());
   const { host } = 慢一步宿主(false, ['MARK-第一条', 'MARK-第二条', 'MARK-第三条']);
   种已有状态(host);
@@ -125,13 +128,19 @@ console.log('\n[6] 重roll: 开 + 重roll 最新层 → 状态与快照不变(�
   const { host, 存, 记, 楼层 } = 慢一步宿主(true, ['MARK-第一条', 'MARK-第二条', 'MARK-第三条']);
   种已有状态(host);
   await updateNpcStates(host as any);
-  const 重roll前快照 = JSON.stringify(存.message[2]?.[STORAGE_KEY]);
+  const 重roll前 = 存.message[2]?.[STORAGE_KEY] as any;
   // 重roll: 最新层(第 3 条)内容被重新生成 —— 慢一步下它根本不进分析窗口
   楼层[2].message = 'MARK-重roll后的新剧情';
   await updateNpcStates(host as any);
   const 请求 = String(useDebugStore().log?.request ?? '');
   ok('重roll后的新内容没进分析窗口(状态不可能被它污染)', !请求.includes('MARK-重roll后的新剧情'));
-  eq('重roll后快照与重roll前逐字节一致', JSON.stringify(存.message[2]?.[STORAGE_KEY]), 重roll前快照);
+  // 缩小比较范围(#10 裁定): 统计.更新次数/最后更新 每轮本就该累加, 不是污染;
+  // NPC/名单/剧情时间/处理到楼层/楼层 五项必须逐字节一致 —— 这才是"状态没被重roll污染"的证据
+  const 掐头 = (快照: any) => {
+    const { 统计, ...其余 } = 快照 ?? {};
+    return 其余;
+  };
+  eq('重roll后快照(除 统计 计数器)与重roll前逐字节一致', JSON.stringify(掐头(存.message[2]?.[STORAGE_KEY])), JSON.stringify(掐头(重roll前)));
   ok('第 3 条楼层依旧没有快照', 存.message[3]?.[STORAGE_KEY] === undefined);
   ok('分析仍照常进行(每轮都有请求, 只是窗口慢一步)', 记.rawCalls.length === 2);
 }
