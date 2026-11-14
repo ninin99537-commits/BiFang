@@ -3,6 +3,7 @@ import type { Host } from './host';
 import { buildInjectionPrompt } from './prompts';
 import { BIFANG_WORLDBOOK_ENTRY_NAME, isBifangEntry, sanitizeBifangEntryName } from './彼方条目';
 import { useMainPromptStore } from './日志仓';
+import type { 彼方数据 } from './快照';
 import type { 世界书写入目标 } from './settings';
 
 /**
@@ -69,7 +70,7 @@ function 报告世界书失败(host: Pick<Host, 'toast'>, error: unknown): void 
     host.toast.warn(世界书失败文案(error), '彼方');
 }
 
-async function syncNpcStatesWorldbook(host: Pick<Host, 'worldbook'>, data, 目标: 世界书写入目标, 未回票?: Record<string, string[]>, 生理监测 = true) {
+async function syncNpcStatesWorldbook(host: Pick<Host, 'worldbook'>, data: 彼方数据, 目标: 世界书写入目标, 未回票?: Record<string, string[]>, 生理监测 = true) {
     if (目标 === '关闭') {
         for (const name of 已有世界书(host))
             await host.worldbook.remove(name, isBifangEntry);
