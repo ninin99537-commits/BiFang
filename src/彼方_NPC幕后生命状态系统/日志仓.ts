@@ -7,6 +7,8 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import type { 规模数据 } from './规模';
+import { 读取日志 } from './日志落盘';
+import type { 日志宿主 } from './日志落盘';
 
 /** 规模行文本: **格式是需求钉死的契约**(日志页顶部固定一行), 改这里等于改契约。 */
 function 格式化规模行(规模: 规模数据): string {
@@ -69,7 +71,16 @@ const useDebugStore = defineStore('bifang-debug', () => {
     function clear() {
         log.value = null;
     }
-    return { log, record, clear };
+    /** 从聊天变量恢复上一次落盘的日志(重载 / 切聊天后日志页不该是空的)。
+     *  只恢复日志页展示需要的三项: 请求/响应/错误 —— 楼层号、模型那些不在落盘形状里。 */
+    function 恢复(host: 日志宿主) {
+        const 落盘 = 读取日志(host);
+        if (!落盘)
+            return false;
+        record({ time: 落盘.时间, request: 落盘.请求, response: 落盘.响应, error: 落盘.错误 ?? '' });
+        return true;
+    }
+    return { log, record, clear, 恢复 };
 });
 /** 记录最近一次彼方写入世界书条目(供主AI及任何读取该世界书的环节读取)的幕后状态内容, 供日志页查看 */
 const useMainPromptStore = defineStore('bifang-main-prompt', () => {

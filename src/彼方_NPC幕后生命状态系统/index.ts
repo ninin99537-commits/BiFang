@@ -26,7 +26,10 @@ function handleChatChanged(host: Host) {
     // 切聊天只刷新数据与注入，不再整页重载，避免悬浮球闪烁消失
     resetWorldbookCaches();
     useStateStore().reload(host);
+    // 日志跟着聊天走: 先清掉上一场的, 再从这场聊天的聊天变量里恢复落盘的那一份。
+    // 以前这里只有 clear() —— 切回一场老聊天时日志页永远是空的(它其实一直存着)。
     useDebugStore().clear();
+    useDebugStore().恢复(host);
     // 关着也要走一趟: 换到的这场聊天可能还留着上一个开关状态写下的条目
     maybeInjectNpcStates(host);
 }

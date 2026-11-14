@@ -10,6 +10,7 @@ import { toastError, toastInfo, toastSuccess, toastWarning } from './toast';
 import { 请求并校验 } from './模型请求';
 import { applyUpdate, maskBaseUrl } from './应用更新';
 import { 收集本轮输入 } from './更新输入';
+import { 写入日志 } from './日志落盘';
 import type { Host } from './host';
 
 // 流水线入口收一次宿主, 往下传(约定见 host.ts 顶部): 本文件不再自己取宿主,
@@ -142,6 +143,20 @@ async function updateNpcStates(host: Host, force = false) {
     finally {
         isUpdating = false;
         updatingStore.stop('幕后');
+        // 3-3 日志落盘: 把这一轮的请求/响应存进聊天变量(只留 1 份), 重载后仍读得到。
+        // 放在 finally 里: 失败/中断那轮也有现场可查(中断时的请求体同样值得留下)。
+        const 当前日志 = debugStore.log;
+        if (当前日志) {
+            const 写成 = 写入日志(host, {
+                时间: 当前日志.time,
+                请求: 当前日志.request,
+                响应: 当前日志.response,
+                错误: 当前日志.error,
+            });
+            // 3-2: 落盘失败要出声 —— 用户以为"日志页那份就是存下来的那份", 其实重载就没了
+            if (!写成)
+                host.toast.warn('彼方: 日志没能存进聊天变量, 重载后这一轮的记录会消失', '彼方');
+        }
     }
 }
 

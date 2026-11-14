@@ -14,6 +14,7 @@ import { klona } from 'klona';
 import { toastError } from './toast';
 import type { Host } from './host';
 import type { 幕后事务 } from './事务台账';
+import { 清空日志 } from './日志落盘';
 
 /** 本层真正需要的平台能力: 只读/写变量表与楼层。用 Pick 写在签名上, 依赖一目了然。 */
 type 快照宿主 = Pick<Host, 'vars' | 'chat'>;
@@ -534,6 +535,9 @@ function clearAllData(host: 快照宿主): 清空结果 {
     // 元数据写不进去 = 清空层没生效, 状态会在下一轮被当成"没清过"; 提示由调用方统一出
     if (!saveMeta(host, fresh, true))
         return { 成功: false, 清空层: meta.清空层, 失败原因: '清空层没能写入聊天变量' };
+    // 日志也是彼方的数据: 清空数据却留着上一轮的请求/响应, 会让"清空后打开日志页"看到旧现场。
+    // 放在这里而不是界面层: clearAllData 是"清空彼方数据"的唯一落点(用例也直接打它)。
+    清空日志(host);
     return { 成功: true, 清空层: 当前楼层 };
 }
 

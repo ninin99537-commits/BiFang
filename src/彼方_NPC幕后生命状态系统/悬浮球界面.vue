@@ -253,6 +253,8 @@ stateStore.reload(host);
 
 const debugStore = useDebugStore();
 const { log: debugLog } = storeToRefs(debugStore);
+// 重载/热重载后从聊天变量恢复上一轮日志(3-3): 以前一刷新日志页就是空的
+debugStore.恢复(host);
 
 const updatingStore = useUpdatingStore();
 const { active: updatingActive, message: updatingMessage } = storeToRefs(updatingStore);
@@ -1262,7 +1264,13 @@ function buildErrorReport(): string {
 }
 
 async function copyErrorReport() {
-  await copyText(buildErrorReport());
+  // 空日志时按钮已禁用, 但快捷键/程序调用也可能走到这里: 空串复制过去只会提示"已复制"
+  const 报告 = buildErrorReport();
+  if (!报告.trim()) {
+    toastWarning('还没有可复制的日志(先跑一次更新)');
+    return;
+  }
+  await copyText(报告);
 }
 
 async function loadModels() {
