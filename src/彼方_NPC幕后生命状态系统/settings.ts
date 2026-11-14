@@ -9,8 +9,9 @@ import { 建写回闸门, type 写回闸门 as 写回闸门类型 } from '../共
 // 一旦把 no-undef 开成 error 就会报悬空，所以显式写出来（default 形式，与 设置.ts 一致）。
 import _ from 'lodash';
 
-/** 设置层只碰变量表; 用 Pick 写在签名上, 不把整个宿主拖进来 */
-type 设置宿主 = Pick<Host, 'vars'>;
+/** 设置层只碰变量表; 用 Pick 写在签名上, 不把整个宿主拖进来。
+ *  `toast` 是可选的: 写回失败要出声(3-4), 但 api.ts 那类只读设置的调用方不必为此带上提示能力。 */
+type 设置宿主 = Pick<Host, 'vars'> & { toast?: Host['toast'] };
 
 /** 幕后状态写进哪本世界书: 角色卡主世界书 / 当前聊天的世界书 / 关闭 */
 const 世界书写入目标表 = ['关闭', '角色卡主世界书', '聊天世界书'] as const;
@@ -162,10 +163,21 @@ function 记基线(host: 设置宿主, 读到的那份: any) {
  */
 function 写回全局(host: 设置宿主, settings: any) {
     try {
-        if (取写回闸门(host).立即写(settings)) invalidateReadCache();
+        const 闸门 = 取写回闸门(host);
+        if (闸门.立即写(settings)) {
+            invalidateReadCache();
+            return;
+        }
+        // 闸门返回 false 有两种: "没有改动"(正常) 与 "从没读到过存储"(= 一个字节都没写)。
+        // 后者必须出声, 否则用户改完设置、刷新后回退, 界面上没有任何线索。
+        if (!闸门.可写回())
+            host.toast?.warn?.('彼方: 设置没能保存(还没成功读到过存储里的设置, 为避免覆盖已有配置已放弃写入)', '彼方');
     }
     catch (error) {
         console.warn('[彼方] 保存全局设置失败:', error);
+        // 3-4: 写回失败必须让用户看见 —— 以前只进控制台, 用户以为改了就存下了,
+        // 刷新后设置回退到旧值。
+        host.toast?.warn?.(`彼方: 设置没能保存(${error instanceof Error ? error.message : String(error)})`, '彼方');
     }
 }
 /** 迁移专用: 存储里本来就没有这一份, 直接落盘并成为新基线 */
@@ -176,6 +188,7 @@ function 首次落盘(host: 设置宿主, settings: any) {
     }
     catch (error) {
         console.warn('[彼方] 迁移设置落盘失败:', error);
+        host.toast?.warn?.(`彼方: 旧设置迁移没能落盘(${error instanceof Error ? error.message : String(error)})`, '彼方');
     }
 }
 function loadSettings(host: 设置宿主) {

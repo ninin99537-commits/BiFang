@@ -245,6 +245,11 @@ const { settings } = storeToRefs(settingsStore);
 // 设置从全局读一次, 并绑定写回(store 的 setup 不碰平台, 见 settings.ts)
 settingsStore.load(host);
 settingsStore.bindPersistence(host);
+// 切聊天后重读设置(批次 3-4): 设置是**全局**变量, 但别的窗口/设备可能刚改过;
+// 面板开着跨过一场聊天切换时, 界面上那份必须与流水线读到的一致(否则"面板显示开、实际关")。
+// 只重读不重绑: bindPersistence 是一次性的(再绑会挂第二个 watch)。
+const 停止监听聊天切换 = host.events.onChatChanged(() => settingsStore.load(host));
+onUnmounted(() => 停止监听聊天切换.stop());
 
 const stateStore = useStateStore();
 const { data } = storeToRefs(stateStore);
