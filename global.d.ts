@@ -38,6 +38,20 @@ declare namespace z {
   export type infer<T> = import('zod').infer<T>;
   export type input<T> = import('zod').input<T>;
   export type output<T> = import('zod').output<T>;
+  /**
+   * `z.ZodType` 这类**类型**在 `zod` 里是"值与类型同名"(class/interface 双声明):
+   * `z.ZodType` 作为值取到的是构造函数, 但这里 `declare const z` 只声明了**值**那一侧,
+   * 命名空间里没有对应的类型成员, 于是 `z.ZodType<...>` 当类型用会报 TS2749
+   * ("refers to a value, but is being used as a type here")。
+   *
+   * 这里把真正被用到的几个类型补进命名空间 —— 只是把 `zod` 已有的类型再导出一次,
+   * 不改任何运行时形状(`declare` 不产生代码)。
+   */
+  export type ZodType<Output = unknown, Input = unknown> = import('zod').ZodType<Output, Input>;
+  export type ZodObject<
+    Shape extends import('zod').core.$ZodLooseShape = import('zod').core.$ZodLooseShape,
+  > = import('zod').ZodObject<Shape>;
+  export type ZodError<T = unknown> = import('zod').ZodError<T>;
 }
 
 declare module 'https://testingcf.jsdelivr.net/gh/StageDog/tavern_resource/dist/util/mvu_zod.js' {
