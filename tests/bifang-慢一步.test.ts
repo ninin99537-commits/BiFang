@@ -11,7 +11,6 @@ import lodash from 'lodash';
 import { createPinia, setActivePinia } from 'pinia';
 import { updateNpcStates } from '../src/彼方_NPC幕后生命状态系统/update';
 import { useDebugStore } from '../src/彼方_NPC幕后生命状态系统/日志仓';
-import { invalidateReadCache } from '../src/彼方_NPC幕后生命状态系统/settings';
 import { 彼方假宿主, 种已有状态, STORAGE_KEY } from './helpers/彼方假宿主';
 
 (globalThis as any)._ = lodash;
@@ -65,8 +64,7 @@ console.log('\n[1] 开: 3 条可见回复 → 送进模型的正文不含第 3 �
 
 console.log('\n[2] 关: 3 条 → 3 条都在(对照)');
 {
-  // [1] 调用过 getSettings, 500ms 读缓存里存着 [1] 的 慢一步=true —— 跨场景显式失效(同 总开关清理 钉的处理)
-  invalidateReadCache();
+  // 跨场景缓存失效已上提到 彼方假宿主()(#14 裁定: 第三次同因, helper 内一次免疫全部)
   setActivePinia(createPinia());
   const { host } = 慢一步宿主(false, ['MARK-第一条', 'MARK-第二条', 'MARK-第三条']);
   种已有状态(host);
