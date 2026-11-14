@@ -1,0 +1,696 @@
+/* ==========================================================================
+ * 方向 A · 排练厅手稿（用户 2026-10-07 选定）+ **全自绘控件层**
+ * 规范来源：docs/mockups/剧情导演-界面重做-三方向.html 的 A 稿；规格 docs/剧情导演-界面重做-规格-v1.md
+ *
+ * 三条硬约束（测试逐条钉住）：
+ *  1. **零原生控件**：滑块(::-webkit-slider-* / ::-moz-range-*) · 勾选→自绘开关 · 下拉→自绘 listbox ·
+ *     折叠→自绘 caret · 滚动条(::-webkit-scrollbar 三件套 + scrollbar-width/color) · ::selection · 统一 :focus-visible;
+ *  2. **颜色/间距/圆角全部来自 主题.ts**（`var(--dj-*)`），样式里零硬编码色；间距走 4px 栅格变量(--dj-s1..s4, s6);
+ *  3. **布局只用 in-flow**：下拉**就地展开**、球用 **CSS Grid 叠层**、披露用 max-height —— 本文件**没有**新增 position:absolute
+ *     （页签选中下划线那处是风格 B 就有的既有写法，规范稿里也是这么画的）。
+ * A 的材质：衬线标题与衬线数字、纸面细纹(--dj-paper)、滑块=红笔笔尖、开关=铜拨片、下拉=活页清单、披露=折角、留白最大。
+ * ========================================================================== */
+
+/* ---------------------------------------------------------------- 舞台 */
+.dj-root {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  font: 12.5px/1.55 var(--dj-body);
+  color: var(--dj-ink);
+}
+
+/* ---------------------------------------------------------------- 悬浮球
+ * 球用 **grid 叠层**（环与球标各占 grid-area:1/1）实现重叠 —— 不新增 absolute。
+ * 球标 = **场次刻度**（三根不同高度竖线 + 淡基线），自绘 SVG、单色描边 1.6px、宽取球的 47%；
+ * **球标承担身份、不承担状态**：五态只改环/色/动效，球标形态不变。 */
+.dj-orb {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  place-items: center;
+  width: var(--dj-orb-size, 40px);
+  height: var(--dj-orb-size, 40px);
+  border: 1px solid var(--dj-line-strong);
+  border-radius: 50%;
+  background-color: var(--dj-panel);
+  background-image: var(--dj-sheen);
+  box-shadow: inset 0 1px 0 var(--dj-line-strong), inset 0 -6px 12px var(--dj-bg), inset 0 0 0 1px var(--dj-bg);
+  color: var(--dj-ink-dim);
+  pointer-events: auto;
+  cursor: grab;
+  z-index: var(--dj-z-orb, 4);
+  user-select: none;
+  /* 触屏拖动: 不加这条, 移动端会把手指移动判成页面滚动并发出 pointercancel,
+     球要么拖不动、要么跟着滚动的页面一起跑 —— 界面重做时漏掉的一条, 与烟火同款修法 */
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.dj-orb:active { cursor: grabbing; }
+.dj-orb.open { border-color: var(--dj-seal); }
+.dj-orb-ring {
+  grid-area: 1 / 1;
+  width: 100%;
+  height: 100%;
+  border: 1px solid transparent;
+  border-radius: 50%;
+}
+.dj-orb-glyph {
+  grid-area: 1 / 1;
+  display: grid;
+  place-items: center;
+  width: 47%;
+  height: 47%;
+  font-size: 0;
+}
+svg.dj-mark {
+  width: 100%;
+  height: 100%;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* 第二轮方案 5.2: 导演台 */
+/* 导演台: 打开面板第一眼的那张卡, 左边一道朱红把它和普通卡分开 */
+.dj-desk { border-left: 3px solid var(--dj-seal); }
+.dj-desk-h { display: flex; flex-wrap: wrap; align-items: center; gap: var(--dj-s2); color: var(--dj-ink-strong); font-family: var(--dj-serif); }
+.dj-pips { display: inline-flex; gap: 3px; }
+.dj-pips i { width: 10px; height: 3px; border-radius: 1px; background: var(--dj-line-strong); }
+.dj-pips i.on { background: var(--dj-seal); }
+.dj-must { margin: var(--dj-s2) 0; padding: var(--dj-s1) var(--dj-s2); border-left: 2px solid var(--dj-seal); background: var(--dj-raise); color: var(--dj-ink-strong); }
+.dj-must-k { margin-right: var(--dj-s2); color: var(--dj-seal); font-size: 11px; font-weight: 600; letter-spacing: 0.6px; }
+/* 「改这一层」: 编辑区收在导演台底部, 一条虚线把"只读的台面"和"能改的表单"分开 */
+.dj-desk-edit { margin-top: var(--dj-s2); }
+.dj-desk-form { margin-top: var(--dj-s2); padding-top: var(--dj-s2); border-top: 1px dashed var(--dj-line); }
+.dj-desk-form textarea.dj-input { line-height: 1.55; resize: vertical; }
+/* 张力弧: 从 12 点起顺时针, 长度 = 张力/10; 待命态才显示(编排中/出错/离线/剧终的环优先) */
+.dj-orb-arc {
+  grid-area: 1 / 1;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+  fill: none;
+  stroke: var(--dj-gold);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  opacity: 0.85;
+  pointer-events: none;
+  transition: stroke-dasharray 0.18s ease;
+}
+.dj-orb:not([data-态='待命']) .dj-orb-arc { opacity: 0; }
+/* 本幕有确定事件: 右上角朱红点 */
+.dj-orb-dot {
+  grid-area: 1 / 1;
+  align-self: start;
+  justify-self: end;
+  width: 7px;
+  height: 7px;
+  margin: 3px;
+  border-radius: 50%;
+  background-color: var(--dj-seal);
+  box-shadow: inset 0 0 0 1px var(--dj-panel);
+  pointer-events: none;
+}
+/* 场次刻度的三根线（编排中时依次亮起）与淡基线 */
+.dj-tk1, .dj-tk2, .dj-tk3 { opacity: 0.35; }
+.dj-tk-base { opacity: 0.38; }
+/* 五态：形态与球标都不变，只换环/色/动效 */
+.dj-orb[data-态='待命'] { color: var(--dj-ink-dim); }
+.dj-orb[data-态='编排中'] { color: var(--dj-seal); animation: dj-breathe 1.6s ease-in-out infinite; }
+.dj-orb[data-态='编排中'] .dj-orb-ring {
+  border-top-color: var(--dj-seal);
+  border-right-color: var(--dj-seal);
+  animation: dj-orb-spin 1.6s linear infinite;
+}
+.dj-orb[data-态='编排中'] .dj-tk { animation: dj-tick 1.6s ease-in-out infinite; }
+.dj-orb[data-态='编排中'] .dj-tk2 { animation-delay: 0.18s; }
+.dj-orb[data-态='编排中'] .dj-tk3 { animation-delay: 0.36s; }
+.dj-orb[data-态='出错'] {
+  color: var(--dj-seal);
+  border-color: var(--dj-seal);
+  box-shadow: inset 0 0 0 2px var(--dj-seal), inset 0 -6px 12px var(--dj-bg);
+}
+.dj-orb[data-态='离线'] { color: var(--dj-ink-faint); border-style: dashed; }
+.dj-orb[data-态='离线'] .dj-orb-glyph { opacity: 0.5; }
+.dj-orb[data-态='剧终'] {
+  color: var(--dj-ink-faint);
+  border-color: var(--dj-seal);
+  box-shadow: inset 0 0 0 2px var(--dj-seal), inset 0 0 0 3px var(--dj-panel), inset 0 -6px 12px var(--dj-bg);
+}
+@keyframes dj-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.04); } }
+@keyframes dj-orb-spin { to { transform: rotate(360deg); } }
+@keyframes dj-tick { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+@keyframes dj-sweep { 0%, 100% { background-position: 0% 0; } 50% { background-position: 100% 0; } }
+
+/* ---------------------------------------------------------------- 面板骨架 */
+.dj-panel {
+  position: absolute;
+  left: 0;
+  top: 0;
+  background-color: var(--dj-panel);
+  background-image: var(--dj-paper);
+  border: 1px solid var(--dj-line);
+  border-radius: var(--dj-radius);
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: var(--dj-z-panel, 3);
+}
+.dj-head {
+  display: flex;
+  align-items: center;
+  gap: var(--dj-s2);
+  padding: var(--dj-s3) var(--dj-s3);
+  border-bottom: 1px solid var(--dj-line);
+  background-color: var(--dj-raise);
+  background-image: var(--dj-paper);
+  cursor: move;
+  /* 面板拖动同理: 手机上一拖就变成滚页面, 面板反而不动 */
+  touch-action: none;
+}
+/* 层级 L1：衬线 + 最大字号 + 最亮墨 + 字距 */
+.dj-title { font-family: var(--dj-serif); font-size: 17px; font-weight: 600; letter-spacing: 0.5px; color: var(--dj-ink-strong); }
+.dj-sub { color: var(--dj-ink-faint); font-size: 11px; flex: 1; }
+.dj-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 触控: 手机上 22px 点不中, 28px 是不撑高标题栏的上限 */
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--dj-radius);
+  color: var(--dj-ink-dim);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.dj-x:hover { color: var(--dj-ink); border-color: var(--dj-line-strong); }
+.dj-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 var(--dj-s2);
+  border-bottom: 1px solid var(--dj-line);
+  background-color: var(--dj-raise);
+  background-image: var(--dj-paper);
+}
+.dj-tabs button {
+  position: relative;
+  background: none;
+  border: 0;
+  color: var(--dj-ink-dim);
+  padding: var(--dj-s2) var(--dj-s3) var(--dj-s2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12.5px;
+  transition: color 0.15s ease;
+}
+.dj-tabs button:hover { color: var(--dj-ink); }
+.dj-tabs button.on { color: var(--dj-ink-strong); }
+.dj-tabs button.on::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--dj-seal);
+  border-radius: var(--dj-radius) var(--dj-radius) 0 0;
+  transition: background 0.15s ease;
+}
+.dj-tabs .dj-theme { margin-left: auto; }
+.dj-body { flex: 1; overflow: auto; padding: var(--dj-s3) var(--dj-s3) var(--dj-s4); }
+.dj-sec { display: flex; flex-direction: column; gap: var(--dj-s3); }
+
+/* ---------------------------------------------------------------- 卡片与层级 */
+.dj-card {
+  background: var(--dj-raise);
+  border: 1px solid var(--dj-line);
+  border-left: 2px solid var(--dj-line-strong);
+  border-radius: var(--dj-radius);
+  padding: var(--dj-s3);
+  transition: border-color 0.15s ease;
+}
+.dj-card:has(.dj-metrics), .dj-card:has(.dj-pre) { border-left-color: var(--dj-seal); }
+/* 层级 L2：分组标题 —— 小字号 + 600 + 次级墨 + 加宽字距 + § 记号 */
+/* 第二轮方案 5.4: 标题比正文强(原来 11.5px + 暗墨, 比正文还小还暗, 扫视时抓不到分区) */
+.dj-card-h { display: flex; align-items: center; gap: var(--dj-s1); color: var(--dj-ink-strong); font-family: var(--dj-serif); font-size: 12.5px; font-weight: 600; letter-spacing: 0.6px; margin-bottom: var(--dj-s2); }
+.dj-card-h::before { content: '§'; color: var(--dj-seal); font-family: var(--dj-serif); font-weight: 400; margin-right: 2px; }
+.dj-card-h .k { color: var(--dj-ink-ghost); font-weight: 400; letter-spacing: 0; }
+/* 卡内小节标题: 分区靠标题 + 1px 线, 不再套一层卡框(第二轮方案 5.4) */
+.dj-sub-h { margin-top: var(--dj-s3); padding-top: var(--dj-s2); border-top: 1px solid var(--dj-line); color: var(--dj-ink-strong); font-size: 12px; font-weight: 600; }
+/* 层级 L3：正文 */
+.dj-p { margin: var(--dj-s1) 0 0; color: var(--dj-ink); font-size: 12.5px; line-height: 1.55; }
+/* 层级 L4：说明/次要（更小 + 更弱墨 + 更紧字距） */
+/* 第二轮方案 5.4: 说明文字提一档(原 10.5px + 最淡墨, 在卡底上对比度偏低) */
+.dj-hint { color: var(--dj-ink-dim); font-size: 11.5px; line-height: 1.55; letter-spacing: 0.1px; }
+/* 「这两个开关不是一回事」那种需要说清边界的提示 */
+.dj-hint-warn { padding-left: var(--dj-s2); border-left: 2px solid var(--dj-line-strong); margin-top: var(--dj-s1); }
+.dj-muted { color: var(--dj-ink-faint); font-size: 10.5px; margin-left: var(--dj-s1); font-variant-numeric: tabular-nums; }
+.dj-row { padding: var(--dj-s1) 0; border-top: 1px solid var(--dj-line); }
+.dj-row:first-of-type { border-top: none; }
+.dj-tag {
+  display: inline-flex;
+  align-items: center;
+  margin-left: var(--dj-s1);
+  padding: 0 var(--dj-s1);
+  border: 1px solid var(--dj-line);
+  border-radius: var(--dj-radius);
+  background: var(--dj-bg);
+  color: var(--dj-ink-dim);
+  font-size: 10px;
+  font-family: var(--dj-num);
+}
+.dj-tag.warn { color: var(--dj-gold); border-color: var(--dj-gold); }
+/* 优化 6: 伏笔时间轴(一行: 跨度 · 进度条 · 场次) */
+.dj-tl { display: flex; align-items: center; gap: var(--dj-s2); margin-top: var(--dj-s1); color: var(--dj-ink-faint); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.dj-tl-k { flex: none; color: var(--dj-ink-dim); }
+.dj-tl-bar { flex: 0 0 72px; height: 4px; border: 1px solid var(--dj-line); border-radius: var(--dj-radius); background: var(--dj-bg); overflow: hidden; }
+.dj-tl-bar i { display: block; height: 100%; background: var(--dj-ink-faint); }
+.dj-tl-n { flex: 1; min-width: 0; }
+.dj-tl.warn .dj-tl-k, .dj-tl.warn .dj-tl-n { color: var(--dj-gold); }
+.dj-tl.warn .dj-tl-bar i { background: var(--dj-gold); }
+/* 人物卡: 状态色(死亡 seal / 离开·失踪 淡 / 受伤 gold) + 保护开关 */
+.dj-fate { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--dj-s1); }
+.dj-fate > .dj-p, .dj-fate > .dj-muted:not(span) { flex-basis: 100%; }
+.dj-fate.dead .dj-fate-st { color: var(--dj-seal); border-color: var(--dj-seal); }
+.dj-fate.dead > b { color: var(--dj-seal); text-decoration: line-through; }
+.dj-fate.gone > b, .dj-fate.gone .dj-fate-st { color: var(--dj-ink-faint); }
+.dj-fate.warn .dj-fate-st { color: var(--dj-gold); border-color: var(--dj-gold); }
+.dj-protect { margin-left: auto; }
+.dj-protect.on { color: var(--dj-good); border-color: var(--dj-good); }
+.dj-empty { display: inline-flex; align-items: center; gap: var(--dj-s1); color: var(--dj-ink-ghost); font-size: 11.5px; margin: var(--dj-s1) 0; }
+
+/* ---------------------------------------------------------------- 指令预览（舞台提示）与波形 */
+.dj-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--dj-bg);
+  border: 1px solid var(--dj-line);
+  border-left: 2px solid var(--dj-seal);
+  border-radius: var(--dj-radius);
+  padding: var(--dj-s2) var(--dj-s3);
+  max-height: 260px;
+  overflow: auto;
+  font-family: var(--dj-serif);
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--dj-ink);
+  font-variant-numeric: tabular-nums;
+}
+.dj-console { max-height: 180px; }
+.dj-err { color: var(--dj-seal); }
+.dj-tension { display: flex; align-items: baseline; gap: var(--dj-s1); }
+.dj-tension-v { font-family: var(--dj-serif); font-variant-numeric: tabular-nums; font-size: 17px; font-weight: 600; color: var(--dj-ink-strong); }
+.dj-bar { flex: 1; height: 5px; background: var(--dj-bg); border: 1px solid var(--dj-line); border-radius: var(--dj-radius); overflow: hidden; }
+.dj-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--dj-good), var(--dj-gold), var(--dj-seal)); }
+.dj-beats { margin-top: var(--dj-s2); display: flex; flex-wrap: wrap; gap: var(--dj-s1); }
+.dj-beat { padding: 1px var(--dj-s1); border: 1px solid var(--dj-line); border-radius: var(--dj-radius); background: var(--dj-bg); color: var(--dj-ink-dim); font-size: 10px; }
+
+/* ---------------------------------------------------------------- 按钮（朱红填充全屏只有 1 处主操作） */
+.dj-actions { display: flex; flex-wrap: wrap; gap: var(--dj-s1); margin-top: var(--dj-s2); }
+.dj-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dj-s1);
+  padding: var(--dj-s1) var(--dj-s3);
+  background: var(--dj-raise);
+  color: var(--dj-ink);
+  border: 1px solid var(--dj-line-strong);
+  border-radius: var(--dj-radius);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.dj-btn:hover { background: var(--dj-hover); }
+.dj-btn:disabled { opacity: 0.45; cursor: default; }
+.dj-btn.danger { border-color: var(--dj-seal); color: var(--dj-seal); background: none; }
+.dj-btn.danger:hover { background: var(--dj-ctl-on); }
+/* 证据展开按钮(2026-11-12): 挂在「证据：」那一行里的小开关, 不占整行 */
+.dj-ev-more {
+  margin-left: var(--dj-s2);
+  padding: 0 6px;
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+.dj-mini {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dj-s1);
+  background: none;
+  border: 1px solid var(--dj-line);
+  border-radius: var(--dj-radius);
+  color: var(--dj-ink-dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  /* 触控: 上下 5px 让小按钮到 ~26px 高(样式约束不许 min-height) */
+  padding: 5px var(--dj-s2);
+  margin-left: auto;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.dj-mini:hover { color: var(--dj-ink); border-color: var(--dj-line-strong); }
+
+/* ---------------------------------------------------------------- 表单（数字框去掉原生转轮） */
+.dj-field { display: flex; flex-direction: column; gap: var(--dj-s1); margin: var(--dj-s2) 0; color: var(--dj-ink-dim); font-size: 11.5px; }
+.dj-field.inline { display: inline-flex; flex-direction: column; width: auto; margin-right: var(--dj-s3); }
+.dj-field.inline input { width: 90px; }
+.dj-input {
+  width: 100%;
+  padding: var(--dj-s1) var(--dj-s2);
+  background: var(--dj-bg);
+  border: 1px solid var(--dj-line);
+  border-radius: var(--dj-radius);
+  color: var(--dj-ink);
+  font: inherit;
+  font-size: 12px;
+  transition: border-color 0.15s ease;
+}
+.dj-input::placeholder { color: var(--dj-ink-ghost); }
+.dj-input:hover { border-color: var(--dj-line-strong); }
+.dj-input[type='number'] { appearance: textfield; -moz-appearance: textfield; }
+.dj-input[type='number']::-webkit-outer-spin-button,
+.dj-input[type='number']::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.dj-inline { display: flex; align-items: center; gap: var(--dj-s2); flex-wrap: wrap; margin-top: var(--dj-s2); }
+.dj-input-sm { display: inline-block; width: 120px; margin-left: var(--dj-s1); padding: 2px var(--dj-s2); }
+.dj-death { border-color: var(--dj-seal); border-left-color: var(--dj-seal); }
+.dj-adjust { margin-top: var(--dj-s2); border-top: 1px solid var(--dj-line); padding-top: var(--dj-s2); }
+.dj-adjust-h { font-size: 11.5px; color: var(--dj-ink-dim); margin-bottom: var(--dj-s1); }
+.dj-adjust-list { margin: 0; padding-left: var(--dj-s4); }
+.dj-adjust-list li { font-size: 11.5px; color: var(--dj-ink-faint); line-height: 1.55; }
+.dj-adv { margin-top: var(--dj-s2); border-top: 1px solid var(--dj-line); padding-top: var(--dj-s2); }
+
+/* ---------------------------------------------------------------- 状态条（四态语义色 + 圆点） */
+.dj-status { border-left-width: 3px; background: var(--dj-bg); padding: var(--dj-s2) var(--dj-s3); font-size: 11.5px; }
+.dj-status-h { display: flex; align-items: center; gap: var(--dj-s2); }
+.dj-status-h::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--dj-line-strong); flex: none; }
+.dj-status-h b { font-size: 12.5px; font-weight: 600; }
+.dj-status-stop { border-left-color: var(--dj-ink-faint); }
+.dj-status-stop .dj-status-h::before { background: var(--dj-ink-faint); }
+.dj-status-stop .dj-status-h b { color: var(--dj-ink-dim); }
+/* 知情核对: 导演自查的落款, 用一条细左边线跟正文分开, 不抢必演的重量 */
+.dj-know { margin-top: var(--dj-s2); padding-left: var(--dj-s3); border-left: 1px solid var(--dj-line); }
+.dj-know-h { font-size: 11px; color: var(--dj-ink-faint); margin-bottom: var(--dj-s1); }
+.dj-status-over { border-left-color: var(--dj-seal); }
+.dj-status-over .dj-status-h::before { background: var(--dj-seal); }
+.dj-status-over .dj-status-h b { color: var(--dj-seal); }
+.dj-status-off { border-left-color: var(--dj-ink-faint); }
+.dj-status-off .dj-status-h::before { background: var(--dj-ink-faint); }
+.dj-status-warn { border-left-color: var(--dj-gold); }
+.dj-status-warn .dj-status-h::before { background: var(--dj-gold); }
+.dj-status-cold { border-left-color: var(--dj-ink-faint); }
+.dj-status-cold .dj-status-h::before { background: var(--dj-ink-faint); }
+/* 平静模式(2026-11-08): 中性边 + 金色标签 —— 它不是"在跑"也不是"出问题", 是"在看着但不发话" */
+.dj-status-calm { border-left-color: var(--dj-line-strong); }
+.dj-status-calm .dj-status-h::before { background: var(--dj-gold); }
+.dj-status-calm .dj-status-h b { color: var(--dj-gold); }
+.dj-status-on { border-left-color: var(--dj-good); }
+.dj-status-on .dj-status-h::before { background: var(--dj-good); }
+.dj-status-on .dj-status-h b { color: var(--dj-good); }
+/* 编排中：不确定态细进度条（只回答「在跑」，**不表示真实百分比**） */
+.dj-progress {
+  height: 2px;
+  margin-top: var(--dj-s2);
+  border-radius: var(--dj-radius);
+  background-color: var(--dj-line);
+  background-image: linear-gradient(90deg, var(--dj-ctl-fill), var(--dj-seal), var(--dj-ctl-fill));
+  background-repeat: no-repeat;
+  background-size: 40% 100%;
+  animation: dj-sweep 1.6s ease-in-out infinite;
+}
+
+/* ---------------------------------------------------------------- 指标卡（A：衬线数字） */
+.dj-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--dj-s1); margin: var(--dj-s1) 0 var(--dj-s2); }
+.dj-metric { display: flex; flex-direction: column; gap: 1px; min-width: 0; font-size: 10px; color: var(--dj-ink-ghost); letter-spacing: 0.2px; }
+.dj-metric b {
+  font-family: var(--dj-serif);
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--dj-ink-strong);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.2px;
+}
+.dj-metric em { font-style: normal; font-size: 10px; color: var(--dj-ink-faint); font-family: var(--dj-num); font-variant-numeric: tabular-nums; }
+.dj-metric .dj-bad { color: var(--dj-seal); text-decoration: underline dotted var(--dj-seal); }
+.dj-spark { display: flex; align-items: flex-end; gap: 2px; height: 26px; margin-top: var(--dj-s2); border-bottom: 1px solid var(--dj-line); padding-bottom: 2px; }
+.dj-spark i { display: block; width: 5px; border-radius: 1px 1px 0 0; background: linear-gradient(180deg, var(--dj-gold), var(--dj-seal)); }
+.dj-err-line { display: flex; align-items: flex-start; gap: var(--dj-s1); color: var(--dj-seal); font-size: 11.5px; margin: var(--dj-s1) 0; }
+.dj-ok-line { display: flex; align-items: flex-start; gap: var(--dj-s1); color: var(--dj-good); font-size: 11.5px; margin: var(--dj-s1) 0; }
+.dj-confirm { margin-top: var(--dj-s2); border-top: 1px solid var(--dj-line); padding-top: var(--dj-s2); }
+/* 总开关关掉时：左边线转灰 + 分组标题转弱墨 —— 一眼看出"停用中"（不动尺寸/不动布局） */
+.dj-master-off { border-left: 2px solid var(--dj-ink-faint); }
+.dj-master-off .dj-card-h { color: var(--dj-ink-faint); }
+.dj-final { border-left: 2px solid var(--dj-seal); }
+.dj-final-ops { border-left: 2px solid var(--dj-line-strong); }
+
+/* ---------------------------------------------------------------- 防剧透折叠（显示层） */
+.dj-fold { display: flex; align-items: baseline; gap: var(--dj-s1); }
+.dj-folded { cursor: pointer; }
+.dj-folded:hover { color: var(--dj-ink-dim); }
+.dj-fold-icon { align-self: center; color: var(--dj-ink-ghost); }
+
+/* ---------------------------------------------------------------- 图标 */
+svg.i { width: 13px; height: 13px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.dj-head svg.i, .dj-tabs svg.i { width: 14px; height: 14px; }
+
+/* ==========================================================================
+ * 自绘控件层（dj-ctl*）—— 规格 §1.1 的六条，逐条实现
+ * ========================================================================== */
+
+/* ① 滑块：红笔笔尖（app/::-webkit-* 与 ::-moz-* 都自绘；刻度 + 读数 + 焦点环 + 禁用） */
+.dj-ctl-field { display: flex; flex-direction: column; gap: var(--dj-s1); }
+.dj-ctl-lab { display: flex; align-items: baseline; gap: var(--dj-s2); font-size: 11.5px; color: var(--dj-ink-dim); }
+.dj-ctl-readout { margin-left: auto; font-family: var(--dj-num); font-variant-numeric: tabular-nums; color: var(--dj-ink); font-size: 11.5px; }
+.dj-ctl-range { -webkit-appearance: none; appearance: none; width: 100%; height: 20px; margin: 0; background: none; cursor: pointer; }
+.dj-ctl-range::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: var(--dj-radius);
+  background: linear-gradient(90deg, var(--dj-ctl-fill) var(--fill, 50%), var(--dj-ctl-track) var(--fill, 50%));
+}
+.dj-ctl-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 17px;
+  margin-top: -7px;
+  border-radius: var(--dj-radius);
+  background: var(--dj-ctl-knob);
+  border: 1px solid var(--dj-seal);
+  box-shadow: inset 0 -3px 0 var(--dj-ctl-on);
+}
+.dj-ctl-range::-moz-range-track { height: 3px; border-radius: var(--dj-radius); background: var(--dj-ctl-track); }
+.dj-ctl-range::-moz-range-progress { height: 3px; border-radius: var(--dj-radius); background: var(--dj-ctl-fill); }
+.dj-ctl-range::-moz-range-thumb { width: 11px; height: 16px; border-radius: var(--dj-radius); background: var(--dj-ctl-knob); border: 1px solid var(--dj-seal); }
+.dj-ctl-range:focus { outline: none; }
+.dj-ctl-range:focus-visible { outline: 2px solid var(--dj-focus); outline-offset: var(--dj-s1); border-radius: var(--dj-radius); }
+.dj-ctl-range:disabled { opacity: 0.45; cursor: default; }
+.dj-ctl-ticks { display: flex; justify-content: space-between; align-items: center; padding: 0 var(--dj-s1); }
+.dj-ctl-ticks i { width: 1px; height: 4px; background: var(--dj-line-strong); }
+.dj-ctl-ticks b { font-size: 10px; font-weight: 400; color: var(--dj-ink-ghost); font-family: var(--dj-num); }
+
+/* ② 勾选 → 自绘开关（铜拨片）：保 input[type=checkbox] 语义（Space 可切），外观全自绘，零 absolute */
+.dj-check { display: flex; align-items: center; gap: var(--dj-s2); margin: var(--dj-s1) 0; color: var(--dj-ink); font-size: 11.5px; cursor: pointer; user-select: none; }
+.dj-check input[type='checkbox'] { appearance: none; -webkit-appearance: none; width: 1px; height: 1px; margin: 0; padding: 0; border: 0; opacity: 0; overflow: hidden; }
+.dj-ctl-sw {
+  display: grid;
+  grid-template-columns: 14px;
+  align-items: center;
+  justify-content: start;
+  flex: none;
+  width: 34px;
+  height: 18px;
+  padding: 2px;
+  background: var(--dj-ctl-off);
+  border: 1px solid var(--dj-line-strong);
+  border-radius: var(--dj-radius);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.dj-ctl-knob { grid-area: 1 / 1; width: 12px; height: 12px; border-radius: 1px; background: var(--dj-ctl-knob); transition: transform 0.15s ease; }
+.dj-check input:checked + .dj-ctl-sw { background: var(--dj-ctl-on); border-color: var(--dj-seal); }
+.dj-check input:checked + .dj-ctl-sw .dj-ctl-knob { transform: translateX(16px); background: var(--dj-seal); }
+.dj-check input:focus-visible + .dj-ctl-sw { outline: 2px solid var(--dj-focus); outline-offset: 2px; }
+.dj-check input:disabled + .dj-ctl-sw { opacity: 0.45; }
+
+/* ③ 下拉 → 自绘 listbox（就地展开，不浮层、不 absolute、无原生下拉外观） */
+.dj-ctl-dd { display: flex; flex-direction: column; gap: var(--dj-s1); }
+/* 旧类名保留（规格 §1.4-19 类名契约）：现在挂在自绘下拉的触发器(button)上 */
+.dj-select { }
+.dj-ctl-dd-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--dj-s2);
+  width: 100%;
+  padding: var(--dj-s1) var(--dj-s2);
+  background: var(--dj-bg);
+  color: var(--dj-ink);
+  border: 1px solid var(--dj-line);
+  border-radius: var(--dj-radius);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.dj-ctl-dd-btn:hover { border-color: var(--dj-line-strong); background: var(--dj-raise); }
+.dj-ctl-dd-btn[aria-expanded='true'] { border-color: var(--dj-seal); }
+.dj-ctl-val { flex: 1; }
+.dj-ctl-caret {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-right: 1.5px solid var(--dj-ink-dim);
+  border-bottom: 1.5px solid var(--dj-ink-dim);
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 0.15s ease;
+}
+.dj-ctl-dd-btn[aria-expanded='true'] .dj-ctl-caret { transform: rotate(-135deg) translateY(-1px); }
+.dj-ctl-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--dj-s1);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--dj-list-bg);
+  border: 1px solid var(--dj-seal);
+  border-radius: var(--dj-radius);
+}
+/* 故事类型的列表项带一行说明(2026-11-12), 所以要能换行: 名字 + 下面一整行副标题。
+   其余下拉(节拍/伏笔/冲突/模型…)只是纯文本, 单子项, 这套 flex 对它们没有副作用。 */
+.dj-ctl-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--dj-s2);
+  padding: var(--dj-s1) var(--dj-s2);
+  border-radius: 1px;
+  font-size: 11.5px;
+  color: var(--dj-ink-dim);
+  cursor: pointer;
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+.dj-ctl-dd-name { font-weight: 600; }
+.dj-ctl-dd-sub {
+  flex-basis: 100%;
+  padding-left: var(--dj-s3);
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--dj-ink-dim);
+  opacity: 0.85;
+}
+.dj-ctl-list li:hover { background: var(--dj-hover); color: var(--dj-ink); }
+.dj-ctl-list li[aria-selected='true'] { color: var(--dj-ink); }
+.dj-ctl-list li[aria-selected='true']::before { content: '›'; color: var(--dj-seal); font-weight: 700; margin-right: var(--dj-s1); }
+.dj-ctl-list li:focus-visible { outline: 2px solid var(--dj-focus); outline-offset: -2px; }
+
+/* ④ 折叠 → 自绘披露（折角 caret + 高度动效，零原生折叠三角） */
+.dj-ctl-disc {
+  display: flex;
+  align-items: center;
+  gap: var(--dj-s2);
+  width: 100%;
+  padding: var(--dj-s2) 0;
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--dj-line);
+  color: var(--dj-ink-dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  transition: color 0.15s ease;
+}
+.dj-ctl-disc:hover { color: var(--dj-ink); }
+.dj-ctl-disc[aria-expanded='true'] .dj-ctl-caret { transform: rotate(-135deg) translateY(-1px); }
+.dj-ctl-n { margin-left: auto; font-family: var(--dj-num); font-size: 10px; color: var(--dj-ink-ghost); }
+.dj-ctl-disc-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dj-s2);
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-height 0.18s ease, opacity 0.18s ease;
+}
+.dj-ctl-disc-body.open { max-height: 640px; opacity: 1; }
+
+/* ④bis 文本类输入一律主题化（规格 §1.1bis）：**不看类名**，按元素上下文接管
+   起因：用户实机发现"接口的地址、密钥居然还是原生的，都还是白的" ——
+   根因是旧规则只挂在 .dj-input 这个类上, 而地址/密钥/8 个 number 都没带类名 ⇒ 落回 UA 默认
+   （computed style 实测: 背景 rgb(255,255,255)、描边 rgb(118,118,118)、高 21.2px）。
+   这里用 :not() 排掉自绘的 checkbox 与 range，其余（text/password/number/search/url/email/无 type/textarea）全部接管。 */
+.dj-root input:not([type='checkbox']):not([type='range']),
+.dj-root textarea {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  padding: var(--dj-s1) var(--dj-s2);
+  background: var(--dj-bg);
+  border: 1px solid var(--dj-line);
+  border-radius: var(--dj-radius);
+  color: var(--dj-ink);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  transition: border-color 0.15s ease;
+}
+.dj-root input:not([type='checkbox']):not([type='range']):hover,
+.dj-root textarea:hover { border-color: var(--dj-line-strong); }
+.dj-root input:not([type='checkbox']):not([type='range'])::placeholder,
+.dj-root textarea::placeholder { color: var(--dj-ink-ghost); }
+.dj-root input:not([type='checkbox']):not([type='range']):disabled,
+.dj-root textarea:disabled { opacity: 0.45; }
+.dj-root input[type='number'] { appearance: textfield; -moz-appearance: textfield; }
+.dj-root input[type='number']::-webkit-outer-spin-button,
+.dj-root input[type='number']::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.dj-root input[type='search']::-webkit-search-cancel-button { -webkit-appearance: none; }
+
+/* ⑤ 滚动条：自绘（细轨 + 悬停加重） */
+.dj-body, .dj-pre { scrollbar-width: thin; scrollbar-color: var(--dj-line-strong) transparent; }
+.dj-body::-webkit-scrollbar, .dj-pre::-webkit-scrollbar { width: 8px; height: 8px; }
+.dj-body::-webkit-scrollbar-track, .dj-pre::-webkit-scrollbar-track { background: transparent; }
+.dj-body::-webkit-scrollbar-thumb, .dj-pre::-webkit-scrollbar-thumb {
+  background: var(--dj-line-strong);
+  border: 2px solid transparent;
+  border-radius: var(--dj-radius);
+  background-clip: content-box;
+}
+.dj-body::-webkit-scrollbar-thumb:hover, .dj-pre::-webkit-scrollbar-thumb:hover { background: var(--dj-ink-ghost); background-clip: content-box; }
+
+/* ⑥ 选区与全局焦点环（不许浏览器默认蓝框） */
+.dj-root ::selection { background: var(--dj-seal); color: var(--dj-on-accent); }
+.dj-root :focus { outline: none; }
+.dj-root :focus-visible { outline: 2px solid var(--dj-focus); outline-offset: 2px; border-radius: var(--dj-radius); }
+
+/* ---------------------------------------------------------------- 减弱动效：全关（编排中的呼吸环换成静态朱红环） */
+@media (prefers-reduced-motion: reduce) {
+  .dj-root *, .dj-root *::before, .dj-root *::after { transition: none !important; animation: none !important; }
+  .dj-orb[data-态='编排中'] { box-shadow: inset 0 0 0 3px var(--dj-seal), inset 0 -6px 12px var(--dj-bg); }
+  .dj-orb[data-态='编排中'] .dj-orb-ring { border-color: var(--dj-seal); }
+  .dj-progress { background-position: 50% 0; }
+}
+
+
+/* 2026-11-13 P0-2/P0-3: 面板上的「两个钟」同一行 —— 故事时间(天) 与 代码计量(场)。
+   两者会背离, 并排才看得出来; 视觉上从属于上面的章号行, 所以小一号、降一档不透明度。
+   间距一律走 4px 栅格变量（--dj-s1..s4, s6），不写字面量。 */
+.dj-desk-sub {
+  margin: 0 0 var(--dj-s2);
+  font-size: 12px;
+  opacity: 0.85;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dj-s2);
+  align-items: baseline;
+}
+.dj-desk-sep {
+  padding-left: var(--dj-s2);
+  border-left: 1px solid currentColor;
+  opacity: 0.9;
+}
