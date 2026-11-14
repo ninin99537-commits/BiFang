@@ -258,7 +258,9 @@ console.log('\n[6] 接线钉子(文本, 辅助): 四条链路都接在同一个�
 {
   const 接线 = '.catch(error => 报告世界书失败(host, error))';
   ok('update.ts 的同步 catch 走单一出口', update源码.includes(接线));
-  ok('index.ts(启动/切聊天)走单一出口', index源码.includes(接线));
+  // 观察点变更(实现把 maybeInjectNpcStates 挪进 worldbook-inject.ts, 非断言放宽): 启动/切聊天的接线随之搬了家
+  const 注入层源码 = (await import('../src/彼方_NPC幕后生命状态系统/worldbook-inject.ts?raw')).default;
+  ok('index.ts(启动/切聊天)的调用走单一出口(接线在注入层的 maybeInjectNpcStates 里)', 注入层源码.includes(接线));
   ok('悬浮球界面(改设置)走单一出口', 壳源码.includes(接线));
   ok('数据变更走同一句文案函数', 数据变更源码.includes('toastWarning(世界书失败文案(error), \'彼方\')'));
   eq('注入层自身 toast.warn 只出现在出口那一处', 注入层源码.split('toast.warn').length - 1, 1);
