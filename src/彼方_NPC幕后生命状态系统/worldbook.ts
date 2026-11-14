@@ -33,7 +33,9 @@ type 主AI激活函数 = (name: string, text: string) => Promise<世界书条目
  *  判定就是原先各处都在写的那句 `typeof env.getWorldInfoActivatedData === 'function'`,
  *  提前到这一处之后, "有没有这个方法"与"调用它"就分开了 —— 判定过的分支里不必再写 `!`。 */
 function 取主AI激活(env: unknown): 主AI激活函数 | null {
-    const 候选 = env && typeof env === 'object' ? (env as Record<string, unknown>).getWorldInfoActivatedData : undefined;
+    // 只判"env 是真值"就取属性 —— 与原代码 `env && typeof env.getWorldInfoActivatedData === 'function'`
+    // 的短路条件逐字一致(不额外要求 typeof env === 'object', 免得把"环境本身是函数"这种情形挡掉)。
+    const 候选 = env ? (env as Record<string, unknown>).getWorldInfoActivatedData : undefined;
     return typeof 候选 === 'function' ? 候选 as 主AI激活函数 : null;
 }
 
