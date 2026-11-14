@@ -6,7 +6,7 @@
 
 import { computed, inject } from 'vue';
 import type { ComputedRef, InjectionKey } from 'vue';
-import type { useConsoleStore, useDebugStore, useMainPromptStore } from './日志仓';
+import type { useConsoleStore, useDebugStore } from './日志仓';
 
 export type 日志面板 = {
   debugLog: ComputedRef<Array<Record<string, any>>>;

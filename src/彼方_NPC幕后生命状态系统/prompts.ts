@@ -180,13 +180,58 @@ function 台账账况(currentCards: Record<string, any>, 剧情时间 = ''): str
         return '';
     return `\n\n【未完成事项账况·只给你看】${行.join('；')} / 上限 ${台账上限}(「进行中」不受淘汰, 账满了也要按事实继续记)。**「待核对」的条目本轮必须表态**(已完成 / 已作废并写原因 / 仍进行中); 其余没变化的不用回。`;
 }
-function buildUpdateMessages(input): 提示词形状 {
+/** `buildUpdateMessages` 的入参。这里是**这一份提示词到底依赖什么**的完整清单 ——
+ *  以前是隐式 any, 少给一个字段要到运行时才炸(模板里 `${input.xxx}` 拼出 undefined)。
+ *  字段名与 更新输入.ts:160 的调用点一一对应。 */
+interface 更新提示词入参 {
+    /** 最近回复拼成的正文(已按时间先后排列, 最新在末尾) */
+    reply: string;
+    /** 最近回复条数(只用于提示词里那句"共 N 条") */
+    replyCount: number;
+    /** 最近剧情上下文(上一轮的正文/摘要) */
+    context?: string;
+    /** 正文里抓到的"时间可能跳了"的词; 没有就是 null */
+    timeJump?: string | null;
+    /** 本聊天已追踪的 NPC 名字 */
+    tracked: string[];
+    /** 最近回复里提到过的名字(仅提示, 不让模型据此建档) */
+    inSceneHint: string[];
+    /** 现有状态卡: NPC 名 → 卡 */
+    currentCards: Record<string, any>;
+    /** 自动建档开关(关闭时提示词里加"只更新已追踪"段) */
+    autoTrackEnabled?: boolean;
+    /** 生理监测开关(控制主提示词与附加段里的生理内容) */
+    physioEnabled?: boolean;
+    /** 被玩家标记为恋爱对象的 NPC 名字(空数组时恋爱段完全不出现) */
+    恋爱对象名单?: string[];
+    /** 用户自定义段(只插锚点, 不改内置提示词) */
+    自定义段?: 用户段[];
+    /** 预填充开关 */
+    预填充?: boolean;
+    /** 本轮已读到的世界书文本(空串/undefined 时提示词里不出现世界书段) */
+    worldbook?: string;
+    /** 上次更新推断出的剧情时间 */
+    currentStoryTime?: string;
+    /** 从正文里提取到的"当前时间"(★务必以此为准★) */
+    storyTimeHint?: string;
+    /** 玩家角色名 */
+    playerName?: string;
+    /** 玩家角色描述(persona) */
+    playerDescription?: string;
+    /** 酒馆宏展开; 调用方不给就原样返回(本文件不依赖平台) */
+    展开宏?: (text: string) => string;
+}
+
+function buildUpdateMessages(input: 更新提示词入参): 提示词形状 {
     // 宏展开由调用方注入; 没给就原样返回(本文件不依赖平台, 见 host.ts 顶部的约定)
     const 展开宏: (text: string) => string = typeof input.展开宏 === 'function' ? input.展开宏 : text => text;
     // 用户自定义段: 只往锚点里插, 内置提示词一个字都不改(插件也不内置破限——想要的人自己插一段)。
     const 用户段们: 用户段[] = Array.isArray(input.自定义段) ? input.自定义段 : [];
     // 预填充开着时"末条 assistant"就是用户故意的(让模型接着写), 不补收尾 user; 关着才补。
-    const 预填充 = !!input.预填充;
+    // 注意: 这个开关**不在本文件生效** —— 预填充的 assistant 是由请求层(共用/模型往返.ts)追加的,
+    // 而下面的收尾判断只看"当前末条是不是 assistant", 两种情形都自然成立。原先这里有一个
+    // `const 预填充 = !!input.预填充` 从头到尾没被读过(noUnusedLocals 报 TS6133), 已删;
+    // 入参 预填充 仍留在接口上, 因为调用方还在传, 且请求层要用。
     // 生理监测: 控制主提示词与附加段里的生理内容(主提示词的条件段落 + physioInstruction)
     const physioEnabled = !!input.physioEnabled;
     // 自动建档: 关闭时只更新追踪名单内的 NPC, 新角色一律不建
@@ -273,6 +318,17 @@ ${JSON.stringify(input.currentCards, null, 2)}${台账账况(input.currentCards,
 3. 把已死亡的已建档NPC列入 "移除NPC" 数组(仅死亡——永久离开/不再影响剧情都不算移除理由)。
 
 输出这些NPC的幕后状态更新 JSON。${noNewNpcInstruction}${physioInstruction}${恋爱Instruction}`.trim();
+    // 【最新用户输入】独立成一条 system: 与 NPC 状态字段隔离, 明确告诉 AI"这段玩家输入仅供
+    // 判断'谁与玩家同场景', 幕后 NPC 的任何字段严禁反映这段内容"。放在 userContent 里时,
+    // AI 偶尔会拿"玩家说要去超市"等信息推断 NPC"听说主角要去超市"(防全知漏洞)。
+    // 单独提出来标注类型: 原先内联在数组字面量里时, 空分支是 `never[]`, 三元两边一合就把
+    // role 推成 `string`, 于是整个 messages 赋值报 TS2322(而不是 提示词段[])。
+    const 场景判断段: 提示词段[] = input.context && String(input.context).trim()
+        ? [{
+            role: 'system',
+            content: 展开宏(`【最新用户输入·仅供场景判断】(玩家最近一次的行动/话语; **严格仅供你判断"谁与玩家同场景互动"**——幕后 NPC 没有听到也没有看到这段输入, 它们的任何字段(当前在做/心里惦记/秘密想法/近期关键事件等)**严禁**反映这段输入的内容, 不得让 NPC"听说/担心/想起"玩家在这里做的事):\n${input.context}`),
+        }]
+        : [];
     const messages: 提示词段[] = [
         // 「最前」锚点: 主 system 之前(以前头部填充占的位置——头部填充已删, 想要垫文本的人自己插一段)
         ...锚点段(用户段们, '最前', 展开宏),
@@ -281,15 +337,7 @@ ${JSON.stringify(input.currentCards, null, 2)}${台账账况(input.currentCards,
         { role: 'system', content: 展开宏(SYSTEM_PROMPT_BODY_HEAD(physioEnabled)) },
         // 「主提示词之后」锚点: 主 system 之后、场景判断之前
         ...锚点段(用户段们, '主提示词之后', 展开宏),
-        // 【最新用户输入】独立成一条 system: 与 NPC 状态字段隔离, 明确告诉 AI"这段玩家输入仅供
-        // 判断'谁与玩家同场景', 幕后 NPC 的任何字段严禁反映这段内容"。放在 userContent 里时,
-        // AI 偶尔会拿"玩家说要去超市"等信息推断 NPC"听说主角要去超市"(防全知漏洞)。
-        ...(input.context && String(input.context).trim()
-            ? [{
-                role: 'system',
-                content: 展开宏(`【最新用户输入·仅供场景判断】(玩家最近一次的行动/话语; **严格仅供你判断"谁与玩家同场景互动"**——幕后 NPC 没有听到也没有看到这段输入, 它们的任何字段(当前在做/心里惦记/秘密想法/近期关键事件等)**严禁**反映这段输入的内容, 不得让 NPC"听说/担心/想起"玩家在这里做的事):\n${input.context}`),
-            }]
-            : []),
+        ...场景判断段,
         // 「任务之前」锚点: 场景判断之后、任务正文之前
         ...锚点段(用户段们, '任务之前', 展开宏),
         { role: 'user', content: 展开宏(userContent) },
@@ -382,7 +430,7 @@ function 渲染注入表(npcEntries: [string, Record<string, any>][], 未回票?
     const 数据行 = 行.map(r => [r.名, ...保留.map(i => r.值[i] || '—')].join(' | '));
     return [表头, ...数据行].join('\n');
 }
-function buildInjectionPrompt(npcEntries, 未回票?: Record<string, string[]>, 剧情时间 = '', 生理监测 = true) {
+function buildInjectionPrompt(npcEntries: [string, Record<string, any>][], 未回票?: Record<string, string[]>, 剧情时间 = '', 生理监测 = true) {
     const sections = [BIFANG_ENTRY_CONTENT_PREFIX];
     if (npcEntries.length > 0) {
         sections.push(`以下NPC的幕后生活状态(每行一个 NPC, 列名见表头, "—" 表示该项无内容), 供你保持世界真实感与场景一致性。**防全知: 未在当前正文中出现的NPC不知道正文中正在发生的任何事**(主角的行踪、当前发生的事件、其他角色的互动等)——当你的剧情中提到他们时, 只让他们表现出自己日常生活该有的样子, 绝不让其言行、想法、反应体现任何他们不可能知道的信息, 除非剧情中明确安排了告知渠道(通讯/传信/他人转述)。除非剧情需要, 不要在叙述中直接暴露这些幕后信息。**带「本轮未表态，待确认」四个字的条目是幕后这次没能核对上的旧承诺——它仍然真实存在(那个 NPC 确实还记着这件事), 但别把它当成"必须在这一段正文里兑现"的铁律**: 需要时自然带出即可, 不必硬凑; 其余"进行中"条目照旧按事实兑现。**带「幕后已办（正文未演）」的是幕后已经发生、正文里没演过的事**——可以当成背景事实自然带入(那个 NPC 确实已经办完了), 但**不要**让主角"刚刚看到"它发生; **带「已作废」的是这件事没成或取消了**, 别写成兑现了。`, 渲染注入表(npcEntries, 未回票, 剧情时间, 生理监测));

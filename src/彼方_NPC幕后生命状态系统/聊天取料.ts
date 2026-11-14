@@ -120,8 +120,10 @@ export function 正文过滤(标签: unknown): (text: string) => string {
  * **只从正文与上下文提取, 不读世界书** —— 世界书里的"当前时间"表是其他系统或彼方上次写入的
  * 推断值, 可能滞后或与正文不符, 作为"务必以此为准"的提示反而会把剧情时间带偏。
  */
-export function 时间提示(worldbook: string, reply: string, context: string): string {
-    const pad = (n: number) => String(n).padStart(2, '0');
+export function 时间提示(_worldbook: string, reply: string, context: string): string {
+    // 参数名带下划线: worldbook 是**刻意不用**的(见函数注释 —— 世界书里的"当前时间"可能滞后),
+    // 但保留在签名里, 调用点(更新输入.ts:97)仍然照原样传三个实参。
+    const pad = (n: string) => String(n).padStart(2, '0');
     // 正文时间**只从 reply(最近回复)里提取**——worldbook/context 含彼方自己写的
     // "当前时间"固定标签(会干扰), 且拼接在 reply 之后, 取"最后一次"会取到它们。
     // reply 拼接顺序是"较早回复在前、最新回复在后", 最新正文在末尾, 取 reply 内最后一次出现的时间。

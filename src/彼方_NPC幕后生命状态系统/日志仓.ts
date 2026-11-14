@@ -7,10 +7,32 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 
+/** 一条更新日志。字段全部可选: record() 是"补丁式"写入(见下面 base 的合并逻辑),
+ *  调用方每次只给发生变化的那几项(如 update.ts 成功时只给 updatedNpcs/removedNpcs,
+ *  失败时只给 error)。写成必填会让每个调用点补一堆空串, 那才是失真。 */
+interface 更新日志 {
+    time: number;
+    model: string;
+    replyIds: number[];
+    replyPreview: string;
+    updatedNpcs: string[];
+    removedNpcs: string[];
+    request: string;
+    response: string;
+    error: string;
+}
+
+/** 控制台里的一行(日志页按 type 上色, 所以 type 保留原始方法名) */
+interface 控制台行 {
+    time: number;
+    type: string;
+    text: string;
+}
+
 const useDebugStore = defineStore('bifang-debug', () => {
-    const log = ref(null);
-    function record(partial) {
-        const base = {
+    const log = ref<更新日志 | null>(null);
+    function record(partial: Partial<更新日志>) {
+        const base: 更新日志 = {
             time: 0,
             model: '',
             replyIds: [],
@@ -33,7 +55,7 @@ const useMainPromptStore = defineStore('bifang-main-prompt', () => {
     const prompt = ref('');
     const time = ref(0);
     const count = ref(0);
-    function record(text) {
+    function record(text: string) {
         prompt.value = text;
         time.value = Date.now();
         count.value += 1;
@@ -42,8 +64,8 @@ const useMainPromptStore = defineStore('bifang-main-prompt', () => {
 });
 /** 捕获彼方脚本自身的 console 输出，让日志页可见（不再只进控制台） */
 const useConsoleStore = defineStore('bifang-console', () => {
-    const lines = ref([]);
-    function record(type, ...args) {
+    const lines = ref<控制台行[]>([]);
+    function record(type: string, ...args: unknown[]) {
         const text = args
             .map(a => {
             if (typeof a === 'string')
@@ -72,10 +94,12 @@ const useConsoleStore = defineStore('bifang-console', () => {
 function captureConsole() {
     try {
         const store = useConsoleStore();
-        const types = ['log', 'warn', 'error', 'info'];
+        // as const: 不这样写 types 会被推成 string[], 于是 console[type] 是"用 string 索引 Console"
+        // (TS7053)。这里要的正是"只允许这四个真实存在的键"。
+        const types = ['log', 'warn', 'error', 'info'] as const;
         for (const type of types) {
             const original = console[type];
-            console[type] = (...args) => {
+            console[type] = (...args: unknown[]) => {
                 try {
                     store.record(type, ...args);
                 }
@@ -92,3 +116,4 @@ function captureConsole() {
 }
 
 export { captureConsole, useConsoleStore, useDebugStore, useMainPromptStore };
+export type { 更新日志, 控制台行 };

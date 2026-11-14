@@ -11,9 +11,9 @@ const useUpdatingStore = defineStore('bifang-updating', () => {
     const active = ref(false);
     const message = ref('');
     /** 进行中的任务: 任务名 → 独立的 AbortController(各自可独立取消, 不会误中断其他任务) */
-    const tasks = new Map();
+    const tasks = new Map<string, AbortController>();
     const DEFAULT_TASK = '幕后';
-    function start(text, taskName) {
+    function start(text: string, taskName?: string) {
         const name = taskName || text || DEFAULT_TASK;
         const controller = new AbortController();
         // 同一任务重复启动时, 先取消旧的(如用户多次点重新渲染)
@@ -24,7 +24,7 @@ const useUpdatingStore = defineStore('bifang-updating', () => {
         refresh();
         return controller.signal;
     }
-    function cancel(taskName) {
+    function cancel(taskName?: string) {
         if (taskName) {
             tasks.get(taskName)?.abort();
         }
@@ -33,7 +33,7 @@ const useUpdatingStore = defineStore('bifang-updating', () => {
             tasks.forEach(c => c.abort());
         }
     }
-    function stop(taskName) {
+    function stop(taskName?: string) {
         if (taskName) {
             tasks.delete(taskName);
         }
@@ -54,7 +54,7 @@ const useUpdatingStore = defineStore('bifang-updating', () => {
         }
     }
     /** 指定任务是否还在进行(用于避免"自动重试"在解析进行中重复请求/误中断) */
-    function isActive(taskName) {
+    function isActive(taskName?: string) {
         return taskName ? tasks.has(taskName) : tasks.size > 0;
     }
     return { active, message, start, cancel, stop, isActive, tasks };

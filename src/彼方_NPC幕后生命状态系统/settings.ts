@@ -94,11 +94,17 @@ const Settings = z
 })
     .prefault({});
 const SETTINGS_KEY = '彼方_settings';
+/** 设置对象的类型(由 schema 推出来, 不手写第二份) */
+type 设置 = z.infer<typeof Settings>;
 /** 旧设置迁移: 已删除的开关只清键; 世界书写入的旧布尔键按名搬成三档 */
-function migrateSettings(raw) {
+function migrateSettings(raw: unknown): unknown {
     if (!raw || typeof raw !== 'object')
         return raw;
-    const 更新 = raw.更新;
+    // 上面已判"是非空对象"。这里是**用户存下来的旧设置**: 键名随版本变, 而迁移要删的正是
+    // 那些"新 schema 里已经没有"的旧键 —— 所以只能到"任意键"这一层, 写成精确形状等于
+    // 把已删除的键再声明一遍(下次删键还得改类型)。
+    const 旧设置 = raw as Record<string, any>;
+    const 更新 = 旧设置.更新;
     // 「破限」不再内置: 老开关直接删掉(不搬成自定义段——那段文本是我们的, 用户没写过它)
     if (更新 && typeof 更新 === 'object' && !Array.isArray(更新) && '破限' in 更新)
         delete 更新.破限;
@@ -236,7 +242,7 @@ const useSettingsStore = defineStore('bifang-settings', () => {
         //   klona+序列化写回会造成输入卡顿; 停止输入 300ms 后才真正写。
         // - 合并写回: 保留全局中彼方 store 里不存在的字段(多 iframe/多设备下防止丢字段),
         //   同名顶层字段用 store 值(用户当前看到的最新值)。
-        let saveTimer = null;
+        let saveTimer: ReturnType<typeof setTimeout> | null = null;
         watch(settings, value => {
             if (saveTimer !== null)
                 clearTimeout(saveTimer);
@@ -267,7 +273,7 @@ const useSettingsStore = defineStore('bifang-settings', () => {
  * 2026-10-01 与烟火同一处缺陷: 以前缓存没有失效语义 —— 写回后 500ms 窗口里仍按旧值走,
  * 且"全局被清空/读取报错"会永久返回上一次的值, 只有刷新页面才恢复。
  */
-let globalReadCache = null;
+let globalReadCache: 设置 | null = null;
 let globalReadTime = 0;
 /** 写回成功后清掉读缓存 */
 function invalidateReadCache() {
