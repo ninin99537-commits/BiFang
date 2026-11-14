@@ -69,6 +69,11 @@ const Settings = z
         常驻世界书条目: z.array(z.string()).default([]),
         /** 预填充(prefill): 在最后追加一条 assistant 消息引导模型直接从 JSON 开头开始输出, 减少格式失败/废话; 依赖模型是否支持(DeepSeek/GLM/Qwen/Claude 大多支持) */
         预填充: z.boolean().default(false),
+        /** 慢一步: 自动更新只分析到**倒数第二层**, 最新那条 AI 回复不参与分析。
+         *  代价是状态比正文晚一层; 收益是刚生成、可能被重roll/swipe 的回复不会污染状态。
+         *  手动更新(force)不受它影响——用户点了就是"现在要"。
+         *  只加默认值, 不做迁移(老设置里没有这个键, zod 会补 false)。 */
+        慢一步: z.boolean().default(false),
     })
         .prefault({}),
     /** 用户自定义提示词段: 只允许往内置提示词的固定锚点里插, 内置提示词本身一个字都不改。

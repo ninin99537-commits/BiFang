@@ -199,6 +199,15 @@
           <input v-model="settings.更新.自动更新" type="checkbox" class="bf-switch" />
         </label>
 
+        <label class="bf-switch-row">
+          <span class="bf-switch-copy">
+            <b>慢一步（不分析最新一层）</b>
+            <span>开启后，彼方只分析到倒数第二层——状态永远比正文晚一步，但刚生成、可能被重roll的回复不会影响状态。</span>
+          </span>
+          <input v-model="settings.更新.慢一步" type="checkbox" class="bf-switch" />
+        </label>
+        <p class="bf-hint">只影响自动更新；点「立即更新」时仍然分析到最新一层。</p>
+
         <div class="bf-set-pairs">
           <div class="bf-set-row">
             <label class="bf-form-label" for="bf-update-freq">更新频率</label>

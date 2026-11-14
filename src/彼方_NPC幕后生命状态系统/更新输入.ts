@@ -65,9 +65,25 @@ export async function 收集本轮输入(参数: 取料参数) {
     let recent = 最近回复(host, recentCount);
     if (!force)
         recent = recent.filter((message: any) => message.message_id > clearLayer);
+    // 慢一步: 自动更新只分析到**倒数第二层** —— 最新那条 AI 回复不进分析。
+    // 放在清空层过滤之后: 先确定"这一轮本来要分析哪几条", 再去掉最后一条。
+    // 手动更新(force)不受影响: 用户点了「更新」就是"现在要", 最新层必须算进去。
+    // recent 去掉末位后, update.ts 里"锚点 = recent 末位的 message_id"自动落到 N−1,
+    // 所以锚点写法一个字都不用改(这是选这个方案的原因)。
+    if (!force && settings.更新.慢一步)
+        recent = recent.slice(0, -1);
     if (recent.length === 0) {
         if (force) {
             toastWarning('彼方: 没有可分析的AI回复（请确认已生成至少一条AI回复）', '彼方');
+        }
+        else if (settings.更新.慢一步) {
+            // 慢一步排除后为空 = 当前只有 1 条 AI 回复。这是开关的必然代价(首轮一定遇到),
+            // 必须给可见提示 —— 只 console.warn 的话用户会以为"更新坏了"。
+            // 两个渠道都给: toast 给用户看, console.warn 给"日志页/控制台"这条排查路
+            // (提示条画在 DOM 上, 某些环境(无 document / 被抑制)会静默失败, 那时至少还有这一行)。
+            const 文案 = '彼方：已开启「慢一步」，但当前只有 1 条 AI 回复，跳过本轮更新（至少需要两条）。';
+            toastWarning(文案, '彼方');
+            console.warn(文案);
         }
         else {
             console.warn('[彼方] 未找到新的AI回复(清空后或仅剩旧楼层), 跳过本次更新');
