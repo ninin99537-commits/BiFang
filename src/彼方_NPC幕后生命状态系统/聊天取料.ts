@@ -5,8 +5,7 @@
 // 直接持有 host(读 persona / chat / macros), 这个袋子既不换来可测性(照旧要真 host), 也不换来解耦
 // (闭包全是对 host 的闭包), 只换来 7 个 any 参数和一个看不懂的签名。
 //
-// 现在两个文件都从这里拿, 谁也不用再包一层。带缓存的那份(全部 AI 楼层)也在这里, 因为缓存的生命周期
-// 与"换聊天要清"这条规矩本来就属于取料这件事。
+// 现在两个文件都从这里拿, 谁也不用再包一层。
 
 import { createTextFilter } from '../共用/楼层标签过滤';
 import type { Host } from './host';
@@ -85,28 +84,22 @@ export function 上下文(host: Host, replyMessageId: number, filter: (text: str
     }
 }
 
-/** 全部可见 AI 楼层(按 lastId 缓存: 更新频率判定每轮都要数它, 全量扫太贵) */
-let allAssistantCache: { lastId: number; messages: any[] } | null = null;
-
+/** 全部可见 AI 楼层(纯读: 每次从当前聊天现取, 不缓存)。
+ *
+ * 不缓存的理由: 唯一调用点是更新频率判定, 每来一条新消息才调一次, 那时 lastId 必变;
+ * 而按 lastId 判新鲜会漏掉**内容变化**(编辑中间楼层、删中间楼层、切 swipe 都不改 lastId),
+ * 缓存里于是留着编辑前的旧内容。换成按内容指纹判新鲜则每次都得把全部楼层读一遍再算指纹,
+ * 省不下真实读取。缓存既然从未命中、命中也不省 I/O, 就不留这一层。 */
 export function 全部AI楼层(host: Host) {
     try {
         const lastId = host.chat.lastMessageId();
-        if (allAssistantCache && allAssistantCache.lastId === lastId)
-            return allAssistantCache.messages;
         if (lastId <= 0)
             return [];
-        const messages = host.chat.messages(`0-${lastId}`, { role: 'assistant' }).filter(message => !message.is_hidden);
-        allAssistantCache = { lastId, messages };
-        return messages;
+        return host.chat.messages(`0-${lastId}`, { role: 'assistant' }).filter(message => !message.is_hidden);
     }
     catch {
         return [];
     }
-}
-
-/** 换聊天要清: 两个聊天的楼层号可能相同, 不清会用到上一个聊天的内容 */
-export function 重置聊天缓存(): void {
-    allAssistantCache = null;
 }
 
 /** 正文过滤器(标签过滤): 单处构造, 调用方按需传 settings.标签 */
@@ -120,8 +113,10 @@ export function 正文过滤(标签: unknown): (text: string) => string {
  * **只从正文与上下文提取, 不读世界书** —— 世界书里的"当前时间"表是其他系统或彼方上次写入的
  * 推断值, 可能滞后或与正文不符, 作为"务必以此为准"的提示反而会把剧情时间带偏。
  */
-export function 时间提示(worldbook: string, reply: string, context: string): string {
-    const pad = (n: number) => String(n).padStart(2, '0');
+export function 时间提示(_worldbook: string, reply: string, context: string): string {
+    // 参数名带下划线: worldbook 是**刻意不用**的(见函数注释 —— 世界书里的"当前时间"可能滞后),
+    // 但保留在签名里, 调用点(更新输入.ts:97)仍然照原样传三个实参。
+    const pad = (n: string) => String(n).padStart(2, '0');
     // 正文时间**只从 reply(最近回复)里提取**——worldbook/context 含彼方自己写的
     // "当前时间"固定标签(会干扰), 且拼接在 reply 之后, 取"最后一次"会取到它们。
     // reply 拼接顺序是"较早回复在前、最新回复在后", 最新正文在末尾, 取 reply 内最后一次出现的时间。

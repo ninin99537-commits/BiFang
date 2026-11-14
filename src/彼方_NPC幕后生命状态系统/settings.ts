@@ -9,8 +9,9 @@ import { 建写回闸门, type 写回闸门 as 写回闸门类型 } from '../共
 // 一旦把 no-undef 开成 error 就会报悬空，所以显式写出来（default 形式，与 设置.ts 一致）。
 import _ from 'lodash';
 
-/** 设置层只碰变量表; 用 Pick 写在签名上, 不把整个宿主拖进来 */
-type 设置宿主 = Pick<Host, 'vars'>;
+/** 设置层只碰变量表; 用 Pick 写在签名上, 不把整个宿主拖进来。
+ *  `toast` 是可选的: 写回失败要出声(3-4), 但 api.ts 那类只读设置的调用方不必为此带上提示能力。 */
+type 设置宿主 = Pick<Host, 'vars'> & { toast?: Host['toast'] };
 
 /** 幕后状态写进哪本世界书: 角色卡主世界书 / 当前聊天的世界书 / 关闭 */
 const 世界书写入目标表 = ['关闭', '角色卡主世界书', '聊天世界书'] as const;
@@ -94,11 +95,17 @@ const Settings = z
 })
     .prefault({});
 const SETTINGS_KEY = '彼方_settings';
+/** 设置对象的类型(由 schema 推出来, 不手写第二份) */
+type 设置 = z.infer<typeof Settings>;
 /** 旧设置迁移: 已删除的开关只清键; 世界书写入的旧布尔键按名搬成三档 */
-function migrateSettings(raw) {
+function migrateSettings(raw: unknown): unknown {
     if (!raw || typeof raw !== 'object')
         return raw;
-    const 更新 = raw.更新;
+    // 上面已判"是非空对象"。这里是**用户存下来的旧设置**: 键名随版本变, 而迁移要删的正是
+    // 那些"新 schema 里已经没有"的旧键 —— 所以只能到"任意键"这一层, 写成精确形状等于
+    // 把已删除的键再声明一遍(下次删键还得改类型)。
+    const 旧设置 = raw as Record<string, any>;
+    const 更新 = 旧设置.更新;
     // 「破限」不再内置: 老开关直接删掉(不搬成自定义段——那段文本是我们的, 用户没写过它)
     if (更新 && typeof 更新 === 'object' && !Array.isArray(更新) && '破限' in 更新)
         delete 更新.破限;
@@ -156,10 +163,21 @@ function 记基线(host: 设置宿主, 读到的那份: any) {
  */
 function 写回全局(host: 设置宿主, settings: any) {
     try {
-        if (取写回闸门(host).立即写(settings)) invalidateReadCache();
+        const 闸门 = 取写回闸门(host);
+        if (闸门.立即写(settings)) {
+            invalidateReadCache();
+            return;
+        }
+        // 闸门返回 false 有两种: "没有改动"(正常) 与 "从没读到过存储"(= 一个字节都没写)。
+        // 后者必须出声, 否则用户改完设置、刷新后回退, 界面上没有任何线索。
+        if (!闸门.可写回())
+            host.toast?.warn?.('彼方: 设置没能保存(还没成功读到过存储里的设置, 为避免覆盖已有配置已放弃写入)', '彼方');
     }
     catch (error) {
         console.warn('[彼方] 保存全局设置失败:', error);
+        // 3-4: 写回失败必须让用户看见 —— 以前只进控制台, 用户以为改了就存下了,
+        // 刷新后设置回退到旧值。
+        host.toast?.warn?.(`彼方: 设置没能保存(${error instanceof Error ? error.message : String(error)})`, '彼方');
     }
 }
 /** 迁移专用: 存储里本来就没有这一份, 直接落盘并成为新基线 */
@@ -170,6 +188,7 @@ function 首次落盘(host: 设置宿主, settings: any) {
     }
     catch (error) {
         console.warn('[彼方] 迁移设置落盘失败:', error);
+        host.toast?.warn?.(`彼方: 旧设置迁移没能落盘(${error instanceof Error ? error.message : String(error)})`, '彼方');
     }
 }
 function loadSettings(host: 设置宿主) {
@@ -236,7 +255,7 @@ const useSettingsStore = defineStore('bifang-settings', () => {
         //   klona+序列化写回会造成输入卡顿; 停止输入 300ms 后才真正写。
         // - 合并写回: 保留全局中彼方 store 里不存在的字段(多 iframe/多设备下防止丢字段),
         //   同名顶层字段用 store 值(用户当前看到的最新值)。
-        let saveTimer = null;
+        let saveTimer: ReturnType<typeof setTimeout> | null = null;
         watch(settings, value => {
             if (saveTimer !== null)
                 clearTimeout(saveTimer);
@@ -267,11 +286,20 @@ const useSettingsStore = defineStore('bifang-settings', () => {
  * 2026-10-01 与烟火同一处缺陷: 以前缓存没有失效语义 —— 写回后 500ms 窗口里仍按旧值走,
  * 且"全局被清空/读取报错"会永久返回上一次的值, 只有刷新页面才恢复。
  */
-let globalReadCache = null;
+let globalReadCache: 设置 | null = null;
 let globalReadTime = 0;
-/** 写回成功后清掉读缓存 */
+/**
+ * 写回成功后清掉读缓存。
+ *
+ * **必须连时间戳一起清**: 只把 `globalReadCache` 置 null 的话, 接下来的 500ms 窗口里
+ * `getSettings` 会走"窗口内"那条分支, 拿到 `null ?? useSettingsStore().settings` —— 也就是
+ * **pinia store 里那份(默认值或上一次 UI 的值)**, 而不是刚刚写进全局的那份。
+ * 症状: 写回成功、立刻读却读回默认值(`世界书写入` 变回「关闭」), 过 500ms 才对。
+ * 把 `globalReadTime` 归零, 下一次读就必然走真实读取路径。
+ */
 function invalidateReadCache() {
     globalReadCache = null;
+    globalReadTime = 0;
 }
 function getSettings(host: 设置宿主) {
     const now = Date.now();
@@ -296,6 +324,6 @@ function getSettings(host: 设置宿主) {
     return globalReadCache ?? useSettingsStore().settings;
 }
 
-export { getSettings, useSettingsStore, 世界书写入目标表 };
+export { getSettings, invalidateReadCache, useSettingsStore, 世界书写入目标表 };
 export type { 设置宿主, 世界书写入目标 };
 

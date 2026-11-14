@@ -10,7 +10,7 @@
 // 不进表的东西不在这里硬塞: 受孕事件 / 恋爱事件 是"一张卡"级的事件载荷, 曾用名是改名的桥,
 // 种族时间尺度是带校验的窄字段 —— 它们是下面 合并() 的固定尾部, 不是某个字段的合并方式。
 
-import { CARD_FIELDS, 字段分组表, 扩展编辑字段, 废弃键, 合并方式表 } from './卡字段';
+import { CARD_FIELDS, 字段分组表, 废弃键, 合并方式表 } from './卡字段';
 import type { NpcStateCard } from './卡字段';
 import { RACE_SCALE_FIELDS, normalizeRaceScale, 一致化生理 } from './生理规则';
 import { withStoryDate } from './剧情时间';
@@ -101,16 +101,16 @@ function splitListItems(text: string, separators: string): string[] {
  * 精确字符串去重认不出这种重复。这里用“同日期 + 最长公共连续文本占较短事件正文 >= 60%”
  * 判断为同一事件，并保留信息更完整（正文更长）的一条。不同日期永不合并。
  */
-function dedupeRecentEvents(text) {
+function dedupeRecentEvents(text: unknown): string {
     const items = splitListItems(String(text ?? ''), EVENT_SEPARATORS);
-    const parse = (item) => {
+    const parse = (item: string) => {
         const match = item.match(/^(\d{3,6}-\d{1,2}-\d{1,2})\s*(.*)$/);
         return {
             date: match?.[1] ?? '',
             body: String(match?.[2] ?? item).replace(/[\s，。！？、；;,.!?：:的了需]/g, ''),
         };
     };
-    const longestCommonSubstringLength = (a, b) => {
+    const longestCommonSubstringLength = (a: string, b: string) => {
         if (!a || !b)
             return 0;
         const previous = new Array(b.length + 1).fill(0);
@@ -128,10 +128,11 @@ function dedupeRecentEvents(text) {
         }
         return longest;
     };
-    const result = [];
+    const result: string[] = [];
     for (const item of items) {
         const candidate = parse(item);
-        const duplicateIndex = result.findIndex(existing => {
+        // 显式标注: 回调里的 `existing` 来自 `result`(此时还没定类型), TS 会绕成自引用推断(TS7022)
+        const duplicateIndex = result.findIndex((existing: string) => {
             const prior = parse(existing);
             if (!candidate.date || candidate.date !== prior.date)
                 return false;

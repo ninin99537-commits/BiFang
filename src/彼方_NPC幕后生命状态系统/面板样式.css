@@ -1291,6 +1291,40 @@
   text-decoration-color: var(--bf-line);
 }
 /* ---------- 日志 ---------- */
+/* 规模行(批次 3-1): 顶部固定一行; 超建议线只变黄 + 一句精简提示, 不阻止发送、不截断 */
+.bf-scale-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin: 0 0 18px;
+  padding: 9px 12px;
+  border: 1px solid var(--bf-line);
+  border-left: 3px solid var(--bf-line);
+  border-radius: var(--bf-radius-sm);
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--bf-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.bf-scale-text {
+  color: var(--bf-ink);
+}
+.bf-scale-rule {
+  margin-left: auto;
+  color: var(--bf-muted);
+  font-size: 11.5px;
+}
+.bf-scale-warn {
+  border-left-color: var(--bf-warning);
+}
+.bf-scale-warn .bf-scale-text {
+  color: var(--bf-warning);
+  font-weight: 600;
+}
+.bf-scale-hint {
+  color: var(--bf-warning);
+}
 .bf-logs {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);

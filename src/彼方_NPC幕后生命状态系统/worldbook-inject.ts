@@ -3,7 +3,10 @@ import type { Host } from './host';
 import { buildInjectionPrompt } from './prompts';
 import { BIFANG_WORLDBOOK_ENTRY_NAME, isBifangEntry, sanitizeBifangEntryName } from './彼方条目';
 import { useMainPromptStore } from './日志仓';
+import type { 彼方数据 } from './快照';
 import type { 世界书写入目标 } from './settings';
+import { getSettings } from './settings';
+import { loadData } from './快照';
 
 /**
  * 把彼方幕后状态写入一本世界书里的常驻条目(蓝灯常开):
@@ -13,7 +16,7 @@ import type { 世界书写入目标 } from './settings';
  * 目标那本没绑时由 getOrCreateChat 建一本并绑上, 于是"开着开关但没绑书"不会静默不写。
  * 换目标不清理另一本: 旧条目留在原处, 由用户自己删。
  *
- * 平台访问全部走 host.worldbook / host.toast(见 host.ts), 本函数不直接碰酒馆全局——
+ * 平台访问全部走 host.worldbook(见 host.ts), 本函数不直接碰酒馆全局——
  * 于是测试里能塞一本假世界书进来, 把"新建 / 更新 / 改名 / 删除 / 没绑世界书"几种情形都跑一遍。
  * 这里保留的是**领域规则**(条目叫什么名、蓝灯常开、防递归、内容怎么渲染), 与平台无关。
  *
@@ -31,8 +34,8 @@ async function 目标世界书(host: Pick<Host, 'worldbook'>, 目标: 世界书�
             return await host.worldbook.getOrCreateChat();
         }
         catch (error) {
-            console.error('[彼方] 取聊天世界书失败:', error);
-            return null;
+            // 建/取书本身炸了(平台侧失败): 把原因带上去, 否则上层只能说"取不到", 排查无从下手
+            throw Error(`取聊天世界书失败: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
     return null;
@@ -50,71 +53,104 @@ function 已有世界书(host: Pick<Host, 'worldbook'>): string[] {
     return names;
 }
 
-async function syncNpcStatesWorldbook(host: Pick<Host, 'worldbook' | 'toast'>, data, 目标: 世界书写入目标, 未回票?: Record<string, string[]>, 生理监测 = true) {
-    try {
-        if (目标 === '关闭') {
-            for (const name of 已有世界书(host))
-                await host.worldbook.remove(name, isBifangEntry);
-            return;
-        }
-        const wbName = await 目标世界书(host, 目标);
-        if (!wbName) {
-            // 群聊里没有"当前角色卡"(this_chid 为空), 所以「角色卡主世界书」这一档在群聊里根本取不到书名。
-            // 群聊能写的只有聊天世界书(一场一本, 不随发言者漂移)—— 文案要说清楚, 否则用户会去反复改卡上的绑定。
-            const 群聊 = host.worldbook.groupMemberNames().length > 0;
-            host.toast.warn(目标 === '角色卡主世界书'
-                ? (群聊
-                    ? '群聊里没有「当前角色卡」，写不进角色卡主世界书。群聊请把「写入世界书」改成「聊天世界书」。'
-                    : '当前角色卡没有绑定主世界书，无法注入「NPC幕后生活」条目。请先在角色卡上绑定一本世界书。')
-                : '没能取到当前聊天的世界书，无法注入「NPC幕后生活」条目。请先在聊天上绑定一本世界书。', '彼方');
-            return;
-        }
-        const npcEntries = Object.entries(data.NPC ?? {});
-        if (npcEntries.length === 0) {
-            await host.worldbook.remove(wbName, isBifangEntry);
-            return;
-        }
-        const content = buildInjectionPrompt(npcEntries, 未回票, String(data?.剧情时间 ?? ''), 生理监测);
-        // 日志页「彼方写入世界书的内容」记录: 与写入条目的内容完全一致(同一个渲染函数),
-        // 主AI 以及任何读取该世界书的环节读到的就是这一段
-        useMainPromptStore().record(content);
-        const existing = (await host.worldbook.entries(wbName)).find(isBifangEntry);
-        if (existing) {
-            // 保留其它字段, 只刷新内容; 确保防递归开启; 名字若命中 ACU 屏蔽词则改回安全名
-            await host.worldbook.update(wbName, wb => wb.map(entry => isBifangEntry(entry)
-                ? {
-                    ...entry,
-                    name: sanitizeBifangEntryName(entry.name || BIFANG_WORLDBOOK_ENTRY_NAME),
-                    content,
-                    recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
-                }
-                : entry));
-        }
-        else {
-            // 条目被删除/改名后找不到, 重新创建
-            await host.worldbook.create(wbName, [
-                {
-                    name: BIFANG_WORLDBOOK_ENTRY_NAME,
-                    content,
-                    enabled: true,
-                    probability: 100,
-                    strategy: {
-                        type: 'constant',
-                        keys: [],
-                        keys_secondary: { logic: 'not_any', keys: [] },
-                        scan_depth: 'same_as_global',
-                    },
-                    position: { type: 'after_character_definition', role: 'system', depth: 0, order: 100 },
-                    recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
-                    extra: { bifang: true },
-                },
-            ]);
-        }
+/**
+ * 失败文案的唯一来源: 五个调用方(启动/切聊天、AI 更新、界面改设置、数据变更、清空)
+ * 与 报告世界书失败 共用同一句, 同一种失败玩家读到的话才一样。
+ *
+ * 必须是"哪一步失败 + 怎么改": 只说"同步失败"等于让玩家去猜。
+ */
+function 世界书失败文案(error: unknown): string {
+    return `写入世界书失败：${error instanceof Error ? error.message : String(error)}`;
+}
+
+/**
+ * 同步世界书失败的**唯一上报出口**: 四个调用方(启动/切聊天、AI 更新、界面改设置、数据变更)
+ * 都走它, 于是同一件事只弹一条 —— 以前注入层自己弹一条、调用方再弹一条, 玩家看到两条。
+ */
+function 报告世界书失败(host: Pick<Host, 'toast'>, error: unknown): void {
+    console.error('[彼方] 同步世界书条目失败:', error);
+    host.toast.warn(世界书失败文案(error), '彼方');
+}
+
+async function syncNpcStatesWorldbook(host: Pick<Host, 'worldbook'>, data: 彼方数据, 目标: 世界书写入目标, 未回票?: Record<string, string[]>, 生理监测 = true) {
+    if (目标 === '关闭') {
+        for (const name of 已有世界书(host))
+            await host.worldbook.remove(name, isBifangEntry);
+        return;
     }
-    catch (error) {
-        console.error('[彼方] 同步幕后状态到世界书失败:', error);
+    const wbName = await 目标世界书(host, 目标);
+    if (!wbName) {
+        // 群聊里没有"当前角色卡"(this_chid 为空), 所以「角色卡主世界书」这一档在群聊里根本取不到书名。
+        // 群聊能写的只有聊天世界书(一场一本, 不随发言者漂移)—— 原因里要说清楚, 否则用户会去反复改卡上的绑定。
+        const 群聊 = host.worldbook.groupMemberNames().length > 0;
+        throw Error(目标 === '角色卡主世界书'
+            ? (群聊
+                ? '群聊里没有「当前角色卡」，写不进角色卡主世界书；请把「写入世界书」改成「聊天世界书」'
+                : '当前角色卡没有绑定主世界书；请先在角色卡上绑定一本世界书')
+            : '没能取到当前聊天的世界书；请先在聊天上绑定一本世界书');
+    }
+    const npcEntries = Object.entries(data.NPC ?? {});
+    if (npcEntries.length === 0) {
+        await host.worldbook.remove(wbName, isBifangEntry);
+        return;
+    }
+    const content = buildInjectionPrompt(npcEntries, 未回票, String(data?.剧情时间 ?? ''), 生理监测);
+    // 日志页「彼方写入世界书的内容」记录: 与写入条目的内容完全一致(同一个渲染函数),
+    // 主AI 以及任何读取该世界书的环节读到的就是这一段
+    useMainPromptStore().record(content);
+    const existing = (await host.worldbook.entries(wbName)).find(isBifangEntry);
+    if (existing) {
+        // 保留其它字段, 只刷新内容; 确保防递归开启; 名字若命中 ACU 屏蔽词则改回安全名
+        await host.worldbook.update(wbName, wb => wb.map(entry => isBifangEntry(entry)
+            ? {
+                ...entry,
+                name: sanitizeBifangEntryName(entry.name || BIFANG_WORLDBOOK_ENTRY_NAME),
+                content,
+                recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
+            }
+            : entry));
+    }
+    else {
+        // 条目被删除/改名后找不到, 重新创建
+        await host.worldbook.create(wbName, [
+            {
+                name: BIFANG_WORLDBOOK_ENTRY_NAME,
+                content,
+                enabled: true,
+                probability: 100,
+                strategy: {
+                    type: 'constant',
+                    keys: [],
+                    keys_secondary: { logic: 'not_any', keys: [] },
+                    scan_depth: 'same_as_global',
+                },
+                position: { type: 'after_character_definition', role: 'system', depth: 0, order: 100 },
+                recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
+                extra: { bifang: true },
+            },
+        ]);
     }
 }
 
-export { syncNpcStatesWorldbook };
+/**
+ * 「按当前设置把世界书同步一次」—— 四个触发器(启动/切聊天、删楼/swipe/收消息刷新、生成前命令、AI 更新后)共用的那一层。
+ *
+ * 它住在 worldbook-inject.ts 而不是入口 index.ts, 只为**可测**: index.ts 的 import 链会拉进
+ * 悬浮球界面.vue, 而 node 里 esbuild 没有 .vue 的 loader —— 于是 index.ts 根本导入不了,
+ * 任何"直接驱动这条链路"的断言都写不出来(不是没导出, 是模块加载失败)。
+ * 这里没有副作用, 行为与原位置逐字相同。
+ *
+ * **总开关关掉 ≠ 什么都不做**: 它与「写入世界书: 关闭」是同一件事 —— 把两本里彼方的条目删掉。
+ * 不这么做的话, 上一轮写进去的常驻条目会一直留在世界书里, 主 AI 继续读一份过期状态。
+ * 所以四个触发器都必须**无条件**走这一趟, 谁都不要在外面加 `if (启用幕后)` 把清理挡住。
+ */
+function maybeInjectNpcStates(host: Host): void {
+    const settings = getSettings(host);
+    const data = loadData(host);
+    const 目标 = settings.启用幕后 ? settings.更新.世界书写入 : '关闭';
+    // 同步失败要报到界面: 这条链路是 fire-and-forget, 吞掉异常等于"关掉了但没清干净"没人知道。
+    syncNpcStatesWorldbook(host, data, 目标, undefined, settings.更新.生理监测).catch(error => 报告世界书失败(host, error));
+}
+
+export { 世界书失败文案, 报告世界书失败, syncNpcStatesWorldbook, maybeInjectNpcStates };
 

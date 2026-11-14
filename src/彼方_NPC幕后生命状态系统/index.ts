@@ -1,13 +1,12 @@
 // 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
 import { pinia } from './pinia';
 import { getSettings } from './settings';
-import { loadData } from './快照';
 import { useStateStore } from './数据仓';
 import { captureConsole, useDebugStore } from './日志仓';
 import { updateNpcStates } from './update';
-import { 全部AI楼层, 重置聊天缓存, 正文过滤 } from './聊天取料';
+import { 全部AI楼层, 正文过滤 } from './聊天取料';
 import { resetWorldbookCaches } from './worldbook';
-import { syncNpcStatesWorldbook } from './worldbook-inject';
+import { maybeInjectNpcStates } from './worldbook-inject';
 import { mountFloatingOrb } from './悬浮球界面';
 import { setActivePinia } from 'pinia';
 import { createTavernHost } from './host';
@@ -24,14 +23,16 @@ setActivePinia(pinia);
 captureConsole();
 function handleChatChanged(host: Host) {
     // 切聊天只刷新数据与注入，不再整页重载，避免悬浮球闪烁消失
-    重置聊天缓存();
     resetWorldbookCaches();
     useStateStore().reload(host);
+    // 日志跟着聊天走: 先清掉上一场的, 再从这场聊天的聊天变量里恢复落盘的那一份。
+    // 以前这里只有 clear() —— 切回一场老聊天时日志页永远是空的(它其实一直存着)。
     useDebugStore().clear();
-    if (getSettings(host).启用幕后)
-        maybeInjectNpcStates(host);
+    useDebugStore().恢复(host);
+    // 关着也要走一趟: 换到的这场聊天可能还留着上一个开关状态写下的条目
+    maybeInjectNpcStates(host);
 }
-async function handleMessageReceived(host: Host, message_id) {
+async function handleMessageReceived(host: Host, message_id: number) {
     const settings = getSettings(host);
     if (!settings.启用幕后)
         return; // 幕后总开关: 关闭时不调用 API 不更新
@@ -60,33 +61,23 @@ async function handleMessageReceived(host: Host, message_id) {
     }
     const frequency = Math.max(1, settings.更新.更新频率);
     if (frequency > 1) {
-        // 用带缓存的全部 AI 楼层列表(getAllAssistantMessages: 已排除隐藏楼层,
-        // 按 lastId 缓存避免每次都全量拉取), 与 getRecentAssistantMessages 的
-        // 可见口径一致——用 getChatMessages 全量扫会包含隐藏楼层导致频率算错
+        // 全部 AI 楼层列表: 已排除隐藏楼层, 与 最近回复 的可见口径一致
+        // ——用 getChatMessages 全量扫会包含隐藏楼层导致频率算错
         const assistantCount = 全部AI楼层(host).length;
         if (assistantCount % frequency !== 0)
             return;
     }
     await updateNpcStates(host);
 }
-function maybeInjectNpcStates(host: Host) {
-    const settings = getSettings(host);
-    const data = loadData(host);
-    const 目标 = settings.更新.世界书写入;
-    // 无论有无 NPC 都同步(无则删除条目), 保证切换聊天后不会残留上一个聊天的内容
-    if (目标 === '关闭')
-        return;
-    syncNpcStatesWorldbook(host, data, 目标, undefined, settings.更新.生理监测);
-}
 $(function () {
     // 状态快照存在楼层变量里, 随楼层存亡——删除楼层/重roll(新swipe页没有快照)时状态
-    // 自动回退, 楼层被编辑时由楼层hash校验作废。因此事件处理只剩"刷新界面与世界书注入":
+    // 自动回退。因此事件处理只剩"刷新界面与世界书注入":
     // - MESSAGE_DELETED 只"延迟"刷新, 若 2 秒内收到新消息(regenerate/重roll)则取消,
     //   由 MESSAGE_RECEIVED 的正常更新流程自然同步, 避免中间态闪烁;
     //   手动删除楼层(无后续新消息)才真正刷新。
     // - MESSAGE_SWIPED(切分支): 切回旧swipe页会恢复该页当时的快照, 新页则回退到更早
     //   楼层的快照, 刷新即可。
-    let refreshTimer = null;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
     function clearPendingRefresh() {
         if (refreshTimer) {
             clearTimeout(refreshTimer);
@@ -95,8 +86,8 @@ $(function () {
     }
     function refreshAfterFloorChange(host: Host) {
         useStateStore().reload(host);
-        if (getSettings(host).启用幕后)
-            maybeInjectNpcStates(host);
+        // 与切聊天同理: 关着也要走一趟(该删的条目还在)
+        maybeInjectNpcStates(host);
     }
     host.events.onMessageReceived(message_id => {
         // 重roll/regenerate 的新消息到达: 取消待处理的删除刷新(更新完成后会自然同步)
@@ -118,8 +109,8 @@ $(function () {
         refreshAfterFloorChange(host);
     });
     host.events.onGenerationAfterCommands(() => {
-        if (getSettings(host).启用幕后)
-            maybeInjectNpcStates(host);
+        // 与另外三个触发器对齐: **无条件**走一趟(理由见 worldbook-inject.ts 里 maybeInjectNpcStates 的注释)。
+        maybeInjectNpcStates(host);
     });
     // 读不到时返回 null, 此时首次 CHAT_CHANGED 事件直接刷新
     let lastChatId = host.chat.currentChatId();

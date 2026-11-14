@@ -20,7 +20,6 @@ import 原版挂载 from '../src/彼方_NPC幕后生命状态系统/悬浮球界
 import 原版入口 from '../src/彼方_NPC幕后生命状态系统/index.ts?raw';
 import 原版提示条 from '../src/彼方_NPC幕后生命状态系统/toast.ts?raw';
 import 原版样式 from '../src/彼方_NPC幕后生命状态系统/面板样式.css?raw';
-import { 构建标识 } from '../src/彼方_NPC幕后生命状态系统/构建';
 
 let pass = 0;
 let fail = 0;
@@ -72,7 +71,8 @@ for (const [名, 壳, 挂载, 入口, 提示条, 样式] of [
   ok('不再用 requestAnimationFrame 打日志', !/requestAnimationFrame\(\(\) => \{[\s\S]{0,300}面板已展开/.test(壳));
   ok('日志里带构建标识', /构建 \$\{构建标识\}/.test(壳));
   ok('加载日志也带构建标识', /已加载 \(构建 \$\{构建标识\}\)/.test(入口));
-  ok('构建标识是个非空常量', typeof 构建标识 === 'string' && 构建标识.length > 0);
+  // 构建标识的实质守卫在 tests/bifang-构建标记.test.ts(格式/日期锚/mtime 漂移/内容指纹);
+  // 这里那条"只判非空"已收窄删除 —— 一严一松两守卫会让人以为有防线(批次 4-8, 需求位裁定)。
 
   console.log(`\n[${名}] ④ 失败必须说出来`);
   ok('有看门狗', /function 开始看门狗\(\)/.test(壳) && /function 关闭看门狗\(\)/.test(壳));

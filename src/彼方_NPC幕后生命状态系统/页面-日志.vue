@@ -5,8 +5,20 @@
         <h2 class="bf-page-title">日志</h2>
         <p class="bf-page-sub">这一轮发送、输出与写入的内容。</p>
       </div>
-      <button class="bf-btn bf-btn-sm" @click="copyErrorReport">复制报错信息</button>
+      <button class="bf-btn bf-btn-sm" :disabled="!可复制" @click="copyErrorReport">复制报错信息</button>
     </header>
+
+    <!-- 规模行: 固定一行, 文案是需求钉死的契约; 超建议线只变黄 + 一句精简提示, 不阻止发送、不截断 -->
+    <p
+      v-if="debugLog && debugLog.规模行"
+      class="bf-scale-line"
+      :class="{ 'bf-scale-warn': 规模超线 }"
+      v-bind="规模超线 ? 规模警示属性 : {}"
+    >
+      <span class="bf-scale-text">{{ debugLog.规模行 }}</span>
+      <span v-if="规模超线" class="bf-scale-hint">可在仪表盘精简名单</span>
+      <span class="bf-scale-rule">token 口径：{{ token口径 }}</span>
+    </p>
 
     <div class="bf-logs">
       <section class="bf-log-col" aria-labelledby="bf-log-update-title">
@@ -52,7 +64,7 @@
           </div>
 
           <div class="bf-actions bf-log-actions">
-            <button class="bf-btn bf-btn-primary bf-btn-sm" @click="copyErrorReport">复制报错内容发给助手</button>
+            <button class="bf-btn bf-btn-primary bf-btn-sm" :disabled="!可复制" @click="copyErrorReport">复制报错内容发给助手</button>
             <button class="bf-btn bf-btn-sm" @click="debugStore.clear()">清空更新记录</button>
           </div>
         </template>
@@ -108,11 +120,12 @@
 </template>
 
 <script setup lang="ts">
-import { use日志面板 } from './日志面板';
+import { use日志面板, 规模警示属性 } from './日志面板';
 
 const {
   debugLog, fmtTime, copyText, copyErrorReport, debugStore,
   mainPrompt, mainPromptTime, mainPromptCount,
   consoleLines, consoleLinesReversed, consoleStore,
+  规模超线, token口径, 可复制,
 } = use日志面板();
 </script>

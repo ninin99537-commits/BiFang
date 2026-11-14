@@ -4,7 +4,7 @@
 
 import { 日期键自时间戳, 日差自时间戳 } from './剧情日期';
 import { fmtStoryTime, parseStoryTime, parseStoryTimeRange } from './剧情时间';
-import { 写当日值, 读当日值 } from './日记录';
+import { 读当日值 } from './日记录';
 
 /** 生理字段(仅当某 NPC 卡里出现了任一生理字段、即被判定为女性/双性等可怀孕角色时, 才要求全部补全) */
 const PHYSIO_FIELDS = ['生理周期', '是否怀孕', '周期影响', '当前防护', '近期性行为'];
@@ -12,12 +12,16 @@ const PHYSIO_FIELDS = ['生理周期', '是否怀孕', '周期影响', '当前�
 const PHYSIO_CYCLE_MIN = 21;
 const PHYSIO_CYCLE_MAX = 35;
 /** 从"生理周期"文本提取当前 Day(如 "排卵期 Day 13/25" → 13; "孕期 孕6周+3天" → null) */
-function extractCycleDay(physioText) {
+function extractCycleDay(physioText: unknown): number | null {
     const m = String(physioText ?? '').match(/Day\s*(\d+)/i);
     return m ? +m[1] : null;
 }
-/** 计算某 NPC 在指定 Day 发生受孕行为的单次受孕率(0~1), 基于锁定周期长度与防护 */
-function calcConceptionRate(cycleLen, day, protection) {
+/** 计算某 NPC 在指定 Day 发生受孕行为的单次受孕率(0~1), 基于锁定周期长度与防护。
+ *  `cycleLen` 标 number 是**按契约**说的: 「周期长度」是隐藏键, 只由 确保周期长度 写入(随机整数),
+ *  模型不能返回它。**本函数故意不做兜底**: 非法值(字符串/NaN/负数)在入口 确保周期长度 处就已被
+ *  判为"没有"并重播成合法整数, 所以到这里必然是 number。若在这里加 `?? 0` / `Number()`, 坏值会
+ *  静默落到 `base = 0.01` 那条"安全期"分支 —— 一个看得见的错误就变成一个查不出的错值。 */
+function calcConceptionRate(cycleLen: number, day: number, protection: unknown) {
     if (!cycleLen || !day)
         return 0;
     const ovuDay = cycleLen - 14; // 排卵日 = 周期长度-14
@@ -41,7 +45,7 @@ function calcConceptionRate(cycleLen, day, protection) {
     return Math.min(1, base * factor);
 }
 /** 解析受孕事件的"次数"为整数(钳制 1~20): 兼容数字/数字字符串/常见中文数字(一~十, 如"三次"→3, "2~3次"→2); 无效或缺省返回 1 */
-function parseConceptionCount(value) {
+function parseConceptionCount(value: unknown): number {
     let n = Number(value);
     if (!Number.isFinite(n)) {
         const t = String(value ?? '').trim();
@@ -50,7 +54,9 @@ function parseConceptionCount(value) {
             n = Number(numMatch[0]);
         }
         else {
-            const digit = { '一': 1, '两': 2, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9 };
+            // 中文数字表: 用 `Record<string, number>` 而不是字面量推断 —— 查的是"文本里的任意字符",
+            // 字面量推断只允许已知的九个键。查不到即 undefined, 下面两处都有兜底(三元 / else if), 不是 bug。
+            const digit: Record<string, number> = { '一': 1, '两': 2, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9 };
             const first = t.charAt(0);
             if (first === '十')
                 n = digit[t.charAt(1)] ? 10 + digit[t.charAt(1)] : 10; // 十/十一次
@@ -63,7 +69,7 @@ function parseConceptionCount(value) {
     return Math.max(1, Math.min(20, Math.floor(n)));
 }
 /** 同日多次的加成: 精子存活期内多次并不独立, 第 2 次起每次 +10%, 封顶 ×1.3 */
-function sameDayCountFactor(count) {
+function sameDayCountFactor(count: number) {
     return Math.min(1.3, 1 + 0.1 * (Math.max(1, count) - 1));
 }
 /**
@@ -71,7 +77,7 @@ function sameDayCountFactor(count) {
  * 同日后续轮次概率更高时只补掷差额(条件概率), 使当日总怀孕率恰好等于最高那次的概率。
  */
 const CONCEPTION_RECORD_FIELD = '受孕判定记录';
-function readConceptionRecord(card, dateKey) {
+function readConceptionRecord(card: Record<string, any>, dateKey: string) {
     // 日记录(日记录.ts): 只有"同一天"的记录才算数, 跨天从 0 起算
     const 已判 = 读当日值(card?.[CONCEPTION_RECORD_FIELD], dateKey);
     return 已判 === null ? 0 : Math.min(1, Math.max(0, 已判));
@@ -85,14 +91,18 @@ function readConceptionRecord(card, dateKey) {
  * 都按"当日最高概率"补掷差额, 当日总怀孕率 = 当日最高那项的概率(记录在「受孕判定记录」)。
  * "受孕事件"支持 单事件对象 或 事件数组(不同方式/防护分别报告, 如 3次内射+2次外射)。
  */
-function applyConceptionCheck(merged, oldCard, storyTimeText = '', 随机: () => number = Math.random) {
+function applyConceptionCheck(merged: Record<string, any>, oldCard: Record<string, any> | null | undefined, storyTimeText = '', 随机: () => number = Math.random) {
     const ev = merged['受孕事件'];
     if (!ev || typeof ev !== 'object')
         return false;
     let 本轮判孕 = false;
     try {
         // 兼容两种报告格式: 单事件对象(旧格式) / 事件数组(多种方式/防护分别报告, 如 3次内射+2次外射)
-        const asList = (v) => (Array.isArray(v) ? v : [v]).filter(item => item && typeof item === 'object' && !Array.isArray(item));
+        // 返回值收成 `Record<string, any>[]`: 过滤掉非对象项之后, 每项就是一张"AI 报告的动态字段"表
+        // (方式/防护/时间/次数), 这些键由提示词约定、不归卡字段表管, 所以不做更强形状。
+        // 用类型谓词而不是 `as`: 谓词就是过滤条件本身, 条件改了类型自然跟着改, 不会漂。
+        const asList = (v: unknown): Array<Record<string, any>> => (Array.isArray(v) ? v : [v])
+            .filter((item): item is Record<string, any> => !!item && typeof item === 'object' && !Array.isArray(item));
         const events = asList(ev);
         const oldEvents = asList(oldCard?.['受孕事件']);
         const range = parseStoryTimeRange(storyTimeText);
@@ -189,7 +199,7 @@ function applyConceptionCheck(merged, oldCard, storyTimeText = '', 随机: () =>
     return 本轮判孕;
 }
 /** 解析受孕事件的"时间"字段为时间戳: 兼容 "0137-06-09 21:40" 与缺年份的 "06-09 21:40"(用剧情时间补年份); 解析失败返回 null */
-function parsePregnancyEventTime(timeText, storyTimeText) {
+function parsePregnancyEventTime(timeText: unknown, storyTimeText: unknown): number | null {
     let t = String(timeText ?? '').trim();
     if (!t)
         return null;
@@ -202,13 +212,13 @@ function parsePregnancyEventTime(timeText, storyTimeText) {
     return parseStoryTime(t);
 }
 /** 从"生理周期"孕期文本提取孕周(如 "孕期 孕6周+3天" → 6; 提取不到返回 null) */
-function extractPregnancyWeek(physioText) {
+function extractPregnancyWeek(physioText: unknown): number | null {
     const m = String(physioText ?? '').match(/孕\s*(\d+)\s*周/);
     return m ? +m[1] : null;
 }
 /** 由 Day 与锁定周期长度推算阶段名(与提示词规则一致): 排卵日 = 周期长度 - 14;
  *  月经期 Day1~5, 卵泡期 Day6~排卵日-2, 排卵期 排卵日±1, 黄体期 排卵日+2~周期长度 */
-function cycleStageName(day, cycleLen) {
+function cycleStageName(day: number, cycleLen: number) {
     const ovuDay = cycleLen - 14;
     if (day >= 1 && day <= 5)
         return '月经期';
@@ -251,7 +261,7 @@ function 解析旧日期文本(文本: unknown): number | null {
     const m = raw.match(/^(\d{1,3})([-/.]\d)/);
     return m ? parseStoryTime(m[1].padStart(4, '0') + m[2] + raw.slice(m[0].length)) : null;
 }
-function correctPhysioByStoryTime(merged, oldCard, storyTimeText) {
+function correctPhysioByStoryTime(merged: Record<string, any>, oldCard: Record<string, any> | null | undefined, storyTimeText: string) {
     const oldDate = oldCard?.['生理周期日期'];
     if (!oldDate)
         return;
@@ -377,7 +387,7 @@ function pregnancyKnowledgeByWeek(week: number | null, gestationWeeks: number | 
  *   孕4~6周停经开始怀疑(疑似), 孕6周+早孕反应/验孕早已确认(已确认), 符合现实认知。
  *   阈值按该 NPC 的「孕程周数」等比放大(见 pregnancyKnowledgeByWeek); 人类 40 周时结果与旧版一致。
  */
-function ensurePregnancyKnowledge(merged) {
+function ensurePregnancyKnowledge(merged: Record<string, any>) {
     const pregnant = String(merged['是否怀孕'] ?? '') === 'true' || String(merged['是否怀孕']) === '是' || String(merged['生理周期'] ?? '').includes('孕期');
     if (!pregnant) {
         delete merged['怀孕知晓'];
@@ -391,17 +401,39 @@ function ensurePregnancyKnowledge(merged) {
 
 /**
  * 周期长度兜底: 可怀孕角色(卡里出现任一生理字段)首次建档时随机一个锁定长度。
- * 返回是否真的写入。输入侧(更新输入.ts)与合并侧(一致化生理)共用这一条规则,
- * 免得"随机 21~35、之后锁死"在两处各写一遍。
+ * 返回是否真的写入(含"把字符串归一成数字"这种写入)。输入侧(更新输入.ts)与合并侧(一致化生理)
+ * 共用这一条规则, 免得"随机 21~35、之后锁死"在两处各写一遍。
+ *
+ * **"已有值"的判定是"合法数值", 不是"键存在"**: 旧数据/手改可能留下 `"28"`(字符串)、`{}`、`true`、
+ * `0`、`-5` 这类值。放它们过去, 下游 `calcConceptionRate` 的 `cycleLen - 14` 会得到 `NaN`,
+ * 而那里的 `base` 有 `0.01` 初值兜着 —— 结果**不会**崩, 而是静默按"安全期 1%"算, 谁也发现不了。
+ *
+ * 两种非法分开处理, 因为后果不同:
+ * - **能解析成正数**(如 `"28"`): 归一成 number 写回, **保住原来的锁定值**。
+ *   直接重播会悄悄改掉这个角色的周期长度 —— 而"首次确定后锁死"是本模块的核心约定。
+ * - **算不出正数**(`"abc"` / `NaN` / `Infinity` / `{}` / `true` / `0` / `-5` / 空串): 当"没有"处理, 重播一个。
+ *
+ * 自愈一律发生在**入口写回卡**, 计算函数(`calcConceptionRate` 等)不做兜底。
  */
 function 确保周期长度(卡: Record<string, any>, 随机: () => number = Math.random): boolean {
-    if (卡['周期长度'] !== undefined && 卡['周期长度'] !== null)
+    const 现有 = 卡['周期长度'];
+    // 只把"数字"和"能当数字读的字符串"认作已有值。`Number(true)`=1、`Number([])`=0 这种隐式转换
+    // 会把完全不相干的类型蒙混成合法值, 所以这里只认 string, 不认 boolean/object。
+    const 归一 = typeof 现有 === 'number' ? 现有
+        : typeof 现有 === 'string' && 现有.trim() !== '' ? Number(现有)
+            : Number.NaN;
+    if (Number.isFinite(归一) && 归一 > 0) {
+        if (typeof 现有 !== 'number') {
+            卡['周期长度'] = 归一; // "28" → 28: 类型修好, 锁定值不变
+            return true;
+        }
         return false;
+    }
     const 有生理 = PHYSIO_FIELDS.some(field => 卡[field] !== undefined && 卡[field] !== null && String(卡[field] ?? '').trim() !== '');
     if (!有生理)
         return false;
     // 中心加权 26~32: 两次均匀抽样取平均, 29 附近最常见, 两端较少。
-    // 人设/旧卡已有周期长度时永远沿用, 不会被重新随机。
+    // 人设/旧卡已有**合法**周期长度时永远沿用, 不会被重新随机。
     卡['周期长度'] = 26 + Math.floor((随机() + 随机()) * 3.5);
     return true;
 }
@@ -523,7 +555,10 @@ function 一致化生理(参数: {
         const known = String(本轮更新['怀孕知晓'] ?? '').trim();
         if (PREGNANCY_KNOWN_VALUES.includes(known)) {
             const oldKnown = String(卡['怀孕知晓'] ?? '').trim();
-            const order = { [PREGNANCY_KNOWN_UNKNOWN]: 0, [PREGNANCY_KNOWN_SUSPECT]: 1, [PREGNANCY_KNOWN_CONFIRMED]: 2 };
+            // 单向闸的顺序表: 用 `Record<string, number>` 而不是字面量推断 —— 查的是卡上/AI 给的任意字符串,
+            // 字面量只认三个已知键。查不到即 undefined, 下面用 `?? -1` 兜底(旧值认不出时 -1 表示"最靠前",
+            // 任何合法新值都能通过, 即"认不出就当没设过"), 不是 bug。
+            const order: Record<string, number> = { [PREGNANCY_KNOWN_UNKNOWN]: 0, [PREGNANCY_KNOWN_SUSPECT]: 1, [PREGNANCY_KNOWN_CONFIRMED]: 2 };
             const oldIdx = order[oldKnown] ?? -1;
             const newIdx = order[known] ?? -1;
             if (newIdx >= oldIdx) {

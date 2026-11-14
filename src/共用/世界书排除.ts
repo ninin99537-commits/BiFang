@@ -15,6 +15,21 @@
 // 用例见 tests/worldbook-exclude.test.ts。
 
 /**
+ * 判定只需要条目上的这四个字段, 就在本地声明这四个 —— 不引用各家的完整条目类型:
+ * `src/共用/` 不依赖任何一家插件, 反向 import 会让共用层绑死在彼方身上。
+ *
+ * `name` 与 `comment` 都要: 酒馆原生条目把显示名放在 `comment`(改名后 name 还是旧名),
+ * 而主 AI 激活数据里可能只有 `name`; `key` 在两者都缺时兜底(见 条目标签)。
+ * 四字段全可选: 调用方传进来的激活数据/世界书条目本来就可能缺字段。
+ */
+interface 排除条目形状 {
+  name?: string;
+  comment?: string;
+  content?: string;
+  key?: string | string[];
+}
+
+/**
  * 把设置里那段文本切成名单: **只按换行**切, 每行 trim, 空行丢掉。
  * 逗号 `,` `，`、顿号 `、`、分号 `;` `；` 都是内容的一部分 —— 条目名里本来就可能带这些字符,
  * 以前按它们切会把一个名字切成几条, 于是"排除不生效"又找不出原因。
@@ -27,7 +42,7 @@ export function 解析名单(text: string): string[] {
 }
 
 /** 名单里任意一串出现在条目的标题/备注里(不分大小写), 或条目内容以它开头 → 排除 */
-export function 命中排除(entry: any, excludes: string[]): boolean {
+export function 命中排除(entry: 排除条目形状 | null | undefined, excludes: string[]): boolean {
   if (!entry || !Array.isArray(excludes) || excludes.length === 0)
     return false;
   const 名 = String(entry.name ?? '').trim().toLowerCase();
@@ -44,7 +59,7 @@ export function 命中排除(entry: any, excludes: string[]): boolean {
 }
 
 /** 条目名(给人看的): 主 AI 激活数据在 comment/key, getWorldbook 在 name */
-export function 条目标签(entry: any): string {
+export function 条目标签(entry: 排除条目形状 | null | undefined): string {
   return (typeof entry?.comment === 'string' && entry.comment)
     || (typeof entry?.name === 'string' && entry.name)
     || (entry?.key ? (Array.isArray(entry.key) ? entry.key.join('、') : String(entry.key)) : '')

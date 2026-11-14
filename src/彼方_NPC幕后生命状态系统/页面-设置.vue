@@ -19,7 +19,7 @@
     <header class="bf-page-head">
       <div>
         <h2 class="bf-page-title">设置</h2>
-        <p class="bf-page-sub">接口、更新、世界书、提示词、标签与备份。改动即时保存。</p>
+        <p class="bf-page-sub">接口、更新、世界书、提示词、标签与备份。改动后自动保存（停止输入约 0.3 秒落盘；「写入世界书」立即生效）。</p>
       </div>
     </header>
 

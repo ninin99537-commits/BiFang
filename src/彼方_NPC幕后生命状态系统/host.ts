@@ -97,7 +97,7 @@ interface HostModel {
     /** 列出某个接口下可用的模型名 */
     list(api: { apiurl: string; key?: string }): Promise<string[]>;
     /** 发一次原始请求(generateRaw): 消息由彼方自己拼, 不经过酒馆的提示词组装 */
-    raw(config: GenerateRawConfig): Promise<string | GenerateToolCallResult>;
+    raw(config: GenerateRawConfig): Promise<string | GenerateDetailedResult>;
     /** 按 id 取消后台请求(generateRaw 不支持 AbortSignal, 只能这么取消) */
     stop(generationId: string): boolean;
 }
@@ -252,7 +252,8 @@ function createTavernHost(): Host {
                     const 群号 = SillyTavern.groupId;
                     if (!群号)
                         return [];
-                    const 群 = (SillyTavern.groups ?? []).find((item) => String(item?.id) === String(群号));
+                    // SillyTavern.groups 在平台类型里是 any, 所以这里给回调补上"只读 id"的最小形状
+                    const 群 = (SillyTavern.groups ?? []).find((item: { id?: unknown }) => String(item?.id) === String(群号));
                     return Array.isArray(群?.members) ? [...群.members] : [];
                 }
                 catch {

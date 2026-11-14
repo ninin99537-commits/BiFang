@@ -1,12 +1,12 @@
 // 本轮"取料 + 组装提示词"(候选2 第四块)。
 // 从最近几条 AI 回复里取出正文/上下文/当前卡/人设, 汇成发给模型的消息数组。
-// 读聊天记录的小工具在 聊天取料.ts(那边还管着 全部AI楼层 的缓存与换聊天时的清理), 这里直接用。
+// 读聊天记录的小工具在 聊天取料.ts, 这里直接用。
 // 前置条件不满足时(如没有可用的 AI 回复)返回 null: 提示已经发过, 调用方直接收工。
 
 // 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
 import { buildUpdateMessages } from './prompts';
 import { 名字出现, 上下文, 最近回复, 正文过滤, 时间提示, 时间跳跃, 追踪NPC } from './聊天取料';
-import { getActiveWorldbookText, getPersonaTextForNpc } from './worldbook';
+import { getPersonaTextForNpc, 读取世界书段 } from './worldbook';
 import { 压缩记忆回溯 } from './记忆回溯';
 import { 生活状态待更新 } from './生活状态';
 import { loadData, updateClearLayer } from './快照';
@@ -14,6 +14,7 @@ import { toastWarning } from './toast';
 import { 确保周期长度 } from './生理规则';
 import { 读取台账 } from './事务台账';
 import { 字段分组表 } from './卡字段';
+import { 计算规模 } from './规模';
 
 type 取料参数 = { host: any; settings: any; force: any; timing: any; debugStore: any };
 export async function 收集本轮输入(参数: 取料参数) {
@@ -90,9 +91,10 @@ export async function 收集本轮输入(参数: 取料参数) {
     const context = 压缩记忆回溯(rawContext);
     timing.前置 = Date.now() - timing.start;
     const worldbookStart = Date.now();
-    const worldbook = settings.更新.注入世界书
-        ? await getActiveWorldbookText(host, [rawContext, reply].filter(Boolean).join('\n\n'), settings.更新.注入世界书排除 ?? [], settings.更新.常驻世界书条目 ?? [])
-        : '';
+    // 世界书段与条数出自**同一次组装**: 条数不能靠事后按分隔符数(条目正文里本来就有空行)。
+    const { 文本: worldbook, 条数: worldbook条数 } = settings.更新.注入世界书
+        ? await 读取世界书段(host, [rawContext, reply].filter(Boolean).join('\n\n'), settings.更新.注入世界书排除 ?? [], settings.更新.常驻世界书条目 ?? [])
+        : { 文本: '', 条数: 0 };
     timing.世界书 = Date.now() - worldbookStart;
     const storyTimeHint = 时间提示(worldbook, reply, context);
     const currentCards: Record<string, any> = {};
@@ -187,14 +189,24 @@ export async function 收集本轮输入(参数: 取料参数) {
             }
         },
     });
+    const 请求体 = messages
+        .map(message => `【${message.role === 'system' ? '系统指令' : message.role === 'user' ? '用户' : '助手'}】\n${message.content}`)
+        .join('\n\n────────\n\n');
+    // 规模四数与请求体同源: 都取自**这一轮真正要发出去的那份**(messages / currentCards / worldbook)
+    const 规模 = 计算规模({
+        追踪: tracked.length,
+        卡片: currentCards,
+        世界书条数: worldbook条数,
+        世界书字数: worldbook.length,
+        请求体,
+    });
     debugStore.record({
         time: Date.now(),
         model: settings.接口.模型,
         replyIds: recent.map(message => message.message_id),
         replyPreview: reply.slice(0, 150),
-        request: messages
-            .map(message => `【${message.role === 'system' ? '系统指令' : message.role === 'user' ? '用户' : '助手'}】\n${message.content}`)
-            .join('\n\n────────\n\n'),
+        request: 请求体,
+        规模,
     });
     console.info(`[彼方] 开始更新幕后NPC状态 (使用最近 ${recent.length} 条回复: #${recent.map(message => message.message_id).join(', #')})`);
 
