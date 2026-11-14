@@ -80,7 +80,7 @@ function maybeInjectNpcStates(host: Host) {
 }
 $(function () {
     // 状态快照存在楼层变量里, 随楼层存亡——删除楼层/重roll(新swipe页没有快照)时状态
-    // 自动回退, 楼层被编辑时由楼层hash校验作废。因此事件处理只剩"刷新界面与世界书注入":
+    // 自动回退。因此事件处理只剩"刷新界面与世界书注入":
     // - MESSAGE_DELETED 只"延迟"刷新, 若 2 秒内收到新消息(regenerate/重roll)则取消,
     //   由 MESSAGE_RECEIVED 的正常更新流程自然同步, 避免中间态闪烁;
     //   手动删除楼层(无后续新消息)才真正刷新。

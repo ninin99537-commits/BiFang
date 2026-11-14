@@ -34,7 +34,6 @@ interface 快照元数据 {
 interface 快照载荷 {
     版本: number;
     楼层: number;
-    楼层hash: string;
     处理到楼层: number;
     名单: string[];
     NPC: Record<string, Record<string, any>>;
@@ -42,14 +41,6 @@ interface 快照载荷 {
     剧情时间: string;
 }
 
-/** 字符串滚动hash(楼层内容指纹) */
-function hashString(text: string) {
-    let hash = 0;
-    for (let i = 0; i < text.length; i++) {
-        hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
-    }
-    return String(hash);
-}
 function emptyMeta(): 快照元数据 {
     return { 版本: DATA_VERSION, 快照楼层: [], 清空层: 0 };
 }
@@ -240,7 +231,7 @@ function emptyData(): 彼方数据 {
  * 读取彼方当前状态: 从最新快照楼层往前找第一份**有效**快照。
  * - 楼层不存在(被删) → 快照随之消亡, 从索引清理, 继续往前;
  * - 楼层变量里没有快照(如重roll产生的新swipe页) → 继续往前;
- * - 楼层内容hash与快照记录不一致(楼层被编辑) → 该快照作废, 继续往前;
+ * - 楼层变量里没有快照(如重roll产生的新swipe页) → 继续往前;
  * 命中或扫尽后返回状态; 一个快照都没有时返回空状态(清空层仍生效)。
  */
 function loadData(host: 快照宿主): 彼方数据 {
@@ -288,9 +279,10 @@ function loadData(host: 快照宿主): 彼方数据 {
                 编号对不上.push({ floorId, snapshot });
                 continue;
             }
-            // 楼层hash校验已移除: 主AI楼层在彼方快照写入后仍会变动(流式收尾/正则脚本后处理/
-            // 世界书格式追加等), hash失配把"正常游玩"误判为"楼层被编辑", 导致每轮回退空状态
-            // (更新次数恒为1、名单反复消失)。快照有效性只按"楼层存在+快照键匹配"判定。
+            // 快照有效性只按"楼层存在 + 快照键匹配"判定, 不比对楼层内容:
+            // 主AI楼层在快照写入后仍会变动(流式收尾/正则脚本后处理/世界书格式追加等),
+            // 按内容比对会把"正常游玩"误判成"楼层被编辑", 导致每轮回退空状态
+            // (更新次数恒为1、名单反复消失)。
             if (missingFloors.length > 0) {
                 meta.快照楼层 = meta.快照楼层.filter(floor => !missingFloors.includes(floor));
                 saveMeta(host, meta);
@@ -351,7 +343,7 @@ function loadData(host: 快照宿主): 彼方数据 {
         return emptyData();
     }
 }
-/** 构造楼层快照数据(楼层不存在时返回 null); 楼层hash取该楼层当前内容, 供读取时校验楼层是否被编辑 */
+/** 构造楼层快照数据(楼层不存在时返回 null) */
 function buildSnapshotPayload(host: 快照宿主, data: 彼方数据, anchorFloor: number, processedFloor: number): 快照载荷 | null {
     let message = null;
     try {
@@ -380,7 +372,6 @@ function buildSnapshotPayload(host: 快照宿主, data: 彼方数据, anchorFloo
     return {
         版本: DATA_VERSION,
         楼层: anchorFloor,
-        楼层hash: hashString(String(message.message ?? '')),
         处理到楼层: processedFloor,
         名单: [...(data.名单 ?? [])],
         NPC: klona(cleanedNpc),
@@ -396,6 +387,24 @@ function writeFloorVariables(host: 快照宿主, payload: 快照载荷) {
     }, { type: 'message', message_id: payload.楼层 });
 }
 /**
+ * 锚点之后是否已有一份更靠后的快照(通常来自玩家手动保存)。
+ *
+ * 为什么要有这一条: 自动更新锚在「取料末层」, 手动保存锚在「最新层」, 两者可以差好几楼。
+ * 读侧只取最大层号那份, 于是自动更新那轮的结果**写进去了却永远读不到**——静默丢弃。
+ * 检测到冲突时自动更新不写入, 由调用方告诉玩家「这轮结果因手动修改未保存」。
+ *
+ * 手动保存不会误伤: 它锚的就是最新层, 后面不可能还有更靠后的快照。
+ */
+function 锚点之后有快照(meta: 快照元数据, anchorFloor: number): boolean {
+    return meta.快照楼层.some(floor => floor > anchorFloor);
+}
+
+/** 锚点之后已有更新快照的楼层号(空数组 = 没有冲突)。调用方用它区分"写入失败"的两种原因。 */
+function 锚点之后的快照楼层(host: 快照宿主, anchorFloor: number): number[] {
+    return loadMeta(host).快照楼层.filter(floor => floor > anchorFloor);
+}
+
+/**
  * 把状态整体写成一份楼层快照, 存到 `anchorFloor` 楼层的楼层变量里(当前swipe页),
  * 并维护聊天变量里的快照楼层索引 + 物理清理超额的更早快照。
  *
@@ -404,9 +413,18 @@ function writeFloorVariables(host: 快照宿主, payload: 快照载荷) {
  * @param processedFloor 「已分析到哪条楼层」(增量判定用)
  * @param consumeClearLayer 成功写入后是否把「清空层」清零(自动更新成功后清零=清空层只在首次更新生效)
  * @param metaInput 调用方已持有的元数据; 不传则内部读取
+ * @param 允许覆盖更新快照 自动更新路径传 false: 锚点之后已有更新快照时不写入(见 锚点之后有快照)。
+ *   手动保存传 true——它锚的就是最新层, 不存在"后面还有更新的快照", 这条检测对它恒为假。
  */
-function writeStateSnapshot(host: 快照宿主, data: 彼方数据, anchorFloor: number, processedFloor: number, consumeClearLayer: boolean, metaInput: 快照元数据 | null = null): boolean {
+function writeStateSnapshot(host: 快照宿主, data: 彼方数据, anchorFloor: number, processedFloor: number, consumeClearLayer: boolean, metaInput: 快照元数据 | null = null, 允许覆盖更新快照 = true): boolean {
     const meta = metaInput ?? loadMeta(host);
+    if (!允许覆盖更新快照 && 锚点之后有快照(meta, anchorFloor)) {
+        // 不写入, 但要说清楚: 玩家以为更新成功了、其实这轮结果没进库。
+        const 更新的楼层 = meta.快照楼层.filter(floor => floor > anchorFloor);
+        const 说明 = `本轮结果因手动修改未保存: 楼层 #${更新的楼层.join('、#')} 上有更新的快照(通常来自手动保存), 本轮锚点 #${anchorFloor} 之后已有它, 写入会被读侧忽略。`;
+        console.warn(`[彼方] ${说明}`);
+        return false;
+    }
     const payload = buildSnapshotPayload(host, data, anchorFloor, processedFloor);
     if (!payload) {
         console.warn(`[彼方] 楼层 #${anchorFloor} 不存在, 无法保存快照`);
@@ -448,7 +466,8 @@ function writeStateSnapshot(host: 快照宿主, data: 彼方数据, anchorFloor:
 function saveData(host: 快照宿主, data: 彼方数据): boolean {
     try {
         const anchor = host.chat.lastMessageId();
-        return writeStateSnapshot(host, data, anchor, typeof data.处理到楼层 === 'number' ? data.处理到楼层 : 0, false);
+        // 手动保存锚的就是最新层, 后面不可能有更新的快照 —— 冲突检测对它恒为假, 显式传 true 表明这一点
+        return writeStateSnapshot(host, data, anchor, typeof data.处理到楼层 === 'number' ? data.处理到楼层 : 0, false, null, true);
     }
     catch (error) {
         console.error('[彼方] 保存NPC状态失败:', error);
@@ -518,5 +537,5 @@ function clearAllData(host: 快照宿主): 清空结果 {
     return { 成功: true, 清空层: 当前楼层 };
 }
 
-export { DATA_VERSION, SNAPSHOT_LIMIT, STORAGE_KEY, clearAllData, discardSnapshotAt, emptyData, loadData, saveData, updateClearLayer, writeStateSnapshot };
+export { DATA_VERSION, SNAPSHOT_LIMIT, STORAGE_KEY, clearAllData, discardSnapshotAt, emptyData, loadData, saveData, updateClearLayer, writeStateSnapshot, 锚点之后的快照楼层 };
 export type { 快照宿主 };

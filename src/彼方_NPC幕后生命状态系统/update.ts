@@ -2,7 +2,7 @@
 import { chatCompletion } from './api';
 import { getSettings } from './settings';
 import { 报告世界书失败, syncNpcStatesWorldbook } from './worldbook-inject';
-import { writeStateSnapshot } from './快照';
+import { writeStateSnapshot, 锚点之后的快照楼层 } from './快照';
 import { useStateStore } from './数据仓';
 import { useDebugStore } from './日志仓';
 import { useUpdatingStore } from './任务中断';
@@ -75,16 +75,28 @@ async function updateNpcStates(host: Host, force = false) {
         timing.解析应用 = Date.now() - applyStart;
         const finalizeStart = Date.now();
         // 把更新后的状态整体写入本次分析的最后一条楼层(快照随该楼层存亡:
-        // 删除楼层/重roll时状态自动回退, 楼层被编辑时由楼层hash校验作废), 并同步清空层清零
+        // 删除楼层/重roll时状态自动回退), 并同步清空层清零
         const anchorFloor = recent[recent.length - 1].message_id;
         newData.处理到楼层 = anchorFloor;
         newData.清空层 = 0;
         const stateStore = useStateStore();
-        if (writeStateSnapshot(host, newData, anchorFloor, anchorFloor, true)) {
+        // 自动更新路径传 允许覆盖更新快照=false: 锚点之后若已有更新的快照(通常来自手动保存),
+        // 这一轮不写入 —— 否则写进去了也会被读侧按最大层号忽略, 变成静默丢弃。
+        if (writeStateSnapshot(host, newData, anchorFloor, anchorFloor, true, null, false)) {
             stateStore.data = { ...newData, 锚点楼层: anchorFloor };
         }
         else {
             stateStore.data = newData;
+            // 写入失败要出声: 玩家最容易误以为"更新完成 = 状态已保存"。
+            // 楼层不存在时 buildSnapshotPayload 已经 warn 过, 这里只补"锚点冲突"这一种。
+            const 冲突楼层 = 锚点之后的快照楼层(host, anchorFloor);
+            if (冲突楼层.length > 0) {
+                const 说明 = `本轮结果因手动修改未保存: 楼层 #${冲突楼层.join('、#')} 上有更新的快照, 本轮锚点 #${anchorFloor} 之后已有它。`;
+                debugStore.record({ time: Date.now(), error: 说明 });
+                // 走 host.toast 而不是直连 toastWarning: 与 报告世界书失败 同一口径 ——
+                // 两者都是"后台链路的结果没能落地", 玩家必须知道, 且不该由纯逻辑层自己弹提示。
+                host.toast.warn(`彼方: ${说明}`, '彼方');
+            }
         }
         // 同步幕后状态到世界书(蓝灯常驻条目), 供主AI与数据库剧情推进读取。
         // 失败必须让玩家看见: 这条链路跑在 AI 更新之后, 玩家最容易误以为"状态更新成功 = 世界书也更新了"。
