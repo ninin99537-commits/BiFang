@@ -25,7 +25,10 @@ function ok(名: string, 条件: boolean) {
 
 console.log('\n[1] 求值环境带 禁用缓存: true(钉死的接口形态)');
 {
-  // 假宿主的世界书给一条条目; getActiveWorldbookText 走真实求值链, 模板环境把收到的上下文原样回显
+  // 假宿主的世界书给一条条目; getActiveWorldbookText 走真实求值链, 模板环境把收到的上下文原样回显。
+  // ⚠️ 这里的 ejs 替身是**测试自带的最小替身**: 只回显/透传参数、不解析模板语法 ——
+  //    它模拟的是"求值链路会把什么传进 prepareContext"(本用例只观察参数), **不是**真 prepareContext
+  //    (真件会做宏展开/环境装配/模板求值)。别把"参数进来了"当成"求值语义正确"。
   const { host } = 彼方假宿主({});
   const 收到的: any[] = [];
   (host as any).ejs = {
