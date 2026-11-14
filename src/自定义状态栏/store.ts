@@ -784,8 +784,8 @@ export const useConfigStore = defineStore('config', () => {
     if (!stack || stack.type !== 'stack') return;
     const childId = stack.children?.[pageIndex];
     if (!childId) return;
-    // 从 stack 摘出该页
-    stack.children = (stack.children || []).filter((id, i) => i !== pageIndex);
+    // 从 stack 摘出该页(回调第一个参数用不到, 写成 _ 明确表示"只按位置过滤")
+    stack.children = (stack.children || []).filter((_, i) => i !== pageIndex);
     // activePageIndex 越界校正
     const n = stack.children.length;
     if ((stack.activePageIndex || 0) >= n) {

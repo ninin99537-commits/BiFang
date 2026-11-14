@@ -65,7 +65,7 @@ interface HostPersona {
 /** 模型调用 */
 interface HostModel {
   list(api: { apiurl: string; key?: string }): Promise<string[]>;
-  raw(config: GenerateRawConfig): Promise<string | GenerateToolCallResult>;
+  raw(config: GenerateRawConfig): Promise<string | GenerateDetailedResult>;
   stop(generationId: string): boolean;
 }
 

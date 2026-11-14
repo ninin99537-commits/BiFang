@@ -288,6 +288,11 @@ export function normalizeLayout(config: Config): Layout {
   layout.widgetDefaults = createDefaultWidgetStyle(layout.widgetDefaults || {});
   layout.themeDefaults = createDefaultWidgetStyle(layout.themeDefaults || layout.widgetDefaults);
   layout.rows = migrateRows({ ...config, layout });
+  // 图库与字体: 与 LayoutSchema 的 `.prefault([])` 对齐 —— 这里补齐, 函数名才不说谎
+  // ("规范化 layout" 就该让每个字段都是它声明的形状)。旧配置/手改 JSON 缺这两个键时,
+  // 视图(EditorPanel.vue:870/875/876 直接读 `.length`)才不会炸。
+  layout.fonts = layout.fonts ?? [];
+  layout.images = layout.images ?? [];
   return layout;
 }
 

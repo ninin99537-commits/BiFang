@@ -55,7 +55,7 @@ interface HostModel {
     /** 列出某个接口下可用的模型名 */
     list(api: { apiurl: string; key?: string }): Promise<string[]>;
     /** 发一次原始请求(generateRaw): 消息由烟火自己拼, 不经过酒馆的提示词组装 */
-    raw(config: GenerateRawConfig): Promise<string | GenerateToolCallResult>;
+    raw(config: GenerateRawConfig): Promise<string | GenerateDetailedResult>;
     /** 按 id 取消后台请求(generateRaw 不支持 AbortSignal, 只能这么取消) */
     stop(generationId: string): boolean;
 }

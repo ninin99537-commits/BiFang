@@ -295,6 +295,11 @@ export function defaultConfig(): Config {
         createLayoutRow({ columns: 1, widgetIds: ['w1'] }),
         createLayoutRow({ columns: 1, widgetIds: ['w2'] }),
       ],
+      // 图库与字体: 必须显式给空数组。LayoutSchema 里它们是 `.prefault([])`, 但 store.reset()
+      // 是 `config.value = defaultConfig()` —— 绕过 schema, prefault 不生效, 于是 layout.images
+      // 是 undefined, 而 EditorPanel.vue:870 直接读 `.length` → 打开编辑器就 TypeError。
+      fonts: [],
+      images: [],
     },
     widgets,
   };
