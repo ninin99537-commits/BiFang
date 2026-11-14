@@ -10,6 +10,7 @@
 import lodash from 'lodash';
 import { createPinia, setActivePinia } from 'pinia';
 import { maybeInjectNpcStates } from '../src/彼方_NPC幕后生命状态系统/worldbook-inject';
+import { invalidateReadCache } from '../src/彼方_NPC幕后生命状态系统/settings';
 import { 彼方假宿主 } from './helpers/彼方假宿主';
 
 (globalThis as any)._ = lodash;
@@ -68,9 +69,10 @@ console.log('\n[1] 总开关关(启用幕后=false) → **有数据也清**: 调
 
 console.log('\n[2] 对照: 启用幕后=true → 条目不删(有数据时走正常写入路径)');
 {
-  // getSettings 有 500ms 模块级读缓存([1] 把 启用幕后=false 缓存了); invalidateReadCache 未导出,
-  // 跨场景只能真等窗口过去 —— 否则 [2] 拿到的是 [1] 的设置, 走的会是关闭档
-  await new Promise(resolve => setTimeout(resolve, 550));
+  // [1] 调用过 getSettings, 500ms 读缓存里存着 启用幕后=false —— 跨场景必须显式失效读缓存,
+  // 否则 [2] 拿到 [1] 的设置(跨场景污染)。生产路径写回成功本来就调它, 不是测试钩子。
+  // 这条**不依赖时序**(无 sleep, 机器忙慢也不会闪红)。
+  invalidateReadCache();
   setActivePinia(createPinia());
   const { host, 存 } = 清理假宿主(true);
   // 有数据(名单非空)时, 写路径是"更新条目"而非"删条目" —— 空数据才会删
