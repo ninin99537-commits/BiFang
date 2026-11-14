@@ -110,6 +110,18 @@ console.log('\n[C] 坏 JSON: 原样重试 3 次后失败, 且不留半截状态(
   ok('[C] 失败进了日志页(带失败详情)', typeof 日志?.error === 'string' && 日志.error.includes('更新失败'));
 }
 
+console.log('\n[D] 空轮 {"NPC":{}} 是合法载荷: 1 次请求、不重试、不失败(真缺陷回归钉 —— 旧候选判据只认 剧情时间/移除NPC 时, 空轮被误判"没返回JSON"白重发三次)');
+{
+  setActivePinia(createPinia());
+  const { host, 存, 记 } = 彼方假宿主({ 模型回复: [JSON.stringify({ NPC: {} })] });
+  种已有状态(host);
+  await updateNpcStates(host as any);
+  eq('[D] 空轮恰好 1 次请求(不白重发)', 记.rawCalls.length, 1);
+  const 日志 = useDebugStore().log;
+  ok('[D] 不判失败: 日志页没有 error', 日志?.error === undefined || 日志?.error === '');
+  ok('[D] 正常收尾: 快照照常写进最后分析楼层 #3', 存.message[3]?.[STORAGE_KEY] !== undefined);
+}
+
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 if (fail > 0)
   process.exit(1);

@@ -68,7 +68,9 @@ console.log('\n[2] 超线(状态卡合计 > 60000 字) → 请求照发(不阻�
   writeStateSnapshot(host, 撑大的, 1, 1, false);
   await updateNpcStates(host as any);
   eq('超线也照发: 模型调用次数 = 1(不阻止)', 记.rawCalls.length, 1);
-  ok('发出的请求里卡片内容没被截断', String(记.rawCalls[0]?.ordered_prompts?.map((p: any) => p.content ?? '').join('') ?? '').includes('xxxxxx'));
+  // 观察点变更(#138, 非断言放宽): api.ts 把最后一条 user 消息拆进 user_input(不进 ordered_prompts), 卡片段正在那里
+  const 请求全文 = String(记.rawCalls[0]?.user_input ?? '') + String(记.rawCalls[0]?.ordered_prompts?.map((p: any) => p.content ?? '').join('') ?? '');
+  ok('发出的请求里卡片内容没被截断(user_input + ordered_prompts 全文可见)', 请求全文.includes('xxxxxx'));
 }
 
 console.log('\n[3] 超线时规模行带警示标记(data-bf-scale-warn) —— 渲染层是模板, 此处用源码钉辅助(明标: 非行为证据)');
