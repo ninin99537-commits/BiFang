@@ -23,7 +23,7 @@
 // 打包器只是去掉类型、把 `?raw` 还原成文本, 没有替换任何逻辑。
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ROOT, buildTest } from './build.mjs';
@@ -82,10 +82,31 @@ const 测试指纹 = p => createHash('sha1').update(readFileSync(p)).digest('hex
 
 /**
  * 戳的格式（一行，便于人眼看懂是哪两样东西的指纹）：
- *   `v1 <src 全量 sha1> <该用例文件 sha1>`
+ *   `v2 <src 全量 sha1> <tests/helpers 全量 sha1> <该用例文件 sha1>`
  * 存成 `tests/.build/<用例名>.stamp` —— 与产物同目录、同在 .gitignore 覆盖范围内。
  */
-const 期望戳 = (测试路径) => `v1 ${源指纹()} ${测试指纹(测试路径)}\n`;
+/** tests/helpers/ 全部文件的内容指纹(进程内只算一次): 假宿主这类共享基座不在 src/ 里,
+ *  v1 戳看不见它 —— 只改 helper 不动用例会用到陈旧产物(2026-11-14 需求位裁定并入戳)。 */
+let helpers指纹缓存 = null;
+function helpers指纹() {
+  if (helpers指纹缓存 !== null)
+    return helpers指纹缓存;
+  const 目录 = path.join(HERE, 'helpers');
+  if (!existsSync(目录))
+    return '';
+  const h = createHash('sha1');
+  for (const name of readdirSync(目录).sort()) {
+    const p = path.join(目录, name);
+    if (!statSync(p).isFile())
+      continue;
+    h.update(`${name}\0`);
+    h.update(readFileSync(p));
+    h.update('\0');
+  }
+  helpers指纹缓存 = h.digest('hex');
+  return helpers指纹缓存;
+}
+const 期望戳 = (测试路径) => `v2 ${源指纹()} ${helpers指纹()} ${测试指纹(测试路径)}\n`;
 const 戳路径 = name => path.join(OUT_DIR, name.replace(/\.ts$/, '.stamp'));
 
 for (const name of files) {
