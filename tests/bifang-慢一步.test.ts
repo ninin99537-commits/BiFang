@@ -57,6 +57,9 @@ console.log('\n[1] 开: 3 条可见回复 → 送进模型的正文不含第 3 �
   await updateNpcStates(host as any);
   const 请求 = String(useDebugStore().log?.request ?? '');
   ok('请求含第 1 条', 请求.includes('MARK-第一条'));
+  // 契约 v1.1: 第 3 条在回复段与上下文段都不含 —— 请求全文是各段之并, **全文不含 ⇒ 分别不含**(更强的传递保证);
+  // 实现侧配套: 上下文上界改 replyMessageId(聊天取料.ts:73, fae86ae 交付第 6 条), 修的就是当初的上下文泄漏点
+  ok('请求全文不含第 3 条(⇒回复段/上下文段分别不含)', !请求.includes('MARK-第三条'));
   ok('请求含第 2 条', 请求.includes('MARK-第二条'));
   ok('请求不含第 3 条(慢一步咬住)', !请求.includes('MARK-第三条'));
   eq('模型调用 1 次', 记.rawCalls.length, 1);
