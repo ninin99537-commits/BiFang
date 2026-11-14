@@ -8,13 +8,14 @@ import { 合并 } from './卡合并';
 import { parseStoryTimeRange } from './剧情时间';
 import { 认出NPC } from './模型请求';
 import { 读取台账, 未回票编号, 新建台账诊断, 待核对事务 } from './事务台账';
+import type { 彼方数据 } from './快照';
 // 2026-11-14: lodash 是 webpack externals 注入的全局（webpack.config.ts:4），不在 auto-imports 里 ——
 // 一旦把 no-undef 开成 error 就会报悬空，所以显式写出来（default 形式，与 设置.ts 一致）。
 import _ from 'lodash';
 
 /** 脱敏接口地址(隐藏地址中可能携带的 token/key 查询参数), 用于错误日志。
  *  这行注释原先落在 update.ts 的 updateNpcStates 头上(从导出脚本还原时串了行, 文档挂到了它不描述的函数上), 这里归位。 */
-function maskBaseUrl(url) {
+function maskBaseUrl(url: string) {
     const value = String(url || '').trim();
     return value.replace(/([?&](?:key|token|api_key|apiKey|apikey)=)[^&]*/gi, '$1***');
 }
@@ -25,13 +26,13 @@ function maskBaseUrl(url) {
  * - 删除旧卡 key, 名单同步用新名替换旧名, 避免两张卡并存/名单重复
  * 返回 { name, oldCard } 供调用方 合并 使用; 无改名时返回原 name + 原旧卡。
  */
-function resolveRenamedNpc(newData, name, card, playerName) {
+function resolveRenamedNpc(newData: 彼方数据, name: string, card: Record<string, any> | undefined, playerName: string | null): { name: string; oldCard: Record<string, any> | undefined } {
     const alias = String(card?.['曾用名'] ?? '').trim();
     if (alias && alias !== name && alias !== playerName && newData.NPC[alias] && !newData.NPC[name]) {
         console.info(`[彼方] NPC改名合并: ${alias} → ${name}, 旧卡状态并入新卡`);
         const oldCard = newData.NPC[alias];
         delete newData.NPC[alias];
-        newData.名单 = newData.名单.map(n => (n === alias ? name : n));
+        newData.名单 = newData.名单.map((n: string) => (n === alias ? name : n));
         return { name, oldCard };
     }
     return { name, oldCard: newData.NPC[name] };
@@ -64,8 +65,8 @@ function 空摘要(): 更新摘要 {
     return { 更新: [], 移除: [], 跳过: [], 未回票: {} };
 }
 
-function applyUpdate(data, parsed, timeJump = null, playerName = null, autoTrack = true, 生理监测 = true): 更新结果 {
-    const newData = {
+function applyUpdate(data: 彼方数据, parsed: Record<string, any> | null, _timeJump: string | null = null, playerName: string | null = null, autoTrack = true, 生理监测 = true): 更新结果 {
+    const newData: 彼方数据 = {
         ...data,
         名单: [...data.名单],
         NPC: _.cloneDeep(data.NPC),
@@ -86,9 +87,9 @@ function applyUpdate(data, parsed, timeJump = null, playerName = null, autoTrack
     // 谁是 NPC、卡在哪: 由 模型请求.认出NPC 一处认(新旧两种输出格式都在那边兼容)
     // 「自动建档」关闭时: 只允许合并**已追踪**的 NPC(名单内或已有卡), AI 返回的新角色一律跳过——
     // 已有卡但不在名单的(如改名后的新键)仍放行, 由 resolveRenamedNpc 的改名合并逻辑处理
-    const isTrackedNpc = (name) => newData.名单.includes(name) || !!newData.NPC[name];
-    const skippedNewNpcs = [];
-    const updatedNames = [];
+    const isTrackedNpc = (name: string) => newData.名单.includes(name) || !!newData.NPC[name];
+    const skippedNewNpcs: string[] = [];
+    const updatedNames: string[] = [];
     /** 本轮每个 NPC 的未回票编号(逐轮临时, 只进摘要, 不落库) */
     const 未回票记录: Record<string, string[]> = {};
     /**
@@ -142,7 +143,7 @@ function applyUpdate(data, parsed, timeJump = null, playerName = null, autoTrack
         // 主角: 跳过合并, 并清理误建的主角卡/名单项
         if (playerName && name === playerName) {
             delete newData.NPC[name];
-            newData.名单 = newData.名单.filter(n => n !== name);
+            newData.名单 = newData.名单.filter((n: string) => n !== name);
             continue;
         }
         // 自动建档关闭: 新角色(未在名单且无卡)不建档不追踪, 记录后跳过
@@ -156,7 +157,7 @@ function applyUpdate(data, parsed, timeJump = null, playerName = null, autoTrack
         if (!newData.名单.includes(resolved.name))
             newData.名单.push(resolved.name);
     }
-    const removedNpcs = [];
+    const removedNpcs: string[] = [];
     if (typeof parsed['移除NPC'] !== 'undefined') {
         removedNpcs.push(...(Array.isArray(parsed['移除NPC']) ? parsed['移除NPC'].map(String).filter(Boolean) : []));
     }
@@ -165,7 +166,7 @@ function applyUpdate(data, parsed, timeJump = null, playerName = null, autoTrack
         delete newData.卡字段计数[name];
     }
     if (removedNpcs.length > 0) {
-        newData.名单 = newData.名单.filter(name => !removedNpcs.includes(name));
+        newData.名单 = newData.名单.filter((name: string) => !removedNpcs.includes(name));
     }
     // 自动建档关闭时, 提示本次被跳过的新角色(仅提示, 不影响其他更新)
     if (skippedNewNpcs.length > 0) {
@@ -173,7 +174,7 @@ function applyUpdate(data, parsed, timeJump = null, playerName = null, autoTrack
     }
     // 已追踪但本次整卡未被 AI 返回的 NPC: 警告(增量更新下核心三字段应每次必返, 整卡省略=状态停留旧值——
     // 如大幅时间跳跃时 AI 只更新了部分 NPC, 其余卡会停留在上次日期)
-    const notUpdatedNpcs = newData.名单.filter(name => !updatedNames.includes(name) && !removedNpcs.includes(name));
+    const notUpdatedNpcs = newData.名单.filter((name: string) => !updatedNames.includes(name) && !removedNpcs.includes(name));
     if (notUpdatedNpcs.length > 0) {
         console.warn(`[彼方] 以下已追踪NPC本次整卡未返回(状态保持旧值, 剧情已推进时可能漏更新): ${notUpdatedNpcs.join('、')}`);
     }
