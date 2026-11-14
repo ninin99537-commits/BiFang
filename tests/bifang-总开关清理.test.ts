@@ -10,7 +10,7 @@
 import lodash from 'lodash';
 import { createPinia, setActivePinia } from 'pinia';
 import { maybeInjectNpcStates } from '../src/彼方_NPC幕后生命状态系统/worldbook-inject';
-import { invalidateReadCache } from '../src/彼方_NPC幕后生命状态系统/settings';
+import { invalidateReadCache, getSettings } from '../src/彼方_NPC幕后生命状态系统/settings';
 import { 彼方假宿主 } from './helpers/彼方假宿主';
 
 (globalThis as any)._ = lodash;
@@ -24,6 +24,17 @@ function ok(名: string, 条件: boolean) {
   else {
     fail++;
     console.log(`  ✗ ${名}`);
+  }
+}
+function eq(名: string, 实际: any, 期望: any) {
+  const a = JSON.stringify(实际);
+  const b = JSON.stringify(期望);
+  if (a === b) {
+    pass++;
+  }
+  else {
+    fail++;
+    console.log(`  ✗ ${名}\n      期望 ${b}\n      实际 ${a}`);
   }
 }
 
@@ -95,6 +106,26 @@ console.log('\n[3] 结构辅助钉(文本, 非行为证据): onGenerationAfterCo
   ok('回调段存在(正则咬得住)', 回调段.length > 0);
   // 钉"闸门语句"而不是"启用幕后"字样 —— 回调里允许有解释为什么删闸门的注释(它也提这个词)
   ok('回调里没有 if(启用幕后) 形态的闸门语句', !/if\s*\([^)]*启用幕后/.test(回调段));
+}
+
+console.log('\n[4] 写回 → invalidateReadCache → 立刻读必须拿到刚写的那份(真缺陷回归钉: 旧实现只清对象不清时间戳, 500ms 窗口内读回 pinia 默认值; 无 sleep)');
+{
+  setActivePinia(createPinia());
+  const { host, 存 } = 彼方假宿主({});
+  // 第一读: 建立缓存与基线(此刻全局是旧设置, 启用幕后 默认 true)
+  存.global['彼方_settings'] = { 接口: { 地址: 'https://fake.local', 模型: 'fake-model' } };
+  const 旧读 = getSettings(host as any);
+  ok('预置读取: 旧值 启用幕后=true', 旧读.启用幕后 === true);
+  // 模拟"写回成功": 全局换成新设置(启用=false + 写入目标变)
+  存.global['彼方_settings'] = {
+    接口: { 地址: 'https://fake.local', 模型: 'fake-model' },
+    启用幕后: false,
+    更新: { 世界书写入: '角色卡主世界书' },
+  };
+  invalidateReadCache(); // 写回成功后生产路径本来就调它
+  const 新读 = getSettings(host as any); // **立刻**读, 不 sleep —— 缺陷实现在 500ms 窗口内会读回 pinia 默认 true
+  ok('立刻读拿到刚写的 启用幕后=false(旧实现在此红)', 新读.启用幕后 === false);
+  eq('立刻读拿到刚写的 世界书写入', 新读.更新.世界书写入, '角色卡主世界书');
 }
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);

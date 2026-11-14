@@ -288,9 +288,18 @@ const useSettingsStore = defineStore('bifang-settings', () => {
  */
 let globalReadCache: 设置 | null = null;
 let globalReadTime = 0;
-/** 写回成功后清掉读缓存 */
+/**
+ * 写回成功后清掉读缓存。
+ *
+ * **必须连时间戳一起清**: 只把 `globalReadCache` 置 null 的话, 接下来的 500ms 窗口里
+ * `getSettings` 会走"窗口内"那条分支, 拿到 `null ?? useSettingsStore().settings` —— 也就是
+ * **pinia store 里那份(默认值或上一次 UI 的值)**, 而不是刚刚写进全局的那份。
+ * 症状: 写回成功、立刻读却读回默认值(`世界书写入` 变回「关闭」), 过 500ms 才对。
+ * 把 `globalReadTime` 归零, 下一次读就必然走真实读取路径。
+ */
 function invalidateReadCache() {
     globalReadCache = null;
+    globalReadTime = 0;
 }
 function getSettings(host: 设置宿主) {
     const now = Date.now();
@@ -315,6 +324,6 @@ function getSettings(host: 设置宿主) {
     return globalReadCache ?? useSettingsStore().settings;
 }
 
-export { getSettings, useSettingsStore, 世界书写入目标表 };
+export { getSettings, invalidateReadCache, useSettingsStore, 世界书写入目标表 };
 export type { 设置宿主, 世界书写入目标 };
 

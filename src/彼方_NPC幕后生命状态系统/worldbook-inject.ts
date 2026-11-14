@@ -5,6 +5,8 @@ import { BIFANG_WORLDBOOK_ENTRY_NAME, isBifangEntry, sanitizeBifangEntryName } f
 import { useMainPromptStore } from './日志仓';
 import type { 彼方数据 } from './快照';
 import type { 世界书写入目标 } from './settings';
+import { getSettings } from './settings';
+import { loadData } from './快照';
 
 /**
  * 把彼方幕后状态写入一本世界书里的常驻条目(蓝灯常开):
@@ -130,5 +132,25 @@ async function syncNpcStatesWorldbook(host: Pick<Host, 'worldbook'>, data: 彼�
     }
 }
 
-export { 世界书失败文案, 报告世界书失败, syncNpcStatesWorldbook };
+/**
+ * 「按当前设置把世界书同步一次」—— 四个触发器(启动/切聊天、删楼/swipe/收消息刷新、生成前命令、AI 更新后)共用的那一层。
+ *
+ * 它住在 worldbook-inject.ts 而不是入口 index.ts, 只为**可测**: index.ts 的 import 链会拉进
+ * 悬浮球界面.vue, 而 node 里 esbuild 没有 .vue 的 loader —— 于是 index.ts 根本导入不了,
+ * 任何"直接驱动这条链路"的断言都写不出来(不是没导出, 是模块加载失败)。
+ * 这里没有副作用, 行为与原位置逐字相同。
+ *
+ * **总开关关掉 ≠ 什么都不做**: 它与「写入世界书: 关闭」是同一件事 —— 把两本里彼方的条目删掉。
+ * 不这么做的话, 上一轮写进去的常驻条目会一直留在世界书里, 主 AI 继续读一份过期状态。
+ * 所以四个触发器都必须**无条件**走这一趟, 谁都不要在外面加 `if (启用幕后)` 把清理挡住。
+ */
+function maybeInjectNpcStates(host: Host): void {
+    const settings = getSettings(host);
+    const data = loadData(host);
+    const 目标 = settings.启用幕后 ? settings.更新.世界书写入 : '关闭';
+    // 同步失败要报到界面: 这条链路是 fire-and-forget, 吞掉异常等于"关掉了但没清干净"没人知道。
+    syncNpcStatesWorldbook(host, data, 目标, undefined, settings.更新.生理监测).catch(error => 报告世界书失败(host, error));
+}
+
+export { 世界书失败文案, 报告世界书失败, syncNpcStatesWorldbook, maybeInjectNpcStates };
 

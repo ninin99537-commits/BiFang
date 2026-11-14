@@ -1,13 +1,12 @@
 // 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
 import { pinia } from './pinia';
 import { getSettings } from './settings';
-import { loadData } from './快照';
 import { useStateStore } from './数据仓';
 import { captureConsole, useDebugStore } from './日志仓';
 import { updateNpcStates } from './update';
 import { 全部AI楼层, 正文过滤 } from './聊天取料';
 import { resetWorldbookCaches } from './worldbook';
-import { 报告世界书失败, syncNpcStatesWorldbook } from './worldbook-inject';
+import { maybeInjectNpcStates } from './worldbook-inject';
 import { mountFloatingOrb } from './悬浮球界面';
 import { setActivePinia } from 'pinia';
 import { createTavernHost } from './host';
@@ -70,15 +69,6 @@ async function handleMessageReceived(host: Host, message_id: number) {
     }
     await updateNpcStates(host);
 }
-function maybeInjectNpcStates(host: Host) {
-    const settings = getSettings(host);
-    const data = loadData(host);
-    // 总开关关掉 = 与「写入世界书: 关闭」同一件事: 把两本里彼方的条目删掉。
-    // 不这么做的话, 上一轮写进去的常驻条目会一直留在世界书里, 主AI 继续读一份过期状态。
-    const 目标 = settings.启用幕后 ? settings.更新.世界书写入 : '关闭';
-    // 同步失败要报到界面: 这条链路是 fire-and-forget, 吞掉异常等于"关掉了但没清干净"没人知道。
-    syncNpcStatesWorldbook(host, data, 目标, undefined, settings.更新.生理监测).catch(error => 报告世界书失败(host, error));
-}
 $(function () {
     // 状态快照存在楼层变量里, 随楼层存亡——删除楼层/重roll(新swipe页没有快照)时状态
     // 自动回退。因此事件处理只剩"刷新界面与世界书注入":
@@ -119,8 +109,8 @@ $(function () {
         refreshAfterFloorChange(host);
     });
     host.events.onGenerationAfterCommands(() => {
-        if (getSettings(host).启用幕后)
-            maybeInjectNpcStates(host);
+        // 与另外三个触发器对齐: **无条件**走一趟(理由见 worldbook-inject.ts 里 maybeInjectNpcStates 的注释)。
+        maybeInjectNpcStates(host);
     });
     // 读不到时返回 null, 此时首次 CHAT_CHANGED 事件直接刷新
     let lastChatId = host.chat.currentChatId();
