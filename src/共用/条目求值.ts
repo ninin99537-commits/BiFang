@@ -561,14 +561,16 @@ function findTopLevelElse(block: string): number {
 }
 
 /** EJS 模板环境缓存(prepareContext 会合并全部消息楼层变量, 成本不低; 30 秒内复用) */
-let ejsContextCache: { time: number; env: unknown } | null = null;
+let ejsContextCache: { time: number; env: Record<string, any> } | null = null;
 const EJS_CONTEXT_TTL = 30_000;
-async function 取EJS模板环境(环境: 求值环境): Promise<unknown> {
+/** 返回值形状与 `EjsTemplate.prepareContext` 一致(Record<string, any>); 初始化失败时返回 null,
+ *  调用方据此退化成"不渲染 EJS, 只留正文"(见 求值条目文本 的 ejsEnv 参数)。 */
+async function 取EJS模板环境(环境: 求值环境): Promise<Record<string, any> | null> {
     // 禁用缓存(烟火 reader): 每轮重新 prepareContext, 不复用上轮的楼层变量快照
     const 用缓存 = 环境.禁用缓存 !== true;
     if (用缓存 && ejsContextCache && Date.now() - ejsContextCache.time < EJS_CONTEXT_TTL)
         return ejsContextCache.env;
-    let env: unknown = null;
+    let env: Record<string, any> | null = null;
     try {
         env = await 环境.准备EJS模板环境();
     }

@@ -579,6 +579,16 @@ function parse_configuration(entry: Entry): (_env: any, argv: any) => webpack.Co
       ) {
         return callback();
       }
+      // 随包发布的三条: 以前它们和下面的 sass 一样走 CDN(module-import), 产物头部因此带着
+      // `import ... from 'https://testingcf.jsdelivr.net/...'` —— 运行时去公网取。
+      // 用户机器上没有外网、或 jsdelivr 不可达时, 整个插件连加载都过不去(不是某个功能坏,
+      // 是脚本文件解析失败), 所以这三个必须打进产物。
+      // 只放这三条: vue/jquery/lodash/toastr/yaml/zod 由酒馆页面以全局变量提供, 不能打进包
+      // (打进来会有两份实例, 与页面上的那份互不相认)。
+      const 随包发布 = new Set(['pinia', 'klona', 'json5']);
+      if (随包发布.has(request)) {
+        return callback();
+      }
       const global = {
         jquery: '$',
         lodash: '_',
