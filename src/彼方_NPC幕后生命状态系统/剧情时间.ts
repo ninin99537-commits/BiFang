@@ -13,7 +13,7 @@ import { 读日期, 写日期, 区间末 } from './剧情日期';
  * 剧情日期取自本次更新的剧情时间文本(storyTimeText, 形如 "2026-08-15 18:41 至 2026-08-15 18:48"),
  * 取结束时刻所在日期作为"今天", 前一天作为"昨天"。
  */
-function withStoryDate(text, storyTimeText) {
+function withStoryDate(text: string | null | undefined, storyTimeText: string): string | null | undefined {
     if (!text || !storyTimeText)
         return text;
     // "今天"取**区间末**(结束时刻所在那天)的日期 —— 日期怎么认归 剧情日期.ts, 这里不再自带一份正则。
@@ -38,7 +38,7 @@ function withStoryDate(text, storyTimeText) {
  * 中文年月日也顺手转成短横线: 提示词虽然要求用短横线, 模型仍常写"0137年6月12日 06:30",
  * 能认就认下来, 免得整轮没有时间基准。认不出的(如"天启三年")照样返回 null, 由调用方按"没有时间"兜底。
  * 用 setFullYear 构造, 避免 JS 对 0~99 年份自动映射到 1900+ */
-function parseStoryTime(text) {
+function parseStoryTime(text: unknown): number | null {
     const t = String(text ?? '')
         .trim()
         .replace(/年|月/g, '-')
@@ -56,14 +56,24 @@ function parseStoryTime(text) {
     const ts = d.getTime();
     return Number.isNaN(ts) ? null : ts;
 }
-/** 时间戳格式化为 "YYYY-MM-DD HH:mm"（年份至少 4 位补零, 如 0137-06-12 07:45; 更长的年份原样保留） */
-function fmtStoryTime(ts) {
-    const date = new Date(ts);
-    const pad = (n) => String(n).padStart(2, '0');
+/** 时间戳格式化为 "YYYY-MM-DD HH:mm"（年份至少 4 位补零, 如 0137-06-12 07:45; 更长的年份原样保留）。
+ *  签名收 `null | undefined`: 调用方常把 `parseStoryTimeRange(...).endTs` 直接递进来(它在"已判非空"的分支里),
+ *  类型上仍是 `number | null`。函数体用 `Number(ts)` 而不是 `new Date(ts)` —— 这正是 Date 构造器内部的
+ *  ToNumber: number 原样, `null` → 0(1970), `undefined` → NaN(Invalid Date), 与旧行为逐字相同。 */
+function fmtStoryTime(ts: number | null | undefined) {
+    const date = new Date(Number(ts));
+    const pad = (n: number) => String(n).padStart(2, '0');
     return `${String(date.getFullYear()).padStart(4, '0')}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
+/** 剧情时间区间: 原文 + 解析出的起止时间戳(解析不出的一侧为 null) */
+interface 剧情时间区间 {
+    text: string;
+    startTs: number | null;
+    endTs: number | null;
+}
+
 /** 解析 AI 返回的"剧情时间"（兼容字符串或 {开始, 结束} 对象）为起止时间戳 */
-function parseStoryTimeRange(raw) {
+function parseStoryTimeRange(raw: unknown): 剧情时间区间 {
     if (typeof raw === 'string') {
         const text = raw.trim();
         // 兼容 "开始 至 结束" 时间段字符串(如 mergeCard 收到的 storyTimeText):
@@ -78,8 +88,10 @@ function parseStoryTimeRange(raw) {
         return { text, startTs: ts, endTs: ts };
     }
     if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-        const start = String(raw['开始'] ?? '').trim();
-        const end = String(raw['结束'] ?? '').trim();
+        // AI 返回的 {开始, 结束}: 键名由提示词约定, 形状是"模型给的动态字段", 只取这两个已知键
+        const 区间 = raw as Record<string, unknown>;
+        const start = String(区间['开始'] ?? '').trim();
+        const end = String(区间['结束'] ?? '').trim();
         const text = start && end && start !== end ? `${start} 至 ${end}` : end || start;
         return { text, startTs: parseStoryTime(start), endTs: parseStoryTime(end) };
     }
