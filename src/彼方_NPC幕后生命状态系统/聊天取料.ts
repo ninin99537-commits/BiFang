@@ -5,8 +5,7 @@
 // 直接持有 host(读 persona / chat / macros), 这个袋子既不换来可测性(照旧要真 host), 也不换来解耦
 // (闭包全是对 host 的闭包), 只换来 7 个 any 参数和一个看不懂的签名。
 //
-// 现在两个文件都从这里拿, 谁也不用再包一层。带缓存的那份(全部 AI 楼层)也在这里, 因为缓存的生命周期
-// 与"换聊天要清"这条规矩本来就属于取料这件事。
+// 现在两个文件都从这里拿, 谁也不用再包一层。
 
 import { createTextFilter } from '../共用/楼层标签过滤';
 import type { Host } from './host';
@@ -85,45 +84,22 @@ export function 上下文(host: Host, replyMessageId: number, filter: (text: str
     }
 }
 
-/** 全部可见 AI 楼层(按"楼层号 + 内容指纹"缓存: 更新频率判定每轮都要数它, 全量扫太贵)。
+/** 全部可见 AI 楼层(纯读: 每次从当前聊天现取, 不缓存)。
  *
- * 为什么键里要有内容指纹: 只按 lastId 判新鲜会漏掉**内容变化**——编辑中间楼层、删中间楼层、
- * 切 swipe 都不改 lastId, 于是缓存常青, 消费方拿到编辑前的旧内容(更新频率就是这么算错的)。
- * 选"并进键"而不是"编辑/删除时清缓存": 清缓存要求每个改动入口都记得调一次,
- * 漏一个就静默复发(旧版 resetChatCaches 就是这么漏掉的); 指纹由读取侧自己算, 漏不掉。 */
-let allAssistantCache: { 键: string; messages: any[] } | null = null;
-
-/** 缓存键 = 楼层号 + 每楼内容指纹。只有"读到的内容整体没变"才复用。 */
-function 楼层缓存键(messages: any[], lastId: number): string {
-    let 指纹 = 0;
-    for (const message of messages) {
-        const 文本 = `${message.message_id}\u0000${String(message.message ?? '')}`;
-        for (let i = 0; i < 文本.length; i++)
-            指纹 = ((指纹 << 5) - 指纹 + 文本.charCodeAt(i)) | 0;
-    }
-    return `${lastId}\u0000${messages.length}\u0000${指纹}`;
-}
-
+ * 不缓存的理由: 唯一调用点是更新频率判定, 每来一条新消息才调一次, 那时 lastId 必变;
+ * 而按 lastId 判新鲜会漏掉**内容变化**(编辑中间楼层、删中间楼层、切 swipe 都不改 lastId),
+ * 缓存里于是留着编辑前的旧内容。换成按内容指纹判新鲜则每次都得把全部楼层读一遍再算指纹,
+ * 省不下真实读取。缓存既然从未命中、命中也不省 I/O, 就不留这一层。 */
 export function 全部AI楼层(host: Host) {
     try {
         const lastId = host.chat.lastMessageId();
         if (lastId <= 0)
             return [];
-        const messages = host.chat.messages(`0-${lastId}`, { role: 'assistant' }).filter(message => !message.is_hidden);
-        const 键 = 楼层缓存键(messages, lastId);
-        if (allAssistantCache && allAssistantCache.键 === 键)
-            return allAssistantCache.messages;
-        allAssistantCache = { 键, messages };
-        return messages;
+        return host.chat.messages(`0-${lastId}`, { role: 'assistant' }).filter(message => !message.is_hidden);
     }
     catch {
         return [];
     }
-}
-
-/** 换聊天要清: 两个聊天的楼层号可能相同, 不清会用到上一个聊天的内容 */
-export function 重置聊天缓存(): void {
-    allAssistantCache = null;
 }
 
 /** 正文过滤器(标签过滤): 单处构造, 调用方按需传 settings.标签 */

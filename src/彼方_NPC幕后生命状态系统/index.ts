@@ -5,7 +5,7 @@ import { loadData } from './快照';
 import { useStateStore } from './数据仓';
 import { captureConsole, useDebugStore } from './日志仓';
 import { updateNpcStates } from './update';
-import { 全部AI楼层, 重置聊天缓存, 正文过滤 } from './聊天取料';
+import { 全部AI楼层, 正文过滤 } from './聊天取料';
 import { resetWorldbookCaches } from './worldbook';
 import { 报告世界书失败, syncNpcStatesWorldbook } from './worldbook-inject';
 import { mountFloatingOrb } from './悬浮球界面';
@@ -24,7 +24,6 @@ setActivePinia(pinia);
 captureConsole();
 function handleChatChanged(host: Host) {
     // 切聊天只刷新数据与注入，不再整页重载，避免悬浮球闪烁消失
-    重置聊天缓存();
     resetWorldbookCaches();
     useStateStore().reload(host);
     useDebugStore().clear();
@@ -60,9 +59,8 @@ async function handleMessageReceived(host: Host, message_id: number) {
     }
     const frequency = Math.max(1, settings.更新.更新频率);
     if (frequency > 1) {
-        // 用带缓存的全部 AI 楼层列表(getAllAssistantMessages: 已排除隐藏楼层,
-        // 按 lastId 缓存避免每次都全量拉取), 与 getRecentAssistantMessages 的
-        // 可见口径一致——用 getChatMessages 全量扫会包含隐藏楼层导致频率算错
+        // 全部 AI 楼层列表: 已排除隐藏楼层, 与 最近回复 的可见口径一致
+        // ——用 getChatMessages 全量扫会包含隐藏楼层导致频率算错
         const assistantCount = 全部AI楼层(host).length;
         if (assistantCount % frequency !== 0)
             return;
