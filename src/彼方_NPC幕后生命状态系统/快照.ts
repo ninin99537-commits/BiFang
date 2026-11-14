@@ -23,19 +23,38 @@ const DATA_VERSION = 3;
 /** 楼层快照最多保留的份数: 写入新快照时把更早楼层的快照物理删除, 防止聊天文件随楼层无限膨胀 */
 const SNAPSHOT_LIMIT = 10;
 
+/** 聊天变量 `彼方` 里存的那点轻量元数据: 哪些楼层有快照(索引) + 清空层。状态本体不在这里。 */
+interface 快照元数据 {
+    版本: number;
+    快照楼层: number[];
+    清空层: number;
+}
+
+/** 一份楼层快照的完整形状(整体写进楼层变量, 键名 `彼方`)。`楼层` 是写入时锚定的楼层号, 读取时用来判断编号是否对得上。 */
+interface 快照载荷 {
+    版本: number;
+    楼层: number;
+    楼层hash: string;
+    处理到楼层: number;
+    名单: string[];
+    NPC: Record<string, Record<string, any>>;
+    统计: { 更新次数: number; 最后更新: number };
+    剧情时间: string;
+}
+
 /** 字符串滚动hash(楼层内容指纹) */
-function hashString(text) {
+function hashString(text: string) {
     let hash = 0;
     for (let i = 0; i < text.length; i++) {
         hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
     }
     return String(hash);
 }
-function emptyMeta() {
+function emptyMeta(): 快照元数据 {
     return { 版本: DATA_VERSION, 快照楼层: [], 清空层: 0 };
 }
 /** 写元数据; 返回是否写成功。`静默` 由调用方在"自己会统一提示"时打开(避免一次失败弹两条)。 */
-function saveMeta(host: 快照宿主, meta, 静默 = false) {
+function saveMeta(host: 快照宿主, meta: 快照元数据, 静默 = false) {
     try {
         // 整体赋值该键(避免 insertOrAssign 深合并残留旧字段), 其他聊天变量键不动
         host.vars.update(variables => {
@@ -51,8 +70,8 @@ function saveMeta(host: 快照宿主, meta, 静默 = false) {
         return false;
     }
 }
-function loadMeta(host: 快照宿主) {
-    let raw = null;
+function loadMeta(host: 快照宿主): 快照元数据 {
+    let raw: Record<string, any> | null = null;
     try {
         raw = host.vars.get({ type: 'chat' })?.[STORAGE_KEY] ?? null;
     }
@@ -64,7 +83,7 @@ function loadMeta(host: 快照宿主) {
     if (Array.isArray(raw.快照楼层)) {
         return {
             版本: DATA_VERSION,
-            快照楼层: raw.快照楼层.filter(floor => typeof floor === 'number' && Number.isFinite(floor)),
+            快照楼层: raw.快照楼层.filter((floor: unknown) => typeof floor === 'number' && Number.isFinite(floor)),
             清空层: typeof raw.清空层 === 'number' ? raw.清空层 : 0,
         };
     }
@@ -90,7 +109,7 @@ function listAssistantFloors(host: 快照宿主) {
  * - 旧当前状态(名单/NPC等) → 写入最后一条AI楼层(与最新历史快照同层时覆盖它, 它就是最新一次更新的结果);
  * - **全部写入成功后才用新元数据覆盖旧结构**; 任一步失败则保留旧结构, 下次访问时重试, 不丢数据。
  */
-function migrateLegacyData(host: 快照宿主, raw) {
+function migrateLegacyData(host: 快照宿主, raw: Record<string, any>): 快照元数据 {
     const meta = emptyMeta();
     meta.清空层 = typeof raw.清空层 === 'number' ? raw.清空层 : 0;
     // 兜底备份: 迁移前后无论发生什么(部分失败后被新快照覆盖等), 原始旧数据都有一份完整副本可找回
@@ -105,12 +124,12 @@ function migrateLegacyData(host: 快照宿主, raw) {
     }
     try {
         const assistants = listAssistantFloors(host);
-        const floorOfCount = (count) => {
+        const floorOfCount = (count: unknown): number | null => {
             // 旧快照的「层数」是第 N 条 AI 回复(从1起), 换算为楼层号
             const index = (typeof count === 'number' ? count : 0) - 1;
             return index >= 0 && index < assistants.length ? assistants[index].message_id : null;
         };
-        const pending = [];
+        const pending: Array<{ floorId: number; processedFloor: number; data: Record<string, any> }> = [];
         for (const legacy of (Array.isArray(raw.快照) ? raw.快照 : [])) {
             if (!legacy || typeof legacy !== 'object')
                 continue;
@@ -224,14 +243,14 @@ function emptyData(): 彼方数据 {
  * - 楼层内容hash与快照记录不一致(楼层被编辑) → 该快照作废, 继续往前;
  * 命中或扫尽后返回状态; 一个快照都没有时返回空状态(清空层仍生效)。
  */
-function loadData(host: 快照宿主) {
+function loadData(host: 快照宿主): 彼方数据 {
     try {
         const meta = loadMeta(host);
         const floors = [...meta.快照楼层].sort((a, b) => a - b);
-        const missingFloors = [];
+        const missingFloors: number[] = [];
         /** 编号对不上的快照(楼层被大段剪过 → 之后所有楼层号重排), 留作认领候选 */
-        const 编号对不上: Array<{ floorId: number, snapshot: any }> = [];
-        const 成数据 = (snapshot: any, floorId: number) => ({
+        const 编号对不上: Array<{ floorId: number, snapshot: Record<string, any> }> = [];
+        const 成数据 = (snapshot: Record<string, any>, floorId: number): 彼方数据 => ({
             ...emptyData(),
             名单: Array.isArray(snapshot.名单) ? [...snapshot.名单] : [],
             NPC: snapshot.NPC && typeof snapshot.NPC === 'object' ? { ...snapshot.NPC } : {},
@@ -283,7 +302,7 @@ function loadData(host: 快照宿主) {
         // 认领编号最大的那份(离现在最近), 并把 楼层/处理到楼层 改写成本楼: 之后一切自洽, 不会反复触发。
         // 注: 处理到楼层 只写不读(不参与任何判定), 所以不需要知道"到底删了几层"—— 多次删除也一样能认。
         // 情形一: 索引里的编号还在, 但那一楼上的快照记的是旧编号(删的是中间/尾部, 索引没被清)
-        let 候选 = 编号对不上.sort((a, b) => b.floorId - a.floorId)[0] ?? null;
+        let 候选: { floorId: number, snapshot: Record<string, any> } | null = 编号对不上.sort((a, b) => b.floorId - a.floorId)[0] ?? null;
         // 情形二(更常见): 索引里的编号**整批都不存在了**(删的是前段), 索引已经失去意义 ——
         // 那就从最新楼层往下找第一份"还躺在这条消息身上"的快照: 它按写入时间就是最近那份。
         if (!候选) {
@@ -305,7 +324,7 @@ function loadData(host: 快照宿主) {
         }
         if (候选) {
             const { floorId, snapshot } = 候选;
-            const 修正 = { ...snapshot, 楼层: floorId, 处理到楼层: floorId };
+            const 修正: Record<string, any> = { ...snapshot, 楼层: floorId, 处理到楼层: floorId };
             try {
                 host.vars.insertOrAssign({ [STORAGE_KEY]: 修正 }, { type: 'message', message_id: floorId });
             }
@@ -333,7 +352,7 @@ function loadData(host: 快照宿主) {
     }
 }
 /** 构造楼层快照数据(楼层不存在时返回 null); 楼层hash取该楼层当前内容, 供读取时校验楼层是否被编辑 */
-function buildSnapshotPayload(host: 快照宿主, data, anchorFloor, processedFloor) {
+function buildSnapshotPayload(host: 快照宿主, data: 彼方数据, anchorFloor: number, processedFloor: number): 快照载荷 | null {
     let message = null;
     try {
         message = host.chat.messages(anchorFloor)[0] ?? null;
@@ -348,7 +367,7 @@ function buildSnapshotPayload(host: 快照宿主, data, anchorFloor, processedFl
     // - 人设参考: 每轮更新动态注入的世界书人设(由 update.ts 按 NPC 名字激活), 不该入库
     // - 恋爱事件: 临时的结构化事件载荷(合并时已被消费删除), 防御性清理, 绝不入库
     // - 卡字段计数: 旧版调试字段, 已从数据流移除
-    const cleanedNpc = {};
+    const cleanedNpc: Record<string, Record<string, any>> = {};
     for (const [name, card] of Object.entries(data.NPC ?? {})) {
         if (!card || typeof card !== 'object')
             continue;
@@ -370,7 +389,7 @@ function buildSnapshotPayload(host: 快照宿主, data, anchorFloor, processedFl
     };
 }
 /** 把快照整体写入楼层变量(当前swipe页): 整体赋值该键避免深合并残留, 同楼层其他键(其他脚本的变量)不动 */
-function writeFloorVariables(host: 快照宿主, payload) {
+function writeFloorVariables(host: 快照宿主, payload: 快照载荷) {
     host.vars.update(variables => {
         variables[STORAGE_KEY] = payload;
         return variables;
@@ -386,7 +405,7 @@ function writeFloorVariables(host: 快照宿主, payload) {
  * @param consumeClearLayer 成功写入后是否把「清空层」清零(自动更新成功后清零=清空层只在首次更新生效)
  * @param metaInput 调用方已持有的元数据; 不传则内部读取
  */
-function writeStateSnapshot(host: 快照宿主, data, anchorFloor, processedFloor, consumeClearLayer, metaInput = null) {
+function writeStateSnapshot(host: 快照宿主, data: 彼方数据, anchorFloor: number, processedFloor: number, consumeClearLayer: boolean, metaInput: 快照元数据 | null = null): boolean {
     const meta = metaInput ?? loadMeta(host);
     const payload = buildSnapshotPayload(host, data, anchorFloor, processedFloor);
     if (!payload) {
@@ -426,7 +445,7 @@ function writeStateSnapshot(host: 快照宿主, data, anchorFloor, processedFloo
  * **返回值就是"落盘了没有"**: 调用方必须据此决定要不要提交给界面、要不要提示。
  * 提示不在这一层弹——同一句话在"保存"与"清空"两条路上的说法不同, 由调用方出。
  */
-function saveData(host: 快照宿主, data): boolean {
+function saveData(host: 快照宿主, data: 彼方数据): boolean {
     try {
         const anchor = host.chat.lastMessageId();
         return writeStateSnapshot(host, data, anchor, typeof data.处理到楼层 === 'number' ? data.处理到楼层 : 0, false);
@@ -437,13 +456,13 @@ function saveData(host: 快照宿主, data): boolean {
     }
 }
 /** 单独更新清空层(不动快照): 清空层自适应下移等场景使用 */
-function updateClearLayer(host: 快照宿主, clearLayer) {
+function updateClearLayer(host: 快照宿主, clearLayer: number) {
     const meta = loadMeta(host);
     meta.清空层 = clearLayer;
     saveMeta(host, meta);
 }
 /** 撤销指定楼层的快照(手动「重新填写」用): 从索引移除并物理删除, 状态自动回落到更早楼层 */
-function discardSnapshotAt(host: 快照宿主, floorId) {
+function discardSnapshotAt(host: 快照宿主, floorId: number) {
     const meta = loadMeta(host);
     if (!meta.快照楼层.includes(floorId))
         return false;
