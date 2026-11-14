@@ -16,7 +16,7 @@ import type { 空值语义 } from './卡合并';
 import { clearAllData, emptyData, saveData } from './快照';
 import type { 彼方数据, 清空结果 } from './快照';
 import { useStateStore } from './数据仓';
-import { syncNpcStatesWorldbook } from './worldbook-inject';
+import { 世界书失败文案, syncNpcStatesWorldbook } from './worldbook-inject';
 import type { 世界书写入目标 } from './settings';
 import { toastWarning } from './toast';
 import { 合并台账, 读取台账, 台账字段, 改一条事务, 合法状态 } from './事务台账';
@@ -118,6 +118,7 @@ function 套用草稿(数据: 彼方数据, 旧卡: Record<string, any> | undefi
  * 世界书是**派生视图**: 它失败不改变"数据已落盘"这个结论, 所以不并进 `变更返回.失败`
  * (那会让界面把"存好了"报成"没存")。但也不能像以前那样只 `console.error` ——
  * 玩家看到的状态卡与世界书里的条目会静默分叉, 于是这里报一条警告。
+ * 文案走 `世界书失败文案`, 与 `报告世界书失败` 同一句: 同一种失败, 玩家读到的话该一样。
  */
 function 同步世界书(数据: 彼方数据, 环境: 变更环境) {
     if (环境.世界书写入 === '关闭')
@@ -125,7 +126,7 @@ function 同步世界书(数据: 彼方数据, 环境: 变更环境) {
     const 有NPC = Object.keys(数据.NPC ?? {}).length > 0;
     const 报错 = (error: unknown) => {
         console.error('[彼方] 同步世界书条目失败:', error);
-        toastWarning(`彼方: 世界书条目没同步成功 ${error instanceof Error ? error.message : String(error)}`, '彼方');
+        toastWarning(世界书失败文案(error), '彼方');
     };
     try {
         const 结果: any = 环境.同步世界书(数据, 有NPC);

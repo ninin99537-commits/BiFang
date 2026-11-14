@@ -7,7 +7,7 @@ import { captureConsole, useDebugStore } from './日志仓';
 import { updateNpcStates } from './update';
 import { 全部AI楼层, 重置聊天缓存, 正文过滤 } from './聊天取料';
 import { resetWorldbookCaches } from './worldbook';
-import { syncNpcStatesWorldbook } from './worldbook-inject';
+import { 报告世界书失败, syncNpcStatesWorldbook } from './worldbook-inject';
 import { mountFloatingOrb } from './悬浮球界面';
 import { setActivePinia } from 'pinia';
 import { createTavernHost } from './host';
@@ -76,9 +76,7 @@ function maybeInjectNpcStates(host: Host) {
     // 不这么做的话, 上一轮写进去的常驻条目会一直留在世界书里, 主AI 继续读一份过期状态。
     const 目标 = settings.启用幕后 ? settings.更新.世界书写入 : '关闭';
     // 同步失败要报到界面: 这条链路是 fire-and-forget, 吞掉异常等于"关掉了但没清干净"没人知道。
-    syncNpcStatesWorldbook(host, data, 目标, undefined, settings.更新.生理监测).catch(error => {
-        host.toast.warn(`彼方: 同步世界书条目失败 ${error instanceof Error ? error.message : String(error)}`, '彼方');
-    });
+    syncNpcStatesWorldbook(host, data, 目标, undefined, settings.更新.生理监测).catch(error => 报告世界书失败(host, error));
 }
 $(function () {
     // 状态快照存在楼层变量里, 随楼层存亡——删除楼层/重roll(新swipe页没有快照)时状态

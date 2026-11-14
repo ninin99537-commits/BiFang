@@ -1,7 +1,7 @@
 // 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
 import { chatCompletion } from './api';
 import { getSettings } from './settings';
-import { syncNpcStatesWorldbook } from './worldbook-inject';
+import { 报告世界书失败, syncNpcStatesWorldbook } from './worldbook-inject';
 import { writeStateSnapshot } from './快照';
 import { useStateStore } from './数据仓';
 import { useDebugStore } from './日志仓';
@@ -87,11 +87,10 @@ async function updateNpcStates(host: Host, force = false) {
         else {
             stateStore.data = newData;
         }
-        // 同步幕后状态到世界书(蓝灯常驻条目), 供主AI与数据库剧情推进读取
+        // 同步幕后状态到世界书(蓝灯常驻条目), 供主AI与数据库剧情推进读取。
+        // 失败必须让玩家看见: 这条链路跑在 AI 更新之后, 玩家最容易误以为"状态更新成功 = 世界书也更新了"。
         if (settings.更新.世界书写入 !== '关闭') {
-            syncNpcStatesWorldbook(host, newData, settings.更新.世界书写入, 摘要.未回票, settings.更新.生理监测).catch(error => {
-                console.error('[彼方] 同步世界书条目失败:', error);
-            });
+            syncNpcStatesWorldbook(host, newData, settings.更新.世界书写入, 摘要.未回票, settings.更新.生理监测).catch(error => 报告世界书失败(host, error));
         }
         timing.收尾 = Date.now() - finalizeStart;
         const secs = (ms) => (ms / 1000).toFixed(1);
