@@ -10,6 +10,7 @@ import { 建提示条 } from '../src/共用/提示条';
 
 let pass = 0;
 let fail = 0;
+let 跳过 = 0;
 function check(label: string, actual: unknown, expected: unknown) {
   if (JSON.stringify(actual) === JSON.stringify(expected)) {
     pass++;
@@ -126,19 +127,30 @@ console.log('\n[7] 只压自己那一家(别越界: 三家是独立脚本, 各�
   ok('也不写父页面标记', !提示条源.includes('data-面板开着'));
 }
 
-console.log('\n[8] 剧情导演的球气泡: 面板一开就别再挂(用户看到的就是它)');
+console.log('\n[8] 剧情导演的球气泡: 面板一开就别再挂(用户看到的就是它) —— 本仓无该项目则跳过(每仓一项目)');
 {
   const fs = await import('node:fs');
-  const 面板 = fs.readFileSync('src/剧情导演/悬浮球界面.vue', 'utf8');
-  ok('面板开着时不显示气泡', /function 显示球气泡\(\) \{[\s\S]{0,160}if \(panelOpen\.value\) return;/.test(面板));
-  ok('面板一开就把已有气泡收掉', /watch\(panelOpen, 开 => \{[\s\S]{0,80}if \(开\) 藏起球气泡\(\);/.test(面板));
+  let 面板 = '';
+  let 跳过本段 = false;
+  try {
+    面板 = fs.readFileSync('src/剧情导演/悬浮球界面.vue', 'utf8');
+  } catch {
+    跳过本段 = true;
+    跳过 += 2;
+    console.log('  (跳过 2 条: 本仓无 剧情导演 源码 —— 导演侧断言在含该项目的仓里才跑)');
+  }
+  if (!跳过本段) {
+    ok('面板开着时不显示气泡', /function 显示球气泡\(\) \{[\s\S]{0,160}if \(panelOpen\.value\) return;/.test(面板));
+    ok('面板一开就把已有气泡收掉', /watch\(panelOpen, 开 => \{[\s\S]{0,80}if \(开\) 藏起球气泡\(\);/.test(面板));
+  }
 }
 
-console.log('\n[9] 三个插件的接线(共用一份, 别剪线)');
+console.log('\n[9] 插件接线(共用一份, 别剪线) —— 只遍历本仓实际存在的项目(每仓一项目)');
 {
   const fs = await import('node:fs');
   // 用例从仓库根跑(与 pnpm test 一致); 打包产物在 tests/.build/, 所以不能按 import.meta.url 找源码
   const 读 = (p: string) => fs.readFileSync(p, 'utf8');
+  const 在 = (p: string) => fs.existsSync(p);
   const 提示条源 = 读('src/共用/提示条.ts');
   const 面板源 = 读('src/共用/面板机制.ts');
   ok('出口里有 setToastSuppressed', /setToastSuppressed:\s*\(suppressed: boolean\)/.test(提示条源));
@@ -149,16 +161,31 @@ console.log('\n[9] 三个插件的接线(共用一份, 别剪线)');
   ok('面板机制在 panelOpen 变化时调它', /watch\(panelOpen, 开 => 配置\.提示条\.设抑制\?\.\(开\)\)/.test(面板源));
 
   for (const 包 of ['剧情导演', '彼方_NPC幕后生命状态系统', '烟火_世界运转']) {
+    if (!在(`src/${包}/toast.ts`)) {
+      跳过 += 1;
+      console.log(`  (跳过 1 条: 本仓无 ${包} —— toast 导出断言在含该项目的仓里才跑)`);
+      continue;
+    }
     ok(`${包} 的 toast 导出它`, /setToastSuppressed = 提示条\.setToastSuppressed/.test(读(`src/${包}/toast.ts`)));
   }
   for (const 面 of ['剧情导演', '烟火_世界运转']) {
+    if (!在(`src/${面}/悬浮球界面.vue`)) {
+      跳过 += 1;
+      console.log(`  (跳过 1 条: 本仓无 ${面} —— 面板机制接线断言在含该项目的仓里才跑)`);
+      continue;
+    }
     ok(`${面} 把抑制接进面板机制`, /设抑制: setToastSuppressed/.test(读(`src/${面}/悬浮球界面.vue`)));
   }
   for (const 面 of ['彼方_NPC幕后生命状态系统']) {
+    if (!在(`src/${面}/悬浮球界面.vue`)) {
+      跳过 += 1;
+      console.log(`  (跳过 1 条: 本仓无 ${面} —— panelOpen 自盯断言在含该项目的仓里才跑)`);
+      continue;
+    }
     ok(`${面} 自己盯 panelOpen`, /watch\(panelOpen, 开 => setToastSuppressed\(开\)\)/.test(读(`src/${面}/悬浮球界面.vue`)));
   }
 }
 
-console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
+console.log(`\n结果: ${pass} 通过, ${fail} 失败${跳过 > 0 ? `（跳过 ${跳过} 条: 本仓无对应插件源码）` : ''}`);
 process.exit(fail > 0 ? 1 : 0);
 

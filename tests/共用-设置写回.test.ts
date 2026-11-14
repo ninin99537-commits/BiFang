@@ -10,6 +10,8 @@
 //   ① 四个纯函数的行为(合并/差异/删键/三方基线) —— 它们是纪律本身;
 //   ② 闸门的四条语义 —— 尤其"从没读到过就一个字节都不写"(P1 那次丢接口密钥的教训)。
 import { createPinia, setActivePinia } from 'pinia';
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import {
   是普通对象,
   同一份,
@@ -20,13 +22,20 @@ import {
   建写回闸门,
 } from '../src/共用/设置写回';
 import 彼方设置源 from '../src/彼方_NPC幕后生命状态系统/settings.ts?raw';
-import 导演设置源 from '../src/剧情导演/settings.ts?raw';
+
+// 剧情导演源码**运行时条件加载**: 每仓只放自己的项目(用户裁定)——BiFang 等投影仓没有 src/剧情导演/,
+// 顶层静态 `import ... ?raw` 会连打包都过不去。文件在(工作区)→ 照旧断言; 不在 → [7] 的导演断言跳过
+// 并在结果行体现(不静默)。这同时守住两条: ①每仓一项目; ②测试不能靠别的仓的源码活着。
+const 导演设置路径 = path.join('src', '剧情导演', 'settings.ts');
+const 导演源在 = existsSync(导演设置路径);
+const 导演设置源 = 导演源在 ? readFileSync(导演设置路径, 'utf8') : '';
 
 (globalThis as any).localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 setActivePinia(createPinia());
 
 let pass = 0;
 let fail = 0;
+let 跳过 = 0;
 function check(label: string, actual: unknown, expected: unknown) {
   if (JSON.stringify(actual) === JSON.stringify(expected)) {
     pass++;
@@ -191,14 +200,20 @@ console.log('\n[6] 彼方接线: 整键覆盖那条路已经不存在了');
 console.log('\n[7] 接缝成立: 两个适配器(彼方 + 剧情导演), 各留各的语义');
 {
   // 一个适配器 = 假设性接缝, 两个 = 真接缝。这条钉的就是"两个"。
-  ok('剧情导演也走共用闸门', 导演设置源.includes("from '../共用/设置写回'") && 导演设置源.includes('建写回闸门('));
-  ok('剧情导演不再自带深合并/取差异', !导演设置源.includes('function 深合并') && !导演设置源.includes('function 取差异'));
-  // 两家的语义差口写在**选项**里, 不是各写一份实现:
-  //   彼方有"删掉一项预设"的界面 → 需要按路径删;
-  //   剧情导演的设置每次由 schema 补满、键不会消失 → 关掉删除, 写回语义与它原来逐字一致。
-  ok('剧情导演关掉了"收集删除"', /建写回闸门\([\s\S]{0,600}收集删除:\s*false/.test(导演设置源));
+  ok('彼方走共用闸门(本仓必有)', 彼方设置源.includes("from '../共用/设置写回'") && 彼方设置源.includes('建写回闸门('));
   ok('彼方用的是默认(收集删除)', !/建写回闸门\([\s\S]{0,600}收集删除:/.test(彼方设置源));
+  if (!导演源在) {
+    跳过 += 3;
+    console.log('  (跳过 3 条: 本仓无 剧情导演 源码 —— 导演侧接缝断言在含该项目的仓里才跑)');
+  } else {
+    ok('剧情导演也走共用闸门', 导演设置源.includes("from '../共用/设置写回'") && 导演设置源.includes('建写回闸门('));
+    ok('剧情导演不再自带深合并/取差异', !导演设置源.includes('function 深合并') && !导演设置源.includes('function 取差异'));
+    // 两家的语义差口写在**选项**里, 不是各写一份实现:
+    //   彼方有"删掉一项预设"的界面 → 需要按路径删;
+    //   剧情导演的设置每次由 schema 补满、键不会消失 → 关掉删除, 写回语义与它原来逐字一致。
+    ok('剧情导演关掉了"收集删除"', /建写回闸门\([\s\S]{0,600}收集删除:\s*false/.test(导演设置源));
+  }
 }
 
-console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
+console.log(`\n结果: ${pass} 通过, ${fail} 失败${跳过 > 0 ? `（跳过 ${跳过} 条: 本仓无 剧情导演 源码）` : ''}`);
 if (fail > 0) process.exit(1);
