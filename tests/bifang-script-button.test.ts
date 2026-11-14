@@ -81,8 +81,10 @@ console.log('\n[5] Vue 侧: 挂到正确的 window / 卸载时删除 / 真的打
   ok('不再用裸 window 监听事件', !界面源.includes("window.addEventListener('bf-open-panel'"));
   // 打开动作统一收在 展开面板(): 球 / 脚本按钮 / 看门狗之后的重试都走它, 顺手记一行耗时
   ok('按钮入口转给 展开面板', /function 打开面板入口\(\) \{\s*\n\s*展开面板\('脚本按钮'\)/.test(界面源));
-  ok('展开面板把 panelOpen 置 true', /function 展开面板\(来源: string\): void \{[\s\S]{0,120}panelOpen\.value = true/.test(界面源));
-  ok('展开面板立刻 applyFrame', /function 展开面板\(来源: string\): void \{[\s\S]{0,120}applyFrame\(\)/.test(界面源));
+  // CRLF 检出时每行多一个 \r, 字符窗口会失真 —— 输入先归一为 LF, 窗口严格度不变、不被换行符骗
+  const 界面源归一 = 界面源.replace(/\r\n/g, '\n');
+  ok('展开面板把 panelOpen 置 true', /function 展开面板\(来源: string\): void \{[\s\S]{0,120}panelOpen\.value = true/.test(界面源归一));
+  ok('展开面板立刻 applyFrame', /function 展开面板\(来源: string\): void \{[\s\S]{0,120}applyFrame\(\)/.test(界面源归一));
 }
 
 console.log(fail === 0 ? `\n彼方脚本按钮: 全部通过 (${pass} 断言)` : `\n彼方脚本按钮: ${fail} 失败, ${pass} 通过`);
