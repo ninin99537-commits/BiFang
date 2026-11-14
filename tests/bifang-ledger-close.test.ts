@@ -197,7 +197,7 @@ console.log('\n[9] applyUpdate 集成: mergeCard 走同一口径, 台账输出.�
   let 摘要: any;
   try {
     // 剧情已过 12 天: T2 挂满 7 天进入「待核对」, 本轮没表态 → 未回票
-    结果 = applyUpdate(数据, { 剧情时间: { 开始: '2025-09-30 10:00', 结束: '2025-09-30 10:30' }, 测试: { 未完成事项: [{ 编号: 'T1', 状态: '已作废', 结果: '不去了' }] } }, null, null, true);
+    结果 = applyUpdate(数据, { 剧情时间: { 开始: '2025-09-30 10:00', 结束: '2025-09-30 10:30' }, 测试: { 未完成事项: [{ 编号: 'T1', 状态: '已作废', 结果: '不去了' }] } }, null, true);
     摘要 = 结果.摘要;
     结果 = 结果.数据;
   }
@@ -218,7 +218,7 @@ console.log('\n[9] applyUpdate 集成: mergeCard 走同一口径, 台账输出.�
   console.info = (...a: any[]) => 收集乙.push(a.map(String).join(' '));
   console.warn = (...a: any[]) => 收集乙.push(a.map(String).join(' '));
   try {
-    applyUpdate(数据乙, { 测试: { 未完成事项: [{ 内容: '买菜' }] } }, null, null, true);
+    applyUpdate(数据乙, { 测试: { 未完成事项: [{ 内容: '买菜' }] } }, null, true);
   }
   finally {
     console.info = 原info;
@@ -286,7 +286,7 @@ console.log('\n[13] v3.1 作废无原因温度计: 只数"本轮新变成已作�
     console.info = (...a: any[]) => 收集.push(a.map(String).join(' '));
     console.warn = (...a: any[]) => 收集.push(a.map(String).join(' '));
     try {
-      applyUpdate(数据, { 测试: { 未完成事项: [载荷] } }, null, null, true);
+      applyUpdate(数据, { 测试: { 未完成事项: [载荷] } }, null, true);
     }
     finally {
       console.info = 原info;
