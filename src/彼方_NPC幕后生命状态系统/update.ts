@@ -88,15 +88,18 @@ async function updateNpcStates(host: Host, force = false) {
         else {
             stateStore.data = newData;
             // 写入失败要出声: 玩家最容易误以为"更新完成 = 状态已保存"。
-            // 楼层不存在时 buildSnapshotPayload 已经 warn 过, 这里只补"锚点冲突"这一种。
+            // 失败有三种原因, 这里按"锚点冲突 / 其余"两档说 —— 两种都要弹, 且**同一次失败只弹一条**:
+            //   · 锚点冲突(手动保存过更新的快照): 下面第一条;
+            //   · 楼层不存在 / 写变量抛错: 第二条。这两种 writeStateSnapshot 只在 console 里记,
+            //     玩家看不到 —— 于是"更新成功"的绿字后面藏着一份没存下的状态。
             const 冲突楼层 = 锚点之后的快照楼层(host, anchorFloor);
-            if (冲突楼层.length > 0) {
-                const 说明 = `本轮结果因手动修改未保存: 楼层 #${冲突楼层.join('、#')} 上有更新的快照, 本轮锚点 #${anchorFloor} 之后已有它。`;
-                debugStore.record({ time: Date.now(), error: 说明 });
-                // 走 host.toast 而不是直连 toastWarning: 与 报告世界书失败 同一口径 ——
-                // 两者都是"后台链路的结果没能落地", 玩家必须知道, 且不该由纯逻辑层自己弹提示。
-                host.toast.warn(`彼方: ${说明}`, '彼方');
-            }
+            const 说明 = 冲突楼层.length > 0
+                ? `本轮结果因手动修改未保存: 楼层 #${冲突楼层.join('、#')} 上有更新的快照, 本轮锚点 #${anchorFloor} 之后已有它。`
+                : `本轮状态没能存进楼层 #${anchorFloor}(楼层可能已被删除或变量写入失败), 界面上的状态不会被保存, 请重新更新一次。`;
+            debugStore.record({ time: Date.now(), error: 说明 });
+            // 走 host.toast 而不是直连 toastWarning: 与 报告世界书失败 同一口径 ——
+            // 两者都是"后台链路的结果没能落地", 玩家必须知道, 且不该由纯逻辑层自己弹提示。
+            host.toast.warn(`彼方: ${说明}`, '彼方');
         }
         // 同步幕后状态到世界书(蓝灯常驻条目), 供主AI与数据库剧情推进读取。
         // 失败必须让玩家看见: 这条链路跑在 AI 更新之后, 玩家最容易误以为"状态更新成功 = 世界书也更新了"。

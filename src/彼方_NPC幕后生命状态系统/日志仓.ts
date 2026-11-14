@@ -6,6 +6,12 @@
 // 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
+import type { 规模数据 } from './规模';
+
+/** 规模行文本: **格式是需求钉死的契约**(日志页顶部固定一行), 改这里等于改契约。 */
+function 格式化规模行(规模: 规模数据): string {
+    return `本轮追踪 ${规模.追踪} 个 NPC · 状态卡合计 ${规模.卡片字数} 字 · 世界书 ${规模.世界书条数} 条 / ${规模.世界书字数} 字 · 输入约 ${规模.估算token} token`;
+}
 
 /** 一条更新日志。字段全部可选: record() 是"补丁式"写入(见下面 base 的合并逻辑),
  *  调用方每次只给发生变化的那几项(如 update.ts 成功时只给 updatedNpcs/removedNpcs,
@@ -20,6 +26,10 @@ interface 更新日志 {
     request: string;
     response: string;
     error: string;
+    /** 本轮注入规模; 只有"组装过请求"的那一轮才有(失败/中断的轮次可能没有) */
+    规模: 规模数据 | null;
+    /** 规模数据渲染成的那一行(由 record() 统一派生, 格式只在这里写一次) */
+    规模行: string;
 }
 
 /** 控制台里的一行(日志页按 type 上色, 所以 type 保留原始方法名) */
@@ -42,8 +52,19 @@ const useDebugStore = defineStore('bifang-debug', () => {
             request: '',
             response: '',
             error: '',
+            规模: null,
+            规模行: '',
         };
-        log.value = { ...base, ...(log.value ?? {}), ...partial, time: partial.time ?? Date.now() };
+        // 规模行只由 规模 派生(唯一一处拼文本): 传了 规模 就必然有对应的一行, 两者不会漂。
+        const 规模 = partial.规模 ?? log.value?.规模 ?? null;
+        log.value = {
+            ...base,
+            ...(log.value ?? {}),
+            ...partial,
+            规模,
+            规模行: 规模 ? 格式化规模行(规模) : '',
+            time: partial.time ?? Date.now(),
+        };
     }
     function clear() {
         log.value = null;

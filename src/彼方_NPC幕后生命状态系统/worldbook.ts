@@ -157,6 +157,15 @@ function 收集世界书来源(host: 世界书宿主): string[] {
  * @param alwaysIncludeNames 常驻注入的条目名/关键词列表(绕过关键词激活)
  */
 async function getActiveWorldbookText(host: 世界书宿主, scanText: string, excludeNames: string[] = [], alwaysIncludeNames: string[] = []) {
+    return (await 读取世界书段(host, scanText, excludeNames, alwaysIncludeNames)).文本;
+}
+/**
+ * 与 `getActiveWorldbookText` 同一份实现, 但**把条数一起交出来**(批次 3-1 的规模行要用)。
+ *
+ * 为什么不在调用方数 `文本.split('\n\n')`: 条目正文里本来就可能有空行, 数出来的条数是错的;
+ * "这一轮到底注入了几条"只有组装这一层知道。文本与条数因此必须出自同一次组装。
+ */
+async function 读取世界书段(host: 世界书宿主, scanText: string, excludeNames: string[] = [], alwaysIncludeNames: string[] = []): Promise<{ 文本: string; 条数: number }> {
     const 环境 = 彼方求值环境(host);
     // 排除名单: 条目名/comment 与排除项相等或包含即不注入(如填 "【彼方】NPC幕后生活" 排除该条目);
     // 名字在激活数据里可能不可靠(可能只在 comment), 故内容开头(如 "[彼方 · 幕后NPC状态]")也参与匹配
@@ -188,7 +197,7 @@ async function getActiveWorldbookText(host: 世界书宿主, scanText: string, e
     const names = 收集世界书来源(host);
     if (names.length === 0) {
         console.info('[彼方] 本轮没有可读的世界书: 角色卡没绑定主/附加世界书, 也没有聊天世界书或 persona 世界书');
-        return '';
+        return { 文本: '', 条数: 0 };
     }
     // 主 AI 的激活逻辑由「提示词模板语法」插件提供(getWorldInfoActivatedData), 同一个环境也用来渲染 EJS; 带 30 秒缓存。
     // 插件没装 / 版本过旧时这里拿不到那个函数 —— 以前是直接 return '' 跳过整个世界书, 用户只看到一句
@@ -307,7 +316,7 @@ async function getActiveWorldbookText(host: 世界书宿主, scanText: string, e
             continue;
         lines.push(text);
     }
-    return lines.join('\n\n');
+    return { 文本: lines.join('\n\n'), 条数: lines.length };
 }
 /**
  * 按 NPC 名字收集其专属的绿灯(关键词触发)条目, 用于"人设参考"注入。
@@ -426,4 +435,4 @@ async function getPersonaTextForNpc(host: 世界书宿主, npcName: unknown, ali
     return lines.join('\n\n');
 }
 
-export { getActiveWorldbookText, getPersonaTextForNpc, resetWorldbookCaches };
+export { getActiveWorldbookText, getPersonaTextForNpc, resetWorldbookCaches, 读取世界书段 };

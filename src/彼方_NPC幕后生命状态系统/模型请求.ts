@@ -29,6 +29,15 @@ function 括号诊断(text: string): string {
     return `诊断: '{' ${左} / '}' ${右} / '"' ${引号}${判}`;
 }
 
+/** 候选是否像"彼方载荷": 有元数据键(剧情时间/移除NPC), 或者有 NPC 容器键。
+ *  为什么必须认 NPC: 一轮"什么都没变"的合法输出就是 `{"NPC":{}}` —— 既没有剧情时间也没有移除名单。
+ *  只认前两个键时它被判成"不是 JSON", 白白重发两次再整轮失败(用户白等三份请求)。
+ *  伪示例的风险不比现状大: 那种块通常也带剧情时间, 早就在同一个判据里了。 */
+function 像彼方载荷(text: string) {
+    return text.includes('"剧情时间"') || text.includes("'剧情时间'")
+        || text.includes('"移除NPC"') || text.includes("'移除NPC'")
+        || text.includes('"NPC"') || text.includes("'NPC'");
+}
 function parseModelResponse(content: string) {
     let text = content.trim();
     const fence = text.match(/^```(?:json|yaml)?\s*([\s\S]*?)\s*```$/);
@@ -66,7 +75,7 @@ function parseModelResponse(content: string) {
                     if (depth === 0) {
                         const candidate = text.slice(start, i + 1);
                         // 候选必须含彼方的核心字段才算目标对象(排除前文伪 JSON 示例/其他格式块的小对象)
-                        if (candidate.includes('"剧情时间"') || candidate.includes("'剧情时间'") || candidate.includes('"移除NPC"')) return candidate;
+                        if (像彼方载荷(candidate)) return candidate;
                         start = text.indexOf('{', i + 1); // 不是目标, 从这个候选之后继续找
                         break;
                     }
@@ -95,7 +104,7 @@ function parseModelResponse(content: string) {
     let lastError: unknown;
     for (const candidate of candidates) {
         // 剥离/修复后必须仍是彼方 JSON(含数据键), 否则说明切坏了, 换下一候选
-        if (!candidate.includes('"剧情时间"') && !candidate.includes("'剧情时间'") && !candidate.includes('"移除NPC"'))
+        if (!像彼方载荷(candidate))
             continue;
         for (const parse of [(t: string) => JSON.parse(t) as unknown, (t: string) => JSON5.parse(t) as unknown]) {
             try {
