@@ -5,6 +5,7 @@
 // 原先这里还有一行从导出脚本还原出来的 vue 命名空间导入, 但本文件从头到尾没用过 vue
 // (世界书求值都在 共用/条目求值.ts 里, 与 Vue 无关), 属于还原时多带的依赖, 已删掉。
 import { isBifangEntry } from './彼方条目';
+import type { 世界书条目形状 } from './彼方条目';
 import type { Host } from './host';
 import { 取EJS模板环境, 组装求值上下文, 收集表格名, 求值条目文本, 重置求值缓存, type 求值环境 } from '../共用/条目求值';
 // 排除名单的判定与日志措辞: 与剧情导演/烟火同一份(共用/世界书排除.ts), 别再各写一份
@@ -12,6 +13,29 @@ import { 命中排除, 条目标签, 排除说明 } from '../共用/世界书排
 
 /** 世界书读取需要的平台能力(宿主由调用方传入, 见 host.ts 顶部约定) */
 type 世界书宿主 = Pick<Host, 'vars' | 'worldbook' | 'persona' | 'macros' | 'ejs' | 'acu'>;
+
+/** 已确认"有正文"的条目: 过滤条件保证过 content 非空, 于是类型上把 content 收成 `string`,
+ *  下游(拼文本、找 EJS、收集表名)不用再判空一次 —— 让类型跟着过滤条件走, 而不是靠人记。 */
+type 有正文条目 = 世界书条目形状 & { content: string };
+
+/** 判据就是各处本来就在写的那句 `entry && entry.enabled !== false && entry.content`,
+ *  收成谓词后类型跟着条件走, 条目对象仍是原来那个(不复制、不改身份)。 */
+function 有正文(entry: 世界书条目形状 | null | undefined): entry is 有正文条目 {
+    return Boolean(entry && entry.enabled !== false && entry.content);
+}
+
+/** 「提示词模板语法」插件返回的 EJS 环境里, 彼方**只用这一个方法**。所以只声明它,
+ *  不去描述整份环境 —— 那是插件的私有实现, 钉死类型会在插件升级时假报错。
+ *  旧版插件根本没有这个方法, 所以返回值可空。 */
+type 主AI激活函数 = (name: string, text: string) => Promise<世界书条目形状[] | null | undefined>;
+
+/** 从插件给的 `unknown` 里取出那个方法; 拿不到就 null。
+ *  判定就是原先各处都在写的那句 `typeof env.getWorldInfoActivatedData === 'function'`,
+ *  提前到这一处之后, "有没有这个方法"与"调用它"就分开了 —— 判定过的分支里不必再写 `!`。 */
+function 取主AI激活(env: unknown): 主AI激活函数 | null {
+    const 候选 = env && typeof env === 'object' ? (env as Record<string, unknown>).getWorldInfoActivatedData : undefined;
+    return typeof 候选 === 'function' ? 候选 as 主AI激活函数 : null;
+}
 
 /** 共用求值器要的平台能力与文案: 能力全部从 host 接缝接上(那个 module 自己不碰平台)。
  * 彼方现行实现与烟火有两处措辞/判定不同, 照抄彼方现状:
@@ -45,7 +69,7 @@ function resetWorldbookCaches() {
     已提示过空世界书 = false;
 }
 /** 关键词命中(兜底激活用): 正则 key 直接 test; 字符串 key 按"包含"匹配(与主 AI 默认的大小写不敏感同口径) */
-function 关键词命中(text: string, key) {
+function 关键词命中(text: string, key: unknown) {
     if (key instanceof RegExp) {
         try {
             return key.test(text);
@@ -67,8 +91,8 @@ function 关键词命中(text: string, key) {
  * 它们的效果只是"少给几条", 而兜底要解决的是"一条都给不出来"。
  * 条目形状是酒馆助手 getWorldbook 的那一套(strategy.type / strategy.keys)。
  */
-async function 内置激活(host: 世界书宿主, name: string, scanText: string) {
-    let entries;
+async function 内置激活(host: 世界书宿主, name: string, scanText: string): Promise<世界书条目形状[]> {
+    let entries: 世界书条目形状[];
     try {
         entries = (await host.worldbook.entries(name)) || [];
     }
@@ -85,7 +109,7 @@ async function 内置激活(host: 世界书宿主, name: string, scanText: strin
         if (类型 === 'constant')
             return true;
         const keys = Array.isArray(entry.strategy?.keys) ? entry.strategy.keys : [];
-        return keys.some((key: any) => 关键词命中(scanText, key));
+        return keys.some(key => 关键词命中(scanText, key));
     });
 }
 /**
@@ -130,12 +154,12 @@ function 收集世界书来源(host: 世界书宿主): string[] {
  * @param excludeNames 排除注入的条目名/关键词列表
  * @param alwaysIncludeNames 常驻注入的条目名/关键词列表(绕过关键词激活)
  */
-async function getActiveWorldbookText(host: 世界书宿主, scanText, excludeNames = [], alwaysIncludeNames = []) {
+async function getActiveWorldbookText(host: 世界书宿主, scanText: string, excludeNames: string[] = [], alwaysIncludeNames: string[] = []) {
     const 环境 = 彼方求值环境(host);
     // 排除名单: 条目名/comment 与排除项相等或包含即不注入(如填 "【彼方】NPC幕后生活" 排除该条目);
     // 名字在激活数据里可能不可靠(可能只在 comment), 故内容开头(如 "[彼方 · 幕后NPC状态]")也参与匹配
     const excludes = (excludeNames || []).map(s => String(s).trim()).filter(Boolean);
-    const isExcluded = (entry) => 命中排除(entry, excludes);
+    const isExcluded = (entry: 世界书条目形状) => 命中排除(entry, excludes);
     // 常驻名单: 条目名/comment/key 相等或包含即命中, 每次都强制注入(绕过关键词激活)。
     // 角色人设条目一般按关键词触发——最新正文没提到该角色时就不会激活, 更新AI便读不到人设;
     // 常驻名单让这些人设条目始终可见。换角色卡后匹配不到则静默跳过(不报错、不警告)。
@@ -144,10 +168,10 @@ async function getActiveWorldbookText(host: 世界书宿主, scanText, excludeNa
     // - getWorldbook() 返回: { name, enabled, strategy: { keys }, content }
     // - 主AI激活数据(getWorldInfoActivatedData)返回: { name/comment, disable, key, content }
     // 匹配时两种形状都要认, 否则按关键词匹配会失效。
-    const isAlwaysIncluded = (entry) => {
+    const isAlwaysIncluded = (entry: 世界书条目形状) => {
         if (alwaysNames.length === 0 || !entry)
             return false;
-        const candidates = [];
+        const candidates: string[] = [];
         for (const value of [entry.name, entry.comment, entry.key, entry.strategy?.keys]) {
             if (Array.isArray(value))
                 candidates.push(...value.map(item => String(item)));
@@ -158,7 +182,7 @@ async function getActiveWorldbookText(host: 世界书宿主, scanText, excludeNa
             && candidates.some(text => text.trim() === item || (text && text.includes(item))));
     };
     /** 内容指纹: 用于激活条目与常驻条目去重(同一内容只注入一次); 用完整内容, 避免"开头120字相同"的两条被误合并 */
-    const contentFingerprint = (entry) => String(entry?.content ?? '').trim();
+    const contentFingerprint = (entry: 世界书条目形状 | null | undefined) => String(entry?.content ?? '').trim();
     const names = 收集世界书来源(host);
     if (names.length === 0) {
         console.info('[彼方] 本轮没有可读的世界书: 角色卡没绑定主/附加世界书, 也没有聊天世界书或 persona 世界书');
@@ -169,18 +193,17 @@ async function getActiveWorldbookText(host: 世界书宿主, scanText, excludeNa
     // "模板环境不可用"，然后就什么都没有了(Discord 上"群聊读不到世界书"的第二层原因就是它)。
     // 现在退回内置激活: 蓝灯常驻 + 绿灯关键词, 保证设定还读得到, 只是规则比主 AI 简化。
     const env = await 取EJS模板环境(环境);
-    const 主AI激活 = env && typeof env.getWorldInfoActivatedData === 'function'
-        ? (name: string, text: string) => env.getWorldInfoActivatedData(name, text)
-        : null;
+    const 主AI激活 = 取主AI激活(env);
     if (!主AI激活) {
         console.warn('[彼方] 拿不到「提示词模板语法」插件的主 AI 激活逻辑(插件没装或版本过旧) —— '
             + '世界书改用内置激活(蓝灯常驻 + 关键词匹配); 把该插件更新到最新版即可恢复与主 AI 一致的激活规则');
     }
     /** 彼方自己写入的常驻条目: 不把自身输出当设定(判定见 彼方条目.ts —— 名字、备注、正文开头、标记四样都认) */
     // 兼容两种条目形状的启用字段: 激活数据用 disable, getWorldbook 用 enabled(不显式启用=false 的排除)
-    const acceptsEntry = (entry) => Boolean(entry && entry.disable !== true && entry.enabled !== false && entry.content && !isBifangEntry(entry) && !isExcluded(entry));
+    // 用类型谓词而不是 `as`: 谓词就是过滤条件本身, 条件改了类型跟着改, 不会漂。
+    const acceptsEntry = (entry: 世界书条目形状): entry is 有正文条目 => Boolean(entry && entry.disable !== true && entry.enabled !== false && entry.content && !isBifangEntry(entry) && !isExcluded(entry));
     // 1. 收集各世界书的激活条目（用酒馆主 AI 的激活机制）
-    const activatedAll = [];
+    const activatedAll: Array<{ entry: 有正文条目 }> = [];
     /** 被「排除条目」名单挡掉的条目(静默排除是排查黑洞: 日志里得看得见它到底有没有生效) */
     const 排除挡掉: string[] = [];
     {
@@ -189,7 +212,7 @@ async function getActiveWorldbookText(host: 世界书宿主, scanText, excludeNa
             if (seen.has(name))
                 continue;
             seen.add(name);
-            let activated;
+            let activated: 世界书条目形状[];
             try {
                 activated = 主AI激活
                     ? ((await 主AI激活(name, scanText)) || [])
@@ -212,13 +235,13 @@ async function getActiveWorldbookText(host: 世界书宿主, scanText, excludeNa
     // 角色人设条目通常按关键词触发——最新正文没提到该角色时就不会激活, 更新AI读不到人设;
     // 常驻名单保证这些人设条目每次都注入。换角色卡后匹配不到则静默跳过(不报错、不警告)。
     if (alwaysNames.length > 0) {
-        const alwaysEntries = [];
-        const seenWorldbook = new Set();
+        const alwaysEntries: 有正文条目[] = [];
+        const seenWorldbook = new Set<string>();
         for (const name of names) {
             if (seenWorldbook.has(name))
                 continue;
             seenWorldbook.add(name);
-            let entries;
+            let entries: 世界书条目形状[];
             try {
                 entries = (await host.worldbook.entries(name)) || [];
             }
@@ -231,8 +254,8 @@ async function getActiveWorldbookText(host: 世界书宿主, scanText, excludeNa
             }
         }
         if (alwaysEntries.length > 0) {
-            const prioritized = [];
-            const seenContent = new Set();
+            const prioritized: Array<{ entry: 有正文条目 }> = [];
+            const seenContent = new Set<string>();
             for (const entry of alwaysEntries) {
                 const fingerprint = contentFingerprint(entry);
                 if (fingerprint && seenContent.has(fingerprint))
@@ -265,8 +288,8 @@ async function getActiveWorldbookText(host: 世界书宿主, scanText, excludeNa
     const ctx = await 组装求值上下文(scanText, 收集表格名(activatedAll.map(a => a.entry.content)), 环境);
     // 3. 处理并组装条目内容（顺带提示哪些条目引用了不存在的表，方便去世界书里改错别字）
     // 不设内容/条数上限: 截断会让发给 AI 的世界书内容不完整(宁多勿缺)
-    const loggedMissingTables = new Set();
-    const lines = [];
+    const loggedMissingTables = new Set<string>();
+    const lines: string[] = [];
     for (const { entry } of activatedAll) {
         // 条目名兼容两种形状: 激活数据在 comment/key, getWorldbook 在 name(strategy.keys)
         const label = 条目标签(entry);
@@ -299,7 +322,7 @@ async function getActiveWorldbookText(host: 世界书宿主, scanText, excludeNa
  * @param 已注入文本  本轮"世界书"段已经发出去的内容(可选): 同一条目若已在里面, 不再重复附到人设参考
  * @returns 渲染后的条目内容(已做 EJS/宏/<if> 求值), 多条目用 \n\n 拼接; 无命中返回空串
  */
-async function getPersonaTextForNpc(host: 世界书宿主, npcName, alias = '', excludeNames = [], 已注入文本 = '') {
+async function getPersonaTextForNpc(host: 世界书宿主, npcName: unknown, alias: unknown = '', excludeNames: string[] = [], 已注入文本 = '') {
     const 环境 = 彼方求值环境(host);
     const name = String(npcName ?? '').trim();
     if (!name)
@@ -314,11 +337,11 @@ async function getPersonaTextForNpc(host: 世界书宿主, npcName, alias = '', 
         return '';
     // 排除名单: 与 getActiveWorldbookText 同口径(标题/备注含这些字, 或内容以它开头)
     const excludes = (excludeNames || []).map(s => String(s).trim()).filter(Boolean);
-    const isExcluded = (entry) => 命中排除(entry, excludes);
+    const isExcluded = (entry: 世界书条目形状) => 命中排除(entry, excludes);
     /** 彼方自己写入的常驻条目: 排除(否则人设参考会包含上一轮的 NPC 状态卡, 造成自我反馈); 判定见 彼方条目.ts */
     /** 关键词匹配: 条目 keys 数组里是否有任意一个 key 等于/包含 NPC 名字(或曾用名)。
      *  只对字符串 key 做匹配; RegExp key 用 .test() 测试 NPC 名。 */
-    const entryMatchesNpc = (entry) => {
+    const entryMatchesNpc = (entry: 世界书条目形状) => {
         if (!entry)
             return false;
         // 只认绿灯(selective)条目——蓝灯(constant)/向量化(vectorized)条目与 NPC 名字无关, 跳过
@@ -350,14 +373,14 @@ async function getPersonaTextForNpc(host: 世界书宿主, npcName, alias = '', 
         return false;
     };
     // 收集所有命中条目
-    const matched = [];
-    const seenWorldbook = new Set();
-    const seenContent = new Set();
+    const matched: 有正文条目[] = [];
+    const seenWorldbook = new Set<string>();
+    const seenContent = new Set<string>();
     for (const wbName of names) {
         if (seenWorldbook.has(wbName))
             continue;
         seenWorldbook.add(wbName);
-        let entries;
+        let entries: 世界书条目形状[];
         try {
             entries = (await host.worldbook.entries(wbName)) || [];
         }
@@ -365,7 +388,7 @@ async function getPersonaTextForNpc(host: 世界书宿主, npcName, alias = '', 
             continue;
         }
         for (const entry of entries) {
-            if (!entry || entry.enabled === false || !entry.content)
+            if (!有正文(entry))
                 continue;
             if (isBifangEntry(entry) || isExcluded(entry))
                 continue;
@@ -384,11 +407,11 @@ async function getPersonaTextForNpc(host: 世界书宿主, npcName, alias = '', 
     // EJS 环境: 与主激活一致(失败时仍能渲染基础内容)
     const env = await 取EJS模板环境(环境);
     const ctx = await 组装求值上下文('', 收集表格名(matched.map(e => e.content)), 环境);
-    const lines = [];
+    const lines: string[] = [];
     for (const entry of matched) {
         const label = entry.name || entry.comment || '(未命名条目)';
-        const needsEjs = String(entry.content).includes('<%');
-        const text = await 求值条目文本(String(entry.content), ctx, needsEjs ? env : null, label);
+        const needsEjs = entry.content.includes('<%');
+        const text = await 求值条目文本(entry.content, ctx, needsEjs ? env : null, label);
         if (!text.trim())
             continue;
         // 同一条目往往已经被"世界书"段发过一次: 那条条目的关键词就是 NPC 名字, 而名字出现在最近正文里时
