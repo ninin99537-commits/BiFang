@@ -54,6 +54,14 @@
 - 变量结构用 zod 4 定义在各项目自己的 `schema.ts` 中, 由 `dump_schema.ts` 生成对应 json schema
 - 参考 `.agents/skills/mvu-character-card` 与 `.agents/skills/mvu-variable-framework`
 
+## 参考文档：AutoCardUpdater 插件
+
+本仓库的脚本通过 `window.AutoCardUpdaterAPI` 读写酒馆自动填表插件（AutoCardUpdater）的表格。
+凡是改到表格字段、提示词里的条件表达式、或前端直接读写单元格，先读这两份：
+
+- `docs/AutoCardUpdater-自定义表建表指南.md`：建表时 UI 上那几个框（表名 / DDL / Note / Init / Insert / Update / Delete 触发）填什么，AI 最终看到的文本长什么样，从零建表实战与排雷
+- `docs/AutoCardUpdater-模板变量与条件表达式.md`：`<if>`、`<random>`、`<calc>`、`<max>/<min>`、`{db.表.方法链}`、`{[sql "..."]}`、`$v:` 变量，DSL 与 SQLite 两种模式的能力差异，以及 `updateCell / updateRow / insertRow / deleteRow` 的用法
+
 ## 项目参考文件
 
 ### 可用的第三方库
