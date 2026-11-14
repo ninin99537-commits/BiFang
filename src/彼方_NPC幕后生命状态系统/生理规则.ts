@@ -18,8 +18,9 @@ function extractCycleDay(physioText: unknown): number | null {
 }
 /** 计算某 NPC 在指定 Day 发生受孕行为的单次受孕率(0~1), 基于锁定周期长度与防护。
  *  `cycleLen` 标 number 是**按契约**说的: 「周期长度」是隐藏键, 只由 确保周期长度 写入(随机整数),
- *  模型不能返回它。旧数据理论上可能残留字符串, 但那种值 `cycleLen - 14` 本来就是 NaN,
- *  这里不额外兜底(加了 `?? 0` 只会把坏值静默变成"安全期", 反而更糟)。 */
+ *  模型不能返回它。**本函数故意不做兜底**: 非法值(字符串/NaN/负数)在入口 确保周期长度 处就已被
+ *  判为"没有"并重播成合法整数, 所以到这里必然是 number。若在这里加 `?? 0` / `Number()`, 坏值会
+ *  静默落到 `base = 0.01` 那条"安全期"分支 —— 一个看得见的错误就变成一个查不出的错值。 */
 function calcConceptionRate(cycleLen: number, day: number, protection: unknown) {
     if (!cycleLen || !day)
         return 0;
@@ -400,17 +401,39 @@ function ensurePregnancyKnowledge(merged: Record<string, any>) {
 
 /**
  * 周期长度兜底: 可怀孕角色(卡里出现任一生理字段)首次建档时随机一个锁定长度。
- * 返回是否真的写入。输入侧(更新输入.ts)与合并侧(一致化生理)共用这一条规则,
- * 免得"随机 21~35、之后锁死"在两处各写一遍。
+ * 返回是否真的写入(含"把字符串归一成数字"这种写入)。输入侧(更新输入.ts)与合并侧(一致化生理)
+ * 共用这一条规则, 免得"随机 21~35、之后锁死"在两处各写一遍。
+ *
+ * **"已有值"的判定是"合法数值", 不是"键存在"**: 旧数据/手改可能留下 `"28"`(字符串)、`{}`、`true`、
+ * `0`、`-5` 这类值。放它们过去, 下游 `calcConceptionRate` 的 `cycleLen - 14` 会得到 `NaN`,
+ * 而那里的 `base` 有 `0.01` 初值兜着 —— 结果**不会**崩, 而是静默按"安全期 1%"算, 谁也发现不了。
+ *
+ * 两种非法分开处理, 因为后果不同:
+ * - **能解析成正数**(如 `"28"`): 归一成 number 写回, **保住原来的锁定值**。
+ *   直接重播会悄悄改掉这个角色的周期长度 —— 而"首次确定后锁死"是本模块的核心约定。
+ * - **算不出正数**(`"abc"` / `NaN` / `Infinity` / `{}` / `true` / `0` / `-5` / 空串): 当"没有"处理, 重播一个。
+ *
+ * 自愈一律发生在**入口写回卡**, 计算函数(`calcConceptionRate` 等)不做兜底。
  */
 function 确保周期长度(卡: Record<string, any>, 随机: () => number = Math.random): boolean {
-    if (卡['周期长度'] !== undefined && 卡['周期长度'] !== null)
+    const 现有 = 卡['周期长度'];
+    // 只把"数字"和"能当数字读的字符串"认作已有值。`Number(true)`=1、`Number([])`=0 这种隐式转换
+    // 会把完全不相干的类型蒙混成合法值, 所以这里只认 string, 不认 boolean/object。
+    const 归一 = typeof 现有 === 'number' ? 现有
+        : typeof 现有 === 'string' && 现有.trim() !== '' ? Number(现有)
+            : Number.NaN;
+    if (Number.isFinite(归一) && 归一 > 0) {
+        if (typeof 现有 !== 'number') {
+            卡['周期长度'] = 归一; // "28" → 28: 类型修好, 锁定值不变
+            return true;
+        }
         return false;
+    }
     const 有生理 = PHYSIO_FIELDS.some(field => 卡[field] !== undefined && 卡[field] !== null && String(卡[field] ?? '').trim() !== '');
     if (!有生理)
         return false;
     // 中心加权 26~32: 两次均匀抽样取平均, 29 附近最常见, 两端较少。
-    // 人设/旧卡已有周期长度时永远沿用, 不会被重新随机。
+    // 人设/旧卡已有**合法**周期长度时永远沿用, 不会被重新随机。
     卡['周期长度'] = 26 + Math.floor((随机() + 随机()) * 3.5);
     return true;
 }
