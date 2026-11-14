@@ -1,0 +1,301 @@
+// 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
+import { z } from 'zod';
+import { klona } from 'klona';
+import { defineStore } from 'pinia';
+import { ref, watch } from 'vue';
+import type { Host } from './host';
+import { 建写回闸门, type 写回闸门 as 写回闸门类型 } from '../共用/设置写回';
+// 2026-11-14: lodash 是 webpack externals 注入的全局（webpack.config.ts:4），不在 auto-imports 里 ——
+// 一旦把 no-undef 开成 error 就会报悬空，所以显式写出来（default 形式，与 设置.ts 一致）。
+import _ from 'lodash';
+
+/** 设置层只碰变量表; 用 Pick 写在签名上, 不把整个宿主拖进来 */
+type 设置宿主 = Pick<Host, 'vars'>;
+
+/** 幕后状态写进哪本世界书: 角色卡主世界书 / 当前聊天的世界书 / 关闭 */
+const 世界书写入目标表 = ['关闭', '角色卡主世界书', '聊天世界书'] as const;
+type 世界书写入目标 = (typeof 世界书写入目标表)[number];
+
+/** 一套完整的接口配置(当前配置与预设共用同一结构) */
+const ApiConfigSchema = z
+    .object({
+    地址: z.string().default(''),
+    密钥: z.string().default(''),
+    模型: z.string().default(''),
+    模型列表: z.array(z.string()).default([]),
+    /** 直连接口: 开=彼方在脚本 iframe 里自己 fetch 接口(需接口允许浏览器跨域 CORS), 完全不经过酒馆的生成管线——
+     *  预设、世界书、其他扩展都碰不到请求体; 关=由酒馆服务器转发(默认, 无跨域问题) */
+    直连: z.boolean().default(false),
+    /** 流式输出: 开=逐 token 接收(可实时看到输出进度, 部分模型更稳定); 关=一次性返回完整结果(更简单)。
+     *  直连走 SSE, 转发走 should_stream */
+    流式: z.boolean().default(false),
+    温度: z.coerce.number().default(0.7).transform(value => _.clamp(value, 0, 2)),
+    最大token: z.coerce.number().default(60000).transform(value => Math.max(1, Math.min(131072, Math.round(value)))),
+})
+    .prefault({});
+const Settings = z
+    .object({
+    /** 启用幕后系统(NPC状态更新/注入等): 关闭后不再调用 API、不再自动更新, 已有状态数据保留(重开恢复) */
+    启用幕后: z.boolean().default(true),
+    接口: ApiConfigSchema,
+    /** 保存的多套接口配置预设(名字 → 完整接口配置), 用于快速切换不同 AI */
+    接口预设: z.record(z.string(), ApiConfigSchema).default({}),
+    更新: z
+        .object({
+        自动更新: z.boolean().default(true),
+        /** 正文出现新角色时自动建档追踪; 关闭后只更新已追踪(名单内/已有卡)的 NPC, 新角色一律不建档; 手动添加到名单的名字仍会建档 */
+        自动建档: z.boolean().default(true),
+        更新频率: z.coerce.number().default(1).transform(value => Math.max(1, Math.round(value))),
+        读取最近回复数: z.coerce.number().default(3).transform(value => Math.max(1, Math.min(20, Math.round(value)))),
+        追踪当前角色: z.boolean().default(false),
+        /** 把幕后状态写进哪本世界书的常驻条目(蓝灯常开、禁递归), 切换聊天时自动重写当前聊天的内容。
+         *  角色卡主世界书: 主AI 与数据库剧情推进读到的都是它, 但它随当前发言者漂移(群聊里每个成员一本);
+         *  聊天世界书: 一场聊天一本, 群聊时稳定不漂移。
+         *  这是彼方向主AI提供幕后状态的**唯一**途径: 此前还有一条"注入到主AI"(injectPrompts), 已移除——
+         *  那种注入只有主AI自己看得到, 其他读取世界书的插件/环节读不到, 不好用。
+         *  旧版是布尔开关, 由下面这条 preprocess 直接读成两档, 不占 migrateSettings。 */
+        世界书写入: z.preprocess(
+            value => (typeof value === 'boolean' ? (value ? '角色卡主世界书' : '关闭') : value),
+            z.enum(世界书写入目标表).default('关闭'),
+        ),
+        生理监测: z.boolean().default(false),
+        注入世界书: z.boolean().default(true),
+        /** 注入世界书时排除的条目名(列表): 填条目名(或其关键词)即不注入该条目, 如 "【彼方】NPC幕后生活" */
+        注入世界书排除: z.array(z.string()).default([]),
+        /** 常驻注入的世界书条目名/关键词(列表): 填条目名(或其关键词)即**每次都强制注入**这些条目(绕过关键词激活)——
+         *  角色人设条目通常按关键词触发, 最新正文没提到该角色时就不会激活, 更新AI便读不到人设; 用它保证人设始终可见。
+         *  换角色卡后匹配不到该条目则静默跳过(不报错)。 */
+        常驻世界书条目: z.array(z.string()).default([]),
+        /** 预填充(prefill): 在最后追加一条 assistant 消息引导模型直接从 JSON 开头开始输出, 减少格式失败/废话; 依赖模型是否支持(DeepSeek/GLM/Qwen/Claude 大多支持) */
+        预填充: z.boolean().default(false),
+    })
+        .prefault({}),
+    /** 用户自定义提示词段: 只允许往内置提示词的固定锚点里插, 内置提示词本身一个字都不改。
+     *  锚点是消息级位置(插不进某条消息的正文内部), 见 prompts.ts 的 锚点表。
+     *  破限不再内置——想要的人在这里自己插一段(system 或 assistant)。 */
+    提示词: z
+        .object({
+        自定义段: z
+            .array(z.object({
+            锚点: z.enum(['最前', '主提示词之后', '任务之前', '任务之后', '最后']).default('任务之后'),
+            role: z.enum(['system', 'user', 'assistant']).default('system'),
+            content: z.string().default(''),
+            启用: z.boolean().default(true),
+        }))
+            .default([]),
+    })
+        .prefault({}),
+    标签: z
+        .object({
+        模式: z.enum(['排除', '只读']).default('排除'),
+        列表: z.array(z.string()).default(['aftertalk']),
+    })
+        .prefault({}),
+})
+    .prefault({});
+const SETTINGS_KEY = '彼方_settings';
+/** 旧设置迁移: 已删除的开关只清键; 世界书写入的旧布尔键按名搬成三档 */
+function migrateSettings(raw) {
+    if (!raw || typeof raw !== 'object')
+        return raw;
+    const 更新 = raw.更新;
+    // 「破限」不再内置: 老开关直接删掉(不搬成自定义段——那段文本是我们的, 用户没写过它)
+    if (更新 && typeof 更新 === 'object' && !Array.isArray(更新) && '破限' in 更新)
+        delete 更新.破限;
+    // v5.2 的「自定义提示词」(整份替换那套)已废弃: 清掉, 免得和新结构混着走
+    if (更新 && typeof 更新 === 'object' && !Array.isArray(更新) && '自定义提示词' in 更新)
+        delete 更新.自定义提示词;
+    // 已删除的提示词开关(头部填充 / 防截断 / 更早的 gemini37f破限): 只清键, 不搬值——新结构没有它们
+    if (更新 && typeof 更新 === 'object' && !Array.isArray(更新)) {
+        delete 更新.提示词头部填充;
+        delete 更新.头部填充文本;
+        delete 更新.防截断;
+        delete 更新.gemini37f破限;
+    }
+    // 旧版的布尔开关 → 三档写入目标(旧键名不同, 只能在这里按名搬一次)
+    if (更新 && typeof 更新 === 'object' && !Array.isArray(更新) && '注入世界书条目' in 更新) {
+        if (更新.世界书写入 === undefined)
+            更新.世界书写入 = 更新.注入世界书条目 ? '角色卡主世界书' : '关闭';
+        delete 更新.注入世界书条目;
+    }
+    return raw;
+}
+/**
+ * 写回闸门(2026-11-12 架构深化 ⑨)。
+ *
+ * 这里原来是两条路径: `saveToGlobal`(**整键覆盖**)与 `saveToGlobalMerged`(顶层浅合并)。
+ * 前者会把别的窗口/别的设备刚改的字段一起冲掉 —— 与 P1 那次"接口密钥被抹掉"同型;
+ * 后者只在顶层挡了一下, `接口`/`更新` 这类子对象仍然整块覆盖。
+ *
+ * 现在统一走 `共用/设置写回`: **基线 + 只写改动过的字段 + 深合并 + 按路径删**。
+ * 三家(彼方/烟火/剧情导演)从此只有这一份实现, 这类分叉不可能再发生第二次。
+ */
+let 写回闸门: 写回闸门类型 | null = null;
+/** 闸门绑定哪个宿主 —— 宿主换了就重建(用例每个断言换一个假宿主, 生产里只有一个) */
+let 闸门宿主: 设置宿主 | null = null;
+function 取写回闸门(host: 设置宿主): 写回闸门类型 {
+    if (!写回闸门 || 闸门宿主 !== host) {
+        闸门宿主 = host;
+        写回闸门 = 建写回闸门({
+            读: () => host.vars.get({ type: 'global' })?.[SETTINGS_KEY],
+            写: 份 => host.vars.update(variables => {
+                variables[SETTINGS_KEY] = 份;
+                return variables;
+            }, { type: 'global' }),
+        });
+    }
+    return 写回闸门;
+}
+/** 读到了真实的远端 → 记下基线(之后写回只写相对它的改动) */
+function 记基线(host: 设置宿主, 读到的那份: any) {
+    取写回闸门(host).记录基线(读到的那份);
+}
+/**
+ * 只写改动过的字段。闸门关着(从没成功读到过)就**一个字节都不写** ——
+ * 否则内存里的默认值会把用户的真实设置(含接口密钥)覆盖掉。
+ */
+function 写回全局(host: 设置宿主, settings: any) {
+    try {
+        if (取写回闸门(host).立即写(settings)) invalidateReadCache();
+    }
+    catch (error) {
+        console.warn('[彼方] 保存全局设置失败:', error);
+    }
+}
+/** 迁移专用: 存储里本来就没有这一份, 直接落盘并成为新基线 */
+function 首次落盘(host: 设置宿主, settings: any) {
+    try {
+        取写回闸门(host).首次落盘(settings);
+        invalidateReadCache();
+    }
+    catch (error) {
+        console.warn('[彼方] 迁移设置落盘失败:', error);
+    }
+}
+function loadSettings(host: 设置宿主) {
+    // 1. 优先读全局变量(服务器端共享, 局域网各设备共用)
+    try {
+        const 全部 = host.vars.get({ type: 'global' });
+        const global = 全部?.[SETTINGS_KEY];
+        if (global && typeof global === 'object' && !Array.isArray(global)) {
+            const 设置 = Settings.parse(migrateSettings(global));
+            // 基线取**迁移+解析之后**这一份(与 store 里那一份一致): 否则 schema 补上的默认值
+            // 会被当成"用户改动", 第一次保存就把整份灌回去 —— 那就等于整键覆盖了。
+            记基线(host, 设置);
+            return 设置;
+        }
+        // 读成功、只是**还没有这一份**(新装用户): 这也算"读到过" ——
+        // 不记基线的话闸门永远关着, 新用户的设置一个字节都存不下来。
+        if (全部 && typeof 全部 === 'object') 记基线(host, Settings.parse({}));
+    }
+    catch (error) {
+        console.warn('[彼方] 读取全局设置失败:', error);
+    }
+    // 2. 兼容 localStorage(上一版, 浏览器本地)
+    try {
+        const raw = localStorage.getItem(SETTINGS_KEY);
+        if (raw) {
+            const migrated = Settings.parse(migrateSettings(JSON.parse(raw)));
+            首次落盘(host, migrated);
+            return migrated;
+        }
+    }
+    catch (error) {
+        console.warn('[彼方] 读取本地设置失败:', error);
+    }
+    // 3. 兼容更早版本: 设置存在酒馆助手脚本变量里(含接口地址/密钥), 迁移到全局变量后清空脚本变量
+    try {
+        const old = host.vars.get({ type: 'script', script_id: host.vars.scriptId() });
+        if (old && typeof old === 'object' && !Array.isArray(old)) {
+            const migrated = Settings.parse(migrateSettings(old));
+            首次落盘(host, migrated);
+            host.vars.update(() => ({}), { type: 'script' });
+            return migrated;
+        }
+    }
+    catch (error) {
+        console.warn('[彼方] 迁移旧设置失败:', error);
+    }
+    return Settings.parse({});
+}
+/** 持久化是否已绑定(两个边界都可能绑定, 只允许一次) */
+let persistenceBound = false;
+const useSettingsStore = defineStore('bifang-settings', () => {
+    // 初值只给 schema 默认值, 不碰平台; 边界挂载时调 load(host) 读真实设置。
+    const settings = ref(Settings.parse({}));
+    function load(host: 设置宿主) {
+        settings.value = loadSettings(host);
+    }
+    /** 绑定写回: 设置变化后 debounce 300ms 写回全局(服务器端共享)。只有编辑器(.vue)需要绑定。 */
+    function bindPersistence(host: 设置宿主) {
+        if (persistenceBound)
+            return;
+        persistenceBound = true;
+        // 注意:
+        // - debounce 300ms: 设置对象含大量数据(接口预设/模型列表), 每敲一个键就全量
+        //   klona+序列化写回会造成输入卡顿; 停止输入 300ms 后才真正写。
+        // - 合并写回: 保留全局中彼方 store 里不存在的字段(多 iframe/多设备下防止丢字段),
+        //   同名顶层字段用 store 值(用户当前看到的最新值)。
+        let saveTimer = null;
+        watch(settings, value => {
+            if (saveTimer !== null)
+                clearTimeout(saveTimer);
+            saveTimer = setTimeout(() => {
+                saveTimer = null;
+                写回全局(host, klona(value));
+            }, 300);
+        }, { deep: true });
+        // 写入目标必须立即落盘: 面板与外层脚本各有一份设置、只靠全局变量传递,
+        // 300ms 防抖里外层读到的还是旧目标 —— 群聊里主世界书恒为 null, 于是弹出
+        // "当前角色卡没有绑定主世界书"。这一项不该等防抖。
+        watch(() => settings.value.更新.世界书写入, () => {
+            if (saveTimer !== null) {
+                clearTimeout(saveTimer);
+                saveTimer = null;
+            }
+            写回全局(host, klona(settings.value));
+        });
+    }
+    return { settings, load, bindPersistence };
+});
+
+/**
+ * 读取设置: 优先实时读全局(悬浮球/其他 iframe 改设置后, 能立即拿到最新值,
+ * 避免 store 缓存旧设置不生效); 读失败回退 store 缓存。
+ * 全局读取带 500ms 缓存, 避免频繁调用时反复序列化大设置; 窗口内读失败也记着(照样回退 store),
+ * 设置写回后立即失效。
+ * 2026-10-01 与烟火同一处缺陷: 以前缓存没有失效语义 —— 写回后 500ms 窗口里仍按旧值走,
+ * 且"全局被清空/读取报错"会永久返回上一次的值, 只有刷新页面才恢复。
+ */
+let globalReadCache = null;
+let globalReadTime = 0;
+/** 写回成功后清掉读缓存 */
+function invalidateReadCache() {
+    globalReadCache = null;
+}
+function getSettings(host: 设置宿主) {
+    const now = Date.now();
+    if (now - globalReadTime <= 500)
+        return globalReadCache ?? useSettingsStore().settings;
+    globalReadTime = now;
+    try {
+        const global = host.vars.get({ type: 'global' })?.[SETTINGS_KEY];
+        if (global && typeof global === 'object' && !Array.isArray(global)) {
+            globalReadCache = Settings.parse(migrateSettings(global)); // 与 loadSettings 同一套迁移, 否则旧键在这里读不成新值
+            // 成功读到真实远端 = 拿到了一条新基线(2026-11-12): 外层脚本只走这条读路径,
+            // 不记基线的话它之后的写回会被闸门拒掉(那会让"改了没生效"看起来像坏掉)。
+            记基线(host, globalReadCache);
+        }
+        else
+            globalReadCache = null; // 全局被清空 → 回退 store, 不拿上一次的值充数
+    }
+    catch {
+        // 全局读取失败 → 同样清缓存: 窗口内不反复摸存储, 窗口外再试
+        globalReadCache = null;
+    }
+    return globalReadCache ?? useSettingsStore().settings;
+}
+
+export { getSettings, useSettingsStore, 世界书写入目标表 };
+export type { 设置宿主, 世界书写入目标 };
+

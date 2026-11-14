@@ -1,0 +1,492 @@
+<template>
+  <!--
+    布局纪律(2026-11-10 重构):
+      ① **单列铺满正文区**(不设量宽上限, 与仪表盘/人物/日志同宽): 原来那套 `auto-fit minmax(400px)`
+         两列看着省地方, 实际是"列高由内容决定"的伪瀑布流: 五组高度差 2~4 倍, 两列各自到底,
+         中间留下大片空白(实测空掉约 35% 的栅格面积), 读的时候还得左右横跳。
+         行宽由控件自己管: 说明文字 74ch、数字框 200px, 输入框才拉满。
+      ② **六组按"改得勤 → 改得少"排**: 接口 / 幕后更新 / 世界书 / 提示词 / 标签过滤 / 数据备份。
+         原来「幕后更新」一组 1154px 里塞了更新节奏 + 世界书写入两件事, 现在拆成 02 / 03。
+      ③ **只有三种行**: 开关行(标题+说明+右侧开关) / 字段行(120px 标签槽+控件+行内动作) /
+         分段行(标签+分段控件)。同一页里出现第四种排法就算破规矩。
+      ④ **说明文字一行封顶**(.bf-page-settings .bf-hint 限 74ch, 12px): 原理与长表格塞进
+         <details>, 不再用 12.5px 的灰色正文铺满整页(原来 19 段说明占 885px, 将近四成页高)。
+      ⑤ 分组之间用 1px 分隔线 + 编号, 不新造卡片皮 —— 面板其余几页就是"分隔线"这套语言。
+      ⑥ 04–06 默认收起(改得少的三组先站成一行目录): 收起态也留着编号、标题与状态摘要,
+         点标题展开; 用的原生 <details>, 与壳里报错详情是同一套。
+  -->
+  <section class="bf-page bf-page-settings">
+    <header class="bf-page-head">
+      <div>
+        <h2 class="bf-page-title">设置</h2>
+        <p class="bf-page-sub">接口、更新、世界书、提示词、标签与备份。改动即时保存。</p>
+      </div>
+    </header>
+
+    <div class="bf-settings">
+      <!-- 01 接口 -->
+      <section class="bf-setting-group" aria-labelledby="bf-set-api">
+        <header class="bf-set-head">
+          <span class="bf-set-index" aria-hidden="true">01</span>
+          <h3 id="bf-set-api">接口</h3>
+          <span class="bf-set-aside">{{ settings.接口.模型 || '未选模型' }}</span>
+        </header>
+
+        <div class="bf-set-row">
+          <label class="bf-form-label" for="bf-api-url">地址</label>
+          <input id="bf-api-url" v-model="settings.接口.地址" class="bf-input" placeholder="https://api.example.com/v1" />
+        </div>
+
+        <div class="bf-set-row bf-set-row-inline">
+          <label class="bf-form-label" for="bf-api-key">API 密钥</label>
+          <input
+            id="bf-api-key"
+            v-model="settings.接口.密钥"
+            class="bf-input"
+            :type="showKey ? 'text' : 'password'"
+            placeholder="sk-..."
+          />
+          <button type="button" class="bf-btn bf-btn-sm" @click="showKey = !showKey">
+            {{ showKey ? '隐藏' : '显示' }}
+          </button>
+        </div>
+
+        <div class="bf-set-row">
+          <label class="bf-form-label" for="bf-api-model">模型</label>
+          <!-- 输入框 + 下拉按钮 + 自绘候选面板(照 人设工坊 #236 ③ 的教训)。
+               为什么不用原生 <datalist>: 它按输入框当前值过滤候选 —— 已经填了
+               `gemini-3.7-flash` 再展开下拉, 就只剩匹配项(甚至一项都不剩), 必须先把
+               输入框删空才看得到别的模型。自绘面板每次打开都列全部, 与当前值无关;
+               只有点候选项才写 模型, 开/关列表不会弄丢已配好的值。
+               为什么要能手填: `/models` 不是 OpenAI 兼容协议强制要求的端点, 有的接口
+               (自建网关/只实现 /chat/completions 的服务)根本拉不到列表。 -->
+          <div class="bf-model-field">
+            <input
+              id="bf-api-model"
+              v-model="settings.接口.模型"
+              class="bf-input"
+              autocomplete="off"
+              placeholder="选择或直接手填模型名"
+            />
+            <button
+              type="button"
+              class="bf-btn bf-btn-sm bf-model-toggle"
+              title="选择模型"
+              :aria-expanded="模型候选开"
+              aria-haspopup="listbox"
+              @click="模型候选开 = !模型候选开"
+            >
+              ▾
+            </button>
+            <!-- 点面板外关闭用的透明遮罩: 不吃布局, 只吃点击 -->
+            <div v-if="模型候选开" class="bf-model-mask" @click="模型候选开 = false"></div>
+            <ul v-if="模型候选开" class="bf-model-cand" role="listbox" aria-label="模型列表">
+              <li
+                v-for="model in modelList"
+                :key="model"
+                role="option"
+                tabindex="0"
+                :aria-selected="model === settings.接口.模型"
+                @click="选模型(model)"
+                @keydown.enter.prevent="选模型(model)"
+                @keydown.space.prevent="选模型(model)"
+              >
+                {{ model }}
+              </li>
+              <li v-if="!modelList.length" class="bf-model-cand-empty">还没有候选，先点「获取模型列表」，或直接手填模型名</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="bf-set-actions">
+          <button class="bf-btn bf-btn-sm" :disabled="fetchingModels" @click="loadModels">
+            {{ fetchingModels ? '获取中…' : '获取模型列表' }}
+          </button>
+          <button class="bf-btn bf-btn-sm" :disabled="testing" @click="testConnection">
+            {{ testing ? '测试中…' : '测试连接' }}
+          </button>
+        </div>
+        <p class="bf-hint">拉不到列表不代表接口不能用 —— 没有 /models 端点的接口直接手填模型名，再测一次连接。</p>
+
+        <div class="bf-set-pairs">
+          <div class="bf-set-row">
+            <label class="bf-form-label" for="bf-api-temp">温度</label>
+            <input
+              id="bf-api-temp"
+              v-model.number="settings.接口.温度"
+              class="bf-input bf-set-num"
+              type="number"
+              min="0"
+              max="2"
+              step="0.1"
+            />
+          </div>
+          <div class="bf-set-row">
+            <label class="bf-form-label" for="bf-api-token">最大输出 Token</label>
+            <input
+              id="bf-api-token"
+              v-model.number="settings.接口.最大token"
+              class="bf-input bf-set-num"
+              type="number"
+              min="1"
+              max="131072"
+            />
+          </div>
+        </div>
+
+        <label class="bf-switch-row">
+          <span class="bf-switch-copy">
+            <b>流式输出</b>
+            <span>逐段接收模型返回的内容</span>
+          </span>
+          <input v-model="settings.接口.流式" type="checkbox" class="bf-switch" />
+        </label>
+
+        <label class="bf-switch-row">
+          <span class="bf-switch-copy">
+            <b>直连接口</b>
+            <span>由彼方在浏览器里直接请求，需要接口允许跨域</span>
+          </span>
+          <input v-model="settings.接口.直连" type="checkbox" class="bf-switch" />
+        </label>
+        <p class="bf-hint">关：酒馆服务器转发，无跨域问题。开：浏览器直连，预设、世界书与其他扩展都碰不到请求体。</p>
+
+        <h4 class="bf-subgroup-title">配置预设</h4>
+        <div class="bf-set-row bf-set-row-inline">
+          <label class="bf-form-label" for="bf-preset-name">预设名</label>
+          <input
+            id="bf-preset-name"
+            v-model="presetName"
+            class="bf-input"
+            placeholder="如 DeepSeek"
+            @keyup.enter="saveApiPreset"
+          />
+          <button class="bf-btn bf-btn-sm" @click="saveApiPreset">保存当前</button>
+        </div>
+        <div v-if="presetNames.length > 0" class="bf-set-row bf-set-row-inline">
+          <label class="bf-form-label" for="bf-preset-select">已保存</label>
+          <select id="bf-preset-select" v-model="selectedPreset" class="bf-input">
+            <option value="">（选择预设加载）</option>
+            <option v-for="name in presetNames" :key="name" :value="name">{{ name }}</option>
+          </select>
+          <button class="bf-btn bf-btn-sm" @click="loadApiPreset">加载</button>
+          <button class="bf-btn bf-btn-sm" @click="deleteApiPreset">删除</button>
+        </div>
+        <p class="bf-hint">把当前接口配置存成一套，换接口时一键切回。</p>
+      </section>
+
+      <!-- 02 幕后更新 -->
+      <section class="bf-setting-group" aria-labelledby="bf-set-update">
+        <header class="bf-set-head">
+          <span class="bf-set-index" aria-hidden="true">02</span>
+          <h3 id="bf-set-update">幕后更新</h3>
+          <span class="bf-set-aside">每 {{ settings.更新.更新频率 }} 条回复</span>
+        </header>
+
+        <label class="bf-switch-row">
+          <span class="bf-switch-copy">
+            <b>启用幕后系统</b>
+            <span>关闭后不再调用 AI 更新或注入，已有状态数据保留</span>
+          </span>
+          <input v-model="settings.启用幕后" type="checkbox" class="bf-switch" />
+        </label>
+
+        <label class="bf-switch-row">
+          <span class="bf-switch-copy">
+            <b>AI 回复后自动更新</b>
+            <span>按照设定的频率读取最近剧情</span>
+          </span>
+          <input v-model="settings.更新.自动更新" type="checkbox" class="bf-switch" />
+        </label>
+
+        <div class="bf-set-pairs">
+          <div class="bf-set-row">
+            <label class="bf-form-label" for="bf-update-freq">更新频率</label>
+            <input id="bf-update-freq" v-model.number="settings.更新.更新频率" class="bf-input bf-set-num" type="number" min="1" />
+          </div>
+          <div class="bf-set-row">
+            <label class="bf-form-label" for="bf-update-read">读取回复数</label>
+            <input
+              id="bf-update-read"
+              v-model.number="settings.更新.读取最近回复数"
+              class="bf-input bf-set-num"
+              type="number"
+              min="1"
+              max="20"
+            />
+          </div>
+        </div>
+        <p class="bf-hint">每 N 条回复更新一次；更新时读取最近 N 条 AI 回复。</p>
+
+        <label class="bf-switch-row">
+          <span class="bf-switch-copy">
+            <b>正文新角色自动建档</b>
+            <span>只追踪剧情中有持续作用的人物</span>
+          </span>
+          <input v-model="settings.更新.自动建档" type="checkbox" class="bf-switch" />
+        </label>
+        <p class="bf-hint">关闭后只更新已追踪的人物；手动加到名单里的名字仍会建档。</p>
+
+        <label class="bf-switch-row">
+          <span class="bf-switch-copy">
+            <b>追踪当前角色卡角色</b>
+            <span>仅群聊时角色卡名才是角色</span>
+          </span>
+          <input v-model="settings.更新.追踪当前角色" type="checkbox" class="bf-switch" />
+        </label>
+        <p class="bf-hint">角色写在世界书里时保持关闭。</p>
+
+        <label class="bf-switch-row">
+          <span class="bf-switch-copy">
+            <b>女性 NPC 生理监测</b>
+            <span>维护周期、受孕与结算字段，随状态卡一同注入</span>
+          </span>
+          <input v-model="settings.更新.生理监测" type="checkbox" class="bf-switch" />
+        </label>
+        <div class="bf-set-note">
+          <p class="bf-hint">关掉只是暂停，数据留在卡上；要彻底清掉这些字段才点右边。</p>
+          <button class="bf-text-btn bf-text-btn-danger" type="button" @click="确认清空生理数据">清空生理数据</button>
+        </div>
+
+        <label class="bf-switch-row">
+          <span class="bf-switch-copy">
+            <b>预填充（prefill）</b>
+            <span>追加 assistant 消息，引导直接从 JSON 输出</span>
+          </span>
+          <input v-model="settings.更新.预填充" type="checkbox" class="bf-switch" />
+        </label>
+        <p class="bf-hint">报错时先关掉它。</p>
+      </section>
+
+      <!-- 03 世界书 -->
+      <section class="bf-setting-group" aria-labelledby="bf-set-worldbook">
+        <header class="bf-set-head">
+          <span class="bf-set-index" aria-hidden="true">03</span>
+          <h3 id="bf-set-worldbook">世界书</h3>
+          <span class="bf-set-aside">{{ settings.更新.世界书写入 }}</span>
+        </header>
+
+        <h4 class="bf-subgroup-title">写入 · 把状态存成条目</h4>
+        <div class="bf-set-row">
+          <span class="bf-form-label" id="bf-set-worldbook-label">目标</span>
+          <div class="bf-seg" role="group" aria-labelledby="bf-set-worldbook-label">
+            <button
+              v-for="目标 in 世界书写入目标表"
+              :key="目标"
+              class="bf-seg-btn"
+              :class="{ active: settings.更新.世界书写入 === 目标 }"
+              :aria-pressed="settings.更新.世界书写入 === 目标"
+              @click="settings.更新.世界书写入 = 目标"
+            >
+              {{ 目标 }}
+            </button>
+          </div>
+        </div>
+        <p class="bf-hint">角色卡主世界书随当前发言者变（群聊里每个成员一本）；聊天世界书一场聊天一本。换目标不会删掉另一本里的旧条目。</p>
+
+        <h4 class="bf-subgroup-title">读取 · 给彼方接口注入世界书</h4>
+        <label class="bf-switch-row">
+          <span class="bf-switch-copy">
+            <b>注入世界书内容</b>
+            <span>按酒馆 AI 的方式激活世界书条目</span>
+          </span>
+          <input v-model="settings.更新.注入世界书" type="checkbox" class="bf-switch" />
+        </label>
+        <p class="bf-hint">不读全局世界书，只读当前角色卡与聊天绑定的世界书。</p>
+
+        <div class="bf-set-pairs">
+          <label class="bf-field-block">
+            <span class="bf-form-label">常驻注入条目</span>
+            <textarea
+              v-model="worldbookAlwaysDraft"
+              class="bf-textarea bf-textarea-sm"
+              rows="3"
+              placeholder="角色名 / 人设条目名，如「苏禾」或「人设」"
+            ></textarea>
+            <span class="bf-hint">每行一个条目名或关键词，每次都强制注入；匹配不到会静默跳过。</span>
+          </label>
+          <label class="bf-field-block">
+            <span class="bf-form-label">排除条目</span>
+            <textarea
+              v-model="worldbookExcludeDraft"
+              class="bf-textarea bf-textarea-sm"
+              rows="3"
+              placeholder="[mvu_update]"
+            ></textarea>
+            <span class="bf-hint">每行一条，条目<b>标题或备注里含这些字就排除</b>（不分大小写），不用写全名——填一条 [mvu_update] 就能一次排掉 [mvu_update]1、[mvu_update]2…</span>
+          </label>
+        </div>
+      </section>
+
+      <!-- 04 提示词: 默认收起(写法级调整, 不是每天都动的) -->
+      <details class="bf-setting-group bf-set-group">
+        <summary class="bf-set-head">
+          <span class="bf-set-index" aria-hidden="true">04</span>
+          <h3 id="bf-set-prompt">提示词</h3>
+          <span class="bf-set-aside">{{ settings.提示词.自定义段.length }} 段自定义</span>
+        </summary>
+        <p class="bf-hint">内置提示词固定不动，这里只往它的锚点里插你自己写的段。</p>
+
+        <div class="bf-switch-row">
+          <span class="bf-switch-copy">
+            <b>自定义提示词段</b>
+            <span>破限也不再内置 —— 要的话在这里插一段</span>
+          </span>
+          <button class="bf-btn bf-btn-sm" type="button" @click="添加自定义段">＋ 添加一段</button>
+        </div>
+        <p v-if="!settings.提示词.自定义段.length" class="bf-hint">
+          还没有自定义段，当前请求就是内置提示词本身（不含破限）。
+        </p>
+
+        <div v-for="(seg, index) in settings.提示词.自定义段" :key="index" class="bf-set-seg-card">
+          <div class="bf-form-grid bf-set-seg-grid">
+            <label class="bf-field">
+              <span class="bf-form-label">插入位置</span>
+              <select v-model="seg.锚点" class="bf-input">
+                <option v-for="锚点 in 锚点选项" :key="锚点" :value="锚点">{{ 锚点 }}</option>
+              </select>
+            </label>
+            <label class="bf-field">
+              <span class="bf-form-label">身份（role）</span>
+              <select v-model="seg.role" class="bf-input">
+                <option value="system">system</option>
+                <option value="user">user</option>
+                <option value="assistant">assistant</option>
+              </select>
+            </label>
+          </div>
+          <textarea
+            v-model="seg.content"
+            class="bf-textarea bf-textarea-sm"
+            rows="4"
+            placeholder="这一段的内容（支持酒馆宏：user / char）"
+          ></textarea>
+          <div class="bf-set-seg-foot">
+            <label class="bf-set-inline-toggle">
+              <input v-model="seg.启用" class="bf-switch" type="checkbox" />
+              <span>启用</span>
+            </label>
+            <button class="bf-btn bf-btn-sm bf-btn-danger" type="button" @click="删除自定义段(index)">删除这一段</button>
+          </div>
+        </div>
+
+        <p class="bf-hint">
+          锚点＝消息级位置。插在「任务之前」的规则会被后面的内置段覆盖；想要更强的约束就插在「任务之后」或「最后」。
+        </p>
+        <details class="bf-fold bf-set-fold">
+          <summary>发送顺序：五个锚点落在哪</summary>
+          <pre class="bf-code bf-set-order">① 最前        你的段
+② system      身份句 + 全部更新规则（内置，含生理段：开关开时才有）
+③ 主提示词之后  你的段
+④ system      【最新用户输入·仅供场景判断】（有玩家输入时才有）
+⑤ 任务之前     你的段
+⑥ user        任务正文 ← 最长的那个内置段（正文 / 世界书 / 状态卡 / 台账 / 生理说明 / 恋爱说明 / 仅更新已追踪）
+⑦ 任务之后     你的段（以前破限的位置）
+⑧ 最后        你的段
+（末条若是 assistant 且预填充关着，会自动补一句收尾 user）</pre>
+        </details>
+      </details>
+
+      <!-- 05 标签过滤: 默认收起 -->
+      <details class="bf-setting-group bf-set-group">
+        <summary class="bf-set-head">
+          <span class="bf-set-index" aria-hidden="true">05</span>
+          <h3 id="bf-set-tags">标签过滤</h3>
+          <span class="bf-set-aside">{{ settings.标签.模式 }}</span>
+        </summary>
+
+        <div class="bf-set-row">
+          <span class="bf-form-label" id="bf-tag-mode-label">模式</span>
+          <div class="bf-seg" role="group" aria-labelledby="bf-tag-mode-label">
+            <button
+              class="bf-seg-btn"
+              :class="{ active: settings.标签.模式 === '排除' }"
+              :aria-pressed="settings.标签.模式 === '排除'"
+              @click="settings.标签.模式 = '排除'"
+            >
+              排除
+            </button>
+            <button
+              class="bf-seg-btn"
+              :class="{ active: settings.标签.模式 === '只读' }"
+              :aria-pressed="settings.标签.模式 === '只读'"
+              @click="settings.标签.模式 = '只读'"
+            >
+              只读
+            </button>
+          </div>
+        </div>
+
+        <label class="bf-field-block">
+          <span class="bf-form-label">标签列表</span>
+          <textarea
+            v-model="tagDraft"
+            class="bf-textarea bf-textarea-sm"
+            rows="4"
+            placeholder="aftertalk&#10;thinking&#10;branches"
+          ></textarea>
+        </label>
+        <p class="bf-hint">
+          <template v-if="settings.标签.模式 === '排除'"
+            >排除这些标签里的内容，一行一条，直接写标签名（如 thinking，不用尖括号）；残留的孤立
+            &lt;/标签&gt; 只删标签本身，不会连正文一起删。</template
+          >
+          <template v-else>只读取这些标签内的内容，一行一条；没有这些标签的楼层保留原文。</template>
+        </p>
+      </details>
+
+      <!-- 06 数据备份: 默认收起(救急时才用) -->
+      <details class="bf-setting-group bf-set-group">
+        <summary class="bf-set-head">
+          <span class="bf-set-index" aria-hidden="true">06</span>
+          <h3 id="bf-set-backup">数据备份</h3>
+          <span class="bf-set-aside">状态只存楼层里，删楼就没</span>
+        </summary>
+
+        <div class="bf-set-note">
+          <p class="bf-hint">导出复制成一段文本；导入走同一条保存通道（写快照 + 重同步世界书）。大段删楼（/cut）之后靠它恢复。</p>
+          <button class="bf-btn bf-btn-sm" type="button" @click="导出数据">导出并复制</button>
+        </div>
+
+        <details class="bf-fold bf-set-fold">
+          <summary>从文本导入</summary>
+          <div class="bf-set-fold-body">
+            <textarea
+              v-model="导入文本"
+              class="bf-textarea bf-textarea-sm"
+              rows="4"
+              placeholder='{"备份版本":1,"数据":{…}}'
+            ></textarea>
+            <div class="bf-actions">
+              <button class="bf-btn bf-btn-sm" type="button" :disabled="!导入文本.trim()" @click="导入数据">导入</button>
+            </div>
+          </div>
+        </details>
+      </details>
+    </div>
+  </section>
+</template>
+
+<script setup lang="ts">
+import { use设置面板 } from './设置面板';
+
+const {
+  settings, showKey, modelList, 模型候选开, 选模型, fetchingModels, testing, loadModels, testConnection,
+  presetName, presetNames, selectedPreset, saveApiPreset, loadApiPreset, deleteApiPreset,
+  worldbookAlwaysDraft, worldbookExcludeDraft, tagDraft, 世界书写入目标表,
+  导出数据, 导入数据, 导入文本, 清空生理数据,
+} = use设置面板();
+
+/** 插入位置: 消息级锚点, 与 prompts.ts 的 锚点表 同序。插不进某条消息的正文内部。 */
+const 锚点选项 = ['最前', '主提示词之后', '任务之前', '任务之后', '最后'];
+function 添加自定义段() {
+  settings.value.提示词.自定义段.push({ 锚点: '任务之后', role: 'system', content: '', 启用: true });
+}
+function 确认清空生理数据() {
+  if (window.confirm('清空所有 NPC 的生理数据？好感/恋爱等其它字段不受影响，清掉的数据不可恢复。'))
+    清空生理数据();
+}
+function 删除自定义段(index: number) {
+  settings.value.提示词.自定义段.splice(index, 1);
+}
+</script>
