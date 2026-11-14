@@ -74,6 +74,7 @@ export function 彼方假宿主(选项: 假平台选项 = {}) {
         return 楼层
           .filter(m => m.message_id >= start && m.message_id <= (Number.isNaN(end) ? start : end))
           .filter(m => !opts?.role || m.role === opts.role)
+          .sort((a, b) => a.message_id - b.message_id) // 真平台按时间序返回
           .map(m => ({ ...m }));
       },
     },
