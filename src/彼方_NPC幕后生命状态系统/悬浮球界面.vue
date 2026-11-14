@@ -431,6 +431,11 @@ function confirmAddNpc() {
   }
   // 改数据 → 写快照 → 重同步世界书这一整套在 数据变更.ts, 界面只消费返回值
   const 结果 = 加NPC(data.value, name, addDraft.value, 建变更环境(host));
+  // 没落盘就别把人选切过去、别关窗: 关窗=玩家以为加好了, 刷新后才发现人不在
+  if (结果.失败) {
+    toastWarning(结果.说明);
+    return;
+  }
   selectedNpc.value = name;
   newNpcName.value = '';
   addDialogOpen.value = false;
@@ -439,8 +444,13 @@ function confirmAddNpc() {
 
 function removeNpc(name: string) {
   // 保存并提交给界面由 建变更环境 负责(写快照 + 更新数据仓), 这里不用再回写 data
-  移除NPC(data.value, name, 建变更环境(host));
+  const 结果 = 移除NPC(data.value, name, 建变更环境(host));
+  if (结果.失败) {
+    toastWarning(结果.说明);
+    return;
+  }
   if (selectedNpc.value === name) selectedNpc.value = null;
+  toastSuccess(结果.说明);
 }
 /** 事实档案整页(含"谁欠着事/欠了多久/哪条过期"的排序与文案)已搬进 一致性面板.ts,
  *  壳这边只把 data 与两个动作接进去 —— 见文件末尾的 provide。 */
@@ -490,12 +500,13 @@ function openNpc(name: string) {
 // 数据变更之后的"重同步"由 数据变更.ts 统一负责, 这里只管"目标被改了"这一件事。
 // 换目标不清理另一本: 旧条目留在原处, 由用户自己删。
 watch(
-  [() => settings.value.更新.世界书写入, () => settings.value.更新.生理监测],
-  ([目标]) => {
-    const 写入 = 目标 !== '关闭' && Object.keys(data.value.NPC ?? {}).length > 0;
-    // 生理开关也挂在这里: 关掉后条目里的生理六列必须马上消失, 不能等下一轮更新
+  [() => settings.value.更新.世界书写入, () => settings.value.更新.生理监测, () => settings.value.启用幕后],
+  ([目标, , 启用]) => {
+    const 写入 = 启用 && 目标 !== '关闭' && Object.keys(data.value.NPC ?? {}).length > 0;
+    // 生理开关也挂在这里: 关掉后条目里的生理六列必须马上消失, 不能等下一轮更新。
+    // 总开关关掉同样要清: 关的是"彼方写世界书"这件事, 留着条目等于主AI 继续读过期状态。
     syncNpcStatesWorldbook(host, data.value, 写入 ? 目标 : '关闭', undefined, settings.value.更新.生理监测).catch(error => {
-      console.error('[彼方] 同步世界书条目失败:', error);
+      toastWarning(`彼方: 同步世界书条目失败 ${error instanceof Error ? error.message : String(error)}`, '彼方');
     });
   },
 );
@@ -514,7 +525,11 @@ function 切换恋爱对象() {
     开局弹窗开.value = true;
     return;
   }
-  更新状态卡(data.value, 名字, { 恋爱对象: '' }, 建变更环境(host));
+  const 结果 = 更新状态卡(data.value, 名字, { 恋爱对象: '' }, 建变更环境(host));
+  if (结果.失败) {
+    toastWarning(结果.说明);
+    return;
+  }
   toastSuccess(`已取消 ${名字} 的恋爱对象标记`);
 }
 
@@ -545,7 +560,11 @@ function 确认标记恋爱对象() {
       恋爱开局: '是',
     });
   }
-  更新状态卡(data.value, 名字, 补, 建变更环境(host));
+  const 结果 = 更新状态卡(data.value, 名字, 补, 建变更环境(host));
+  if (结果.失败) {
+    toastWarning(结果.说明);
+    return;
+  }
   开局弹窗开.value = false;
   toastSuccess(
     草稿.方式 === '手动'
@@ -1328,8 +1347,13 @@ function clearAll() {
     clearConfirmTimer = null;
   }
   // 清空 = 物理删除所有楼层的快照 + 重置元数据(记录清空层) + 删掉世界书条目——协议在 数据变更.ts;
-  // 这里不再重读存储做启发式校验(持久层自己负责正确性, 失败会记录日志)
-  const 结果 = 清空彼方数据(建变更环境(host));
+  // 这里不再重读存储做启发式校验(持久层自己负责正确性)。
+  // 失败时绝不能弹"已清空": 数据还在, 玩家以为清了就不会再备份。
+  const 结果 = 清空彼方数据(data.value, 建变更环境(host));
+  if (结果.失败) {
+    toastWarning(结果.说明);
+    return;
+  }
   toastSuccess(结果.说明);
 }
 
@@ -1397,8 +1421,12 @@ provide(日志面板键, 建日志面板({
 
 provide(设置面板键, 建设置面板({
   清空生理数据: () => {
-    const { 说明 } = 清空生理数据(data.value, 建变更环境(host));
-    toastSuccess('彼方: ' + 说明, '彼方');
+    const 结果 = 清空生理数据(data.value, 建变更环境(host));
+    if (结果.失败) {
+      toastWarning(结果.说明, '彼方');
+      return;
+    }
+    toastSuccess('彼方: ' + 结果.说明, '彼方');
   },
   settings,
   showKey,

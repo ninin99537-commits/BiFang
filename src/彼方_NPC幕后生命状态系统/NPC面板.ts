@@ -117,6 +117,11 @@ export function 建NPC面板(源: {
     if (!选中的人.value || !数据.value.NPC?.[选中的人.value])
       return;
     const 结果 = 更新状态卡(数据.value, 选中的人.value, editDraft.value, 源.建变更());
+    // 没落盘就别退出编辑态: 退出=玩家以为改了, 刷新后改动消失
+    if (结果.失败) {
+      toastWarning(结果.说明);
+      return;
+    }
     editingNpc.value = false;
     toastSuccess(结果.说明);
   }
@@ -140,7 +145,8 @@ export function 建NPC面板(源: {
     if (!选中的人.value || !选中卡.value)
       return;
     const 结果 = 改事务状态(数据.value, 选中的人.value, 事务.编号, 新状态, 取行结果(事务), 源.建变更());
-    if (结果.数据 === 数据.value) {
+    // 失败(没落盘) 与 "未改动" 都不该弹成功: 前者靠 失败, 后者靠 原引用
+    if (结果.失败 || 结果.数据 === 数据.value) {
       toastWarning(结果.说明);
       return;
     }
@@ -161,7 +167,7 @@ export function 建NPC面板(源: {
     if (!文本)
       return;
     const 结果 = 新增事务(数据.value, 选中的人.value, 文本, 源.建变更());
-    if (结果.数据 === 数据.value) {
+    if (结果.失败 || 结果.数据 === 数据.value) {
       toastWarning(结果.说明);
       return;
     }
