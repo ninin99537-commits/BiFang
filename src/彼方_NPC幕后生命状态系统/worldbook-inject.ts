@@ -51,68 +51,64 @@ function 已有世界书(host: Pick<Host, 'worldbook'>): string[] {
 }
 
 async function syncNpcStatesWorldbook(host: Pick<Host, 'worldbook' | 'toast'>, data, 目标: 世界书写入目标, 未回票?: Record<string, string[]>, 生理监测 = true) {
-    try {
-        if (目标 === '关闭') {
-            for (const name of 已有世界书(host))
-                await host.worldbook.remove(name, isBifangEntry);
-            return;
-        }
-        const wbName = await 目标世界书(host, 目标);
-        if (!wbName) {
-            // 群聊里没有"当前角色卡"(this_chid 为空), 所以「角色卡主世界书」这一档在群聊里根本取不到书名。
-            // 群聊能写的只有聊天世界书(一场一本, 不随发言者漂移)—— 文案要说清楚, 否则用户会去反复改卡上的绑定。
-            const 群聊 = host.worldbook.groupMemberNames().length > 0;
-            host.toast.warn(目标 === '角色卡主世界书'
-                ? (群聊
-                    ? '群聊里没有「当前角色卡」，写不进角色卡主世界书。群聊请把「写入世界书」改成「聊天世界书」。'
-                    : '当前角色卡没有绑定主世界书，无法注入「NPC幕后生活」条目。请先在角色卡上绑定一本世界书。')
-                : '没能取到当前聊天的世界书，无法注入「NPC幕后生活」条目。请先在聊天上绑定一本世界书。', '彼方');
-            return;
-        }
-        const npcEntries = Object.entries(data.NPC ?? {});
-        if (npcEntries.length === 0) {
-            await host.worldbook.remove(wbName, isBifangEntry);
-            return;
-        }
-        const content = buildInjectionPrompt(npcEntries, 未回票, String(data?.剧情时间 ?? ''), 生理监测);
-        // 日志页「彼方写入世界书的内容」记录: 与写入条目的内容完全一致(同一个渲染函数),
-        // 主AI 以及任何读取该世界书的环节读到的就是这一段
-        useMainPromptStore().record(content);
-        const existing = (await host.worldbook.entries(wbName)).find(isBifangEntry);
-        if (existing) {
-            // 保留其它字段, 只刷新内容; 确保防递归开启; 名字若命中 ACU 屏蔽词则改回安全名
-            await host.worldbook.update(wbName, wb => wb.map(entry => isBifangEntry(entry)
-                ? {
-                    ...entry,
-                    name: sanitizeBifangEntryName(entry.name || BIFANG_WORLDBOOK_ENTRY_NAME),
-                    content,
-                    recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
-                }
-                : entry));
-        }
-        else {
-            // 条目被删除/改名后找不到, 重新创建
-            await host.worldbook.create(wbName, [
-                {
-                    name: BIFANG_WORLDBOOK_ENTRY_NAME,
-                    content,
-                    enabled: true,
-                    probability: 100,
-                    strategy: {
-                        type: 'constant',
-                        keys: [],
-                        keys_secondary: { logic: 'not_any', keys: [] },
-                        scan_depth: 'same_as_global',
-                    },
-                    position: { type: 'after_character_definition', role: 'system', depth: 0, order: 100 },
-                    recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
-                    extra: { bifang: true },
-                },
-            ]);
-        }
+    if (目标 === '关闭') {
+        for (const name of 已有世界书(host))
+            await host.worldbook.remove(name, isBifangEntry);
+        return;
     }
-    catch (error) {
-        console.error('[彼方] 同步幕后状态到世界书失败:', error);
+    const wbName = await 目标世界书(host, 目标);
+    if (!wbName) {
+        // 群聊里没有"当前角色卡"(this_chid 为空), 所以「角色卡主世界书」这一档在群聊里根本取不到书名。
+        // 群聊能写的只有聊天世界书(一场一本, 不随发言者漂移)—— 文案要说清楚, 否则用户会去反复改卡上的绑定。
+        const 群聊 = host.worldbook.groupMemberNames().length > 0;
+        host.toast.warn(目标 === '角色卡主世界书'
+            ? (群聊
+                ? '群聊里没有「当前角色卡」，写不进角色卡主世界书。群聊请把「写入世界书」改成「聊天世界书」。'
+                : '当前角色卡没有绑定主世界书，无法注入「NPC幕后生活」条目。请先在角色卡上绑定一本世界书。')
+            : '没能取到当前聊天的世界书，无法注入「NPC幕后生活」条目。请先在聊天上绑定一本世界书。', '彼方');
+        // 取不到书 = 这一轮没写成; 返回而不是静默 return, 否则上游以为同步成功了
+        throw Error(`没能取到目标世界书(${目标})`);
+    }
+    const npcEntries = Object.entries(data.NPC ?? {});
+    if (npcEntries.length === 0) {
+        await host.worldbook.remove(wbName, isBifangEntry);
+        return;
+    }
+    const content = buildInjectionPrompt(npcEntries, 未回票, String(data?.剧情时间 ?? ''), 生理监测);
+    // 日志页「彼方写入世界书的内容」记录: 与写入条目的内容完全一致(同一个渲染函数),
+    // 主AI 以及任何读取该世界书的环节读到的就是这一段
+    useMainPromptStore().record(content);
+    const existing = (await host.worldbook.entries(wbName)).find(isBifangEntry);
+    if (existing) {
+        // 保留其它字段, 只刷新内容; 确保防递归开启; 名字若命中 ACU 屏蔽词则改回安全名
+        await host.worldbook.update(wbName, wb => wb.map(entry => isBifangEntry(entry)
+            ? {
+                ...entry,
+                name: sanitizeBifangEntryName(entry.name || BIFANG_WORLDBOOK_ENTRY_NAME),
+                content,
+                recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
+            }
+            : entry));
+    }
+    else {
+        // 条目被删除/改名后找不到, 重新创建
+        await host.worldbook.create(wbName, [
+            {
+                name: BIFANG_WORLDBOOK_ENTRY_NAME,
+                content,
+                enabled: true,
+                probability: 100,
+                strategy: {
+                    type: 'constant',
+                    keys: [],
+                    keys_secondary: { logic: 'not_any', keys: [] },
+                    scan_depth: 'same_as_global',
+                },
+                position: { type: 'after_character_definition', role: 'system', depth: 0, order: 100 },
+                recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
+                extra: { bifang: true },
+            },
+        ]);
     }
 }
 

@@ -28,8 +28,8 @@ function handleChatChanged(host: Host) {
     resetWorldbookCaches();
     useStateStore().reload(host);
     useDebugStore().clear();
-    if (getSettings(host).启用幕后)
-        maybeInjectNpcStates(host);
+    // 关着也要走一趟: 换到的这场聊天可能还留着上一个开关状态写下的条目
+    maybeInjectNpcStates(host);
 }
 async function handleMessageReceived(host: Host, message_id) {
     const settings = getSettings(host);
@@ -72,11 +72,13 @@ async function handleMessageReceived(host: Host, message_id) {
 function maybeInjectNpcStates(host: Host) {
     const settings = getSettings(host);
     const data = loadData(host);
-    const 目标 = settings.更新.世界书写入;
-    // 无论有无 NPC 都同步(无则删除条目), 保证切换聊天后不会残留上一个聊天的内容
-    if (目标 === '关闭')
-        return;
-    syncNpcStatesWorldbook(host, data, 目标, undefined, settings.更新.生理监测);
+    // 总开关关掉 = 与「写入世界书: 关闭」同一件事: 把两本里彼方的条目删掉。
+    // 不这么做的话, 上一轮写进去的常驻条目会一直留在世界书里, 主AI 继续读一份过期状态。
+    const 目标 = settings.启用幕后 ? settings.更新.世界书写入 : '关闭';
+    // 同步失败要报到界面: 这条链路是 fire-and-forget, 吞掉异常等于"关掉了但没清干净"没人知道。
+    syncNpcStatesWorldbook(host, data, 目标, undefined, settings.更新.生理监测).catch(error => {
+        host.toast.warn(`彼方: 同步世界书条目失败 ${error instanceof Error ? error.message : String(error)}`, '彼方');
+    });
 }
 $(function () {
     // 状态快照存在楼层变量里, 随楼层存亡——删除楼层/重roll(新swipe页没有快照)时状态
@@ -95,8 +97,8 @@ $(function () {
     }
     function refreshAfterFloorChange(host: Host) {
         useStateStore().reload(host);
-        if (getSettings(host).启用幕后)
-            maybeInjectNpcStates(host);
+        // 与切聊天同理: 关着也要走一趟(该删的条目还在)
+        maybeInjectNpcStates(host);
     }
     host.events.onMessageReceived(message_id => {
         // 重roll/regenerate 的新消息到达: 取消待处理的删除刷新(更新完成后会自然同步)
