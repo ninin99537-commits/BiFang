@@ -68,15 +68,27 @@ console.log('\n[4] 指纹 = 当前 src 内容指纹(同一天改代码也抓得�
 {
   const { createHash } = await import('node:crypto');
   const 文件们 = readdirSync(目录).filter(名 => /\.(ts|vue|css)$/.test(名) && 名 !== '构建.ts').sort();
-  const h = createHash('sha1');
-  for (const 名 of 文件们) {
-    h.update(名 + '\0');
-    h.update(readFileSync(path.join(目录, 名)));
-    h.update('\0');
-  }
-  const 现指纹 = h.digest('hex').slice(0, 8);
+  // 内容归一: 指纹对**内容**敏感、对**平台换行符**不敏感 —— 投影仓 CRLF 检出与工作区 LF 必须算出同一个值。
+  // (这个守卫防的是"改了源码忘了标", 不是防"在 Windows 上检出"。)
+  const 归一 = (文本: string) => 文本.replace(/\r\n/g, '\n');
+  const 内容指纹 = (文本们: Array<{ 名: string; 文: string }>) => {
+    const h = createHash('sha1');
+    for (const { 名, 文 } of 文本们) {
+      h.update(名 + '\0');
+      h.update(归一(文));
+      h.update('\0');
+    }
+    return h.digest('hex').slice(0, 8);
+  };
+  const 文本们 = 文件们.map(名 => ({ 名, 文: readFileSync(path.join(目录, 名), 'utf8') }));
+  const 现指纹 = 内容指纹(文本们);
   console.log(`        源码指纹: ${现指纹} ｜ 标记指纹: ${标指纹}（${文件们.length} 个文件; 更新标记请照抄 现指纹）`);
   ok('标记里的指纹 = 当前源码指纹(改一行没更新标记就红在这里)', 现指纹 === 标指纹 && 标指纹.length === 8);
+
+  // 换行符无关性的对照自证: 同一份内容, CRLF 版与 LF 版必须算出同一指纹
+  const lf版 = 内容指纹(文本们);
+  const crlf版 = 内容指纹(文本们.map(({ 名, 文 }) => ({ 名, 文: 文.replace(/\n/g, '\r\n') })));
+  ok('同一份内容在 CRLF 与 LF 检出下指纹一致', lf版 === crlf版);
 }
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
