@@ -34,17 +34,21 @@ function hashString(text) {
 function emptyMeta() {
     return { 版本: DATA_VERSION, 快照楼层: [], 清空层: 0 };
 }
-function saveMeta(host: 快照宿主, meta) {
+/** 写元数据; 返回是否写成功。`静默` 由调用方在"自己会统一提示"时打开(避免一次失败弹两条)。 */
+function saveMeta(host: 快照宿主, meta, 静默 = false) {
     try {
         // 整体赋值该键(避免 insertOrAssign 深合并残留旧字段), 其他聊天变量键不动
         host.vars.update(variables => {
             variables[STORAGE_KEY] = klona(meta);
             return variables;
         }, { type: 'chat' });
+        return true;
     }
     catch (error) {
         console.error('[彼方] 保存元数据失败:', error);
-        toastError(`彼方: 保存元数据失败 ${error instanceof Error ? error.message : String(error)}`, '彼方');
+        if (!静默)
+            toastError(`彼方: 保存元数据失败 ${error instanceof Error ? error.message : String(error)}`, '彼方');
+        return false;
     }
 }
 function loadMeta(host: 快照宿主) {
@@ -416,15 +420,20 @@ function writeStateSnapshot(host: 快照宿主, data, anchorFloor, processedFloo
     console.info(`[彼方] 本轮更新前名单: [${(data.名单 ?? []).join('、') || '(空)'}] → 更新后名单: [${(payload.名单 ?? []).join('、') || '(空)'}]`);
     return true;
 }
-/** 保存当前状态(界面手动编辑用): 以最新楼层为锚点写入快照, 不改变「已分析到哪」的进度 */
-function saveData(host: 快照宿主, data) {
+/**
+ * 保存当前状态(界面手动编辑用): 以最新楼层为锚点写入快照, 不改变「已分析到哪」的进度。
+ *
+ * **返回值就是"落盘了没有"**: 调用方必须据此决定要不要提交给界面、要不要提示。
+ * 提示不在这一层弹——同一句话在"保存"与"清空"两条路上的说法不同, 由调用方出。
+ */
+function saveData(host: 快照宿主, data): boolean {
     try {
         const anchor = host.chat.lastMessageId();
-        writeStateSnapshot(host, data, anchor, typeof data.处理到楼层 === 'number' ? data.处理到楼层 : 0, false);
+        return writeStateSnapshot(host, data, anchor, typeof data.处理到楼层 === 'number' ? data.处理到楼层 : 0, false);
     }
     catch (error) {
         console.error('[彼方] 保存NPC状态失败:', error);
-        toastError(`彼方: 保存失败 ${error instanceof Error ? error.message : String(error)}`, '彼方');
+        return false;
     }
 }
 /** 单独更新清空层(不动快照): 清空层自适应下移等场景使用 */
@@ -449,9 +458,31 @@ function discardSnapshotAt(host: 快照宿主, floorId) {
     console.info(`[彼方] 已撤销楼层 #${floorId} 的快照`);
     return true;
 }
-/** 清空全部彼方数据: 物理删除所有楼层的快照 + 重置元数据, 并记录当前楼层为「清空层」 */
-function clearAllData(host: 快照宿主) {
+/** 清空的结果: `成功=false` 时**什么都没改**(清空层仍是旧值, 快照一份没删) */
+export interface 清空结果 {
+    成功: boolean;
+    /** 实际生效的清空层; 失败时是调用前的旧值 */
+    清空层: number;
+    /** 失败原因(成功时没有) */
+    失败原因?: string;
+}
+
+/**
+ * 清空全部彼方数据: 物理删除所有楼层的快照 + 重置元数据, 并记录当前楼层为「清空层」。
+ *
+ * 顺序是"先定截止点、再动手": 读不到当前楼层就**直接放弃**, 一份快照都不删。
+ * 反过来(先删后定)会让清空层停在 0 —— 那等于下一轮把整条聊天重分析一遍, 而玩家以为自己清空了。
+ */
+function clearAllData(host: 快照宿主): 清空结果 {
     const meta = loadMeta(host);
+    let 当前楼层: number;
+    try {
+        当前楼层 = host.chat.lastMessageId();
+    }
+    catch (error) {
+        console.error('[彼方] 清空失败: 读不到当前楼层:', error);
+        return { 成功: false, 清空层: meta.清空层, 失败原因: '读不到当前楼层' };
+    }
     for (const floorId of meta.快照楼层) {
         try {
             host.vars.del(STORAGE_KEY, { type: 'message', message_id: floorId });
@@ -461,14 +492,11 @@ function clearAllData(host: 快照宿主) {
         }
     }
     const fresh = emptyMeta();
-    try {
-        fresh.清空层 = host.chat.lastMessageId();
-    }
-    catch {
-        // 读取失败时保持 0, 退化为全量分析
-    }
-    saveMeta(host, fresh);
-    return fresh.清空层;
+    fresh.清空层 = 当前楼层;
+    // 元数据写不进去 = 清空层没生效, 状态会在下一轮被当成"没清过"; 提示由调用方统一出
+    if (!saveMeta(host, fresh, true))
+        return { 成功: false, 清空层: meta.清空层, 失败原因: '清空层没能写入聊天变量' };
+    return { 成功: true, 清空层: 当前楼层 };
 }
 
 export { DATA_VERSION, SNAPSHOT_LIMIT, STORAGE_KEY, clearAllData, discardSnapshotAt, emptyData, loadData, saveData, updateClearLayer, writeStateSnapshot };
