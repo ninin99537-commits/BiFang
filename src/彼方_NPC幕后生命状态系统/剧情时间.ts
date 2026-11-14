@@ -56,12 +56,9 @@ function parseStoryTime(text: unknown): number | null {
     const ts = d.getTime();
     return Number.isNaN(ts) ? null : ts;
 }
-/** 时间戳格式化为 "YYYY-MM-DD HH:mm"（年份至少 4 位补零, 如 0137-06-12 07:45; 更长的年份原样保留）。
- *  签名收 `null | undefined`: 调用方常把 `parseStoryTimeRange(...).endTs` 直接递进来(它在"已判非空"的分支里),
- *  类型上仍是 `number | null`。函数体用 `Number(ts)` 而不是 `new Date(ts)` —— 这正是 Date 构造器内部的
- *  ToNumber: number 原样, `null` → 0(1970), `undefined` → NaN(Invalid Date), 与旧行为逐字相同。 */
-function fmtStoryTime(ts: number | null | undefined) {
-    const date = new Date(Number(ts));
+/** 时间戳格式化为 "YYYY-MM-DD HH:mm"（年份至少 4 位补零, 如 0137-06-12 07:45; 更长的年份原样保留） */
+function fmtStoryTime(ts: number) {
+    const date = new Date(ts);
     const pad = (n: number) => String(n).padStart(2, '0');
     return `${String(date.getFullYear()).padStart(4, '0')}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }

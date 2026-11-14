@@ -375,7 +375,10 @@ function 应用恋爱回合(卡: Record<string, any>, 事件列表: any, storyTi
         }
     }
     // 时间回落(仅情欲): 跨天数 × 速率 × 粘性(不乘敏感度, 与满足回落同一条通道); 基准缺失(首轮)不回落
-    if (本轮日期ts !== null && 基准ts !== null) {
+    // 后两个分支要拿 `range.endTs` 当时间戳用。能走到那里就说明 `日序自时间戳(range.endTs) !== null`,
+    // 也就是 endTs 是个有限数值 —— 把这条不变量写成**显式条件**(对有限数值恒真, 不改变任何分支走向),
+    // 让类型检查器自己收窄, 而不是靠 `!` 断言或注释里的口头约定。
+    if (本轮日期ts !== null && 基准ts !== null && range.endTs !== null) {
         const 跨天数 = Math.max(0, Math.round((本轮日期ts - 基准ts) / 86400000));
         const 回落 = 跨天数 * 时间回落速率 * (情感倾向表[倾向名] ?? 情感倾向表.常规).粘性;
         if (回落 !== 0) {
@@ -388,7 +391,7 @@ function 应用恋爱回合(卡: Record<string, any>, 事件列表: any, storyTi
         if (本轮日期ts >= 基准ts)
             补丁['恋爱基准日期'] = fmtStoryTime(range.endTs);
     }
-    else if (本轮日期ts !== null && 基准ts === null) {
+    else if (本轮日期ts !== null && 基准ts === null && range.endTs !== null) {
         补丁['恋爱基准日期'] = fmtStoryTime(range.endTs); // 首次落基准, 本轮不回落
     }
     // 应用变化: 两条轴都是"涨后 + 落桶"(§3.5 第 7–9 步); 好感阶段定在该值之后(地板按**结算后**阶段取)
