@@ -15,6 +15,7 @@
 //   种已有状态(host);            // 可选: 在楼层 1 种甲/丙两人的旧快照
 //   await updateNpcStates(host); // 断言读 存.message[锚点楼层][STORAGE_KEY] 与 记.rawCalls
 import { STORAGE_KEY, writeStateSnapshot, emptyData } from '../../src/彼方_NPC幕后生命状态系统/快照';
+import { invalidateReadCache } from '../../src/彼方_NPC幕后生命状态系统/settings';
 
 export { STORAGE_KEY };
 
@@ -40,6 +41,10 @@ export function 模型卡乙() {
 export function 彼方假宿主(选项: 假平台选项 = {}) {
   const 最后楼层号 = 选项.最后楼层号 ?? 3;
   const 存: any = { global: {}, chat: {}, message: {} };
+  // 造一份新假宿主 = 换一份假全局设置 = 换数据源 —— getSettings 的 500ms 读缓存必须失效。
+  // 这是同一个坑第三次咬人(总开关清理[1]→[2]、慢一步[1]→[2]、慢一步[2]→[3]/[4]→[5]/[5]→[6]),
+  // 上提到共享 helper: 所有用例一次性免疫, 与生产路径 写回全局() 成功后调 invalidateReadCache() 同一概念。
+  invalidateReadCache();
   const 楼层 = [
     { message_id: 1, role: 'assistant', is_hidden: false, message: '（较早的剧情：小镇的清晨, 集市的喧闹声渐起。）' },
     { message_id: 2, role: 'user', is_hidden: false, message: '玩家输入：大家去广场集合。' },

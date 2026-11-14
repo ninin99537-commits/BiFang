@@ -70,9 +70,15 @@ export function 最近回复(host: Host, count: number) {
 /** 最近剧情上下文(排除本轮的回复楼层与原楼层), 按"玩家 / AI 名"拼成一段文本 */
 export function 上下文(host: Host, replyMessageId: number, filter: (text: string) => string, window: number, replyIds: Set<number>, minId = 0): string {
     try {
+        // 上界用 **replyMessageId**(本轮分析到的那一层), 不用 lastId:
+        // 平常两者相等, 看不出区别; 但「慢一步」开着时 recent 排除了最新层,
+        // replyMessageId 落在 N−1 而 lastId 仍是 N —— 用 lastId 会把**最新那条正文**
+        // 从"最近剧情"这一段带进请求, 慢一步就白做了(用户要求的正是"最新层不进分析")。
+        // 下界同时兜住 lastId: 楼层被删/切 swipe 后 replyMessageId 可能大于实际末层。
         const lastId = host.chat.lastMessageId();
-        const start = Math.max(0, Math.min(replyMessageId, lastId) - window * 2);
-        const messages = host.chat.messages(`${start}-${lastId}`)
+        const 上界 = Math.min(replyMessageId, lastId);
+        const start = Math.max(0, 上界 - window * 2);
+        const messages = host.chat.messages(`${start}-${上界}`)
             .filter(message => message.role !== 'system' && !message.is_hidden && message.message_id > minId && !replyIds.has(message.message_id))
             .slice(-window);
         return messages

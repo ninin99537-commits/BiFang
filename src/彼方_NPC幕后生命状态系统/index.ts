@@ -64,7 +64,11 @@ async function handleMessageReceived(host: Host, message_id: number) {
         // 全部 AI 楼层列表: 已排除隐藏楼层, 与 最近回复 的可见口径一致
         // ——用 getChatMessages 全量扫会包含隐藏楼层导致频率算错
         const assistantCount = 全部AI楼层(host).length;
-        if (assistantCount % frequency !== 0)
+        // 慢一步: 取模基数要跟着换成**可分析层数**(可见 AI 楼层数 − 1)。
+        // 否则开关一开, 每一轮的阈值都整体错位一层: 本该在第 3 条触发的频率 2,
+        // 会因为"第 3 条还没资格分析"而永远差一步。
+        const 可分析层数 = settings.更新.慢一步 ? assistantCount - 1 : assistantCount;
+        if (可分析层数 % frequency !== 0)
             return;
     }
     await updateNpcStates(host);
