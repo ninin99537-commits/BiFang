@@ -77,7 +77,6 @@ function applyUpdate(data: 彼方数据, parsed: Record<string, any> | null, pla
         ...data,
         名单: [...data.名单],
         NPC: _.cloneDeep(data.NPC),
-        卡字段计数: _.cloneDeep(data.卡字段计数 ?? {}),
         统计: { ...data.统计 },
     };
     const 摘要 = 空摘要();
@@ -172,7 +171,6 @@ function applyUpdate(data: 彼方数据, parsed: Record<string, any> | null, pla
     }
     for (const name of removedNpcs) {
         delete newData.NPC[name];
-        delete newData.卡字段计数[name];
     }
     if (removedNpcs.length > 0) {
         newData.名单 = newData.名单.filter((name: string) => !removedNpcs.includes(name));
