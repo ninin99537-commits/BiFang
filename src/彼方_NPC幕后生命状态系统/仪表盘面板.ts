@@ -7,6 +7,7 @@
 import { computed, inject } from 'vue';
 import type { ComputedRef, InjectionKey, Ref } from 'vue';
 import { 显示台账, 台账字段 } from './事务台账';
+import { 事实档案 } from './一致性面板';
 import type { 彼方数据 } from './快照';
 import type { NpcStateCard } from './卡字段';
 
@@ -16,6 +17,8 @@ export type 仪表盘面板 = {
   npcList: ComputedRef<string[]>;
   stats: ComputedRef<{ 更新次数: number; 最后更新: number }>;
   待续事务数: ComputedRef<number>;
+  /** 全库已过期事务数(与事实档案同一口径): 摘要带旁注「其中 M 件过期」用它 */
+  过期事务数: ComputedRef<number>;
   autoTrackEnabled: ComputedRef<boolean>;
   updating: ComputedRef<boolean>;
   头像色号: (名?: string | null) => number;
@@ -30,7 +33,6 @@ export type 仪表盘面板 = {
   clearAll: () => void;
   clearing: Ref<boolean>;
 };
-
 export function 建仪表盘面板(源: {
   数据: Ref<彼方数据>;
   更新中: ComputedRef<boolean>;
@@ -62,6 +64,7 @@ export function 建仪表盘面板(源: {
     npcList,
     stats,
     待续事务数,
+    过期事务数: computed(() => 事实档案(数据.value).过期数),
     autoTrackEnabled: 源.自动建档,
     updating: 源.更新中,
     头像色号: 源.头像色号,

@@ -23,7 +23,8 @@ import type { 彼方数据 } from './快照';
 import { toastSuccess, toastWarning } from './toast';
 import { 显示台账, 台账字段, 台账状态表, 状态类 } from './事务台账';
 import type { 幕后事务, 事务状态 } from './事务台账';
-import { 名分词表, 情感倾向表 } from './恋爱规则';
+import { 名分词表, 情感倾向表, 好感阶段表, 情欲阶段表, 标签词表, 标签上限 } from './恋爱规则';
+import { GESTATION_WEEKS_RANGE, LACTATION_MONTHS_RANGE, PREGNANCY_KNOWN_VALUES, CYCLE_STAGE_VALUES, CYCLE_STAGE_PREFIX_RE } from './生理规则';
 import type { NpcStateCard } from './卡字段';
 
 /** 详情页的字段分组(与 卡字段.ts 的 组 一一对应; 这里是展示顺序与标题, 那是"谁属于哪组") */
@@ -33,6 +34,79 @@ const 分组展示 = [
   { key: '生理', 标题: '生理状态' },
   { key: '恋爱', 标题: '恋爱' },
 ];
+
+/**
+ * 受控字段的控件形态(附表 B / R9): **词表与区间一律从数据源派生**, 不在 .vue 里手抄第二份。
+ * 这里只描述"用哪种控件 + 从哪儿取值 + 一行规范提示"; 具体渲染在 页面-NPC.vue 里按 type 分支。
+ *
+ * 为什么集中成一张表而不是在模板里写一串 v-if: 附表 B 的 18 项里有 6 select / 4 number / 1 胶囊 /
+ * 2 日期 / 3 拆项, 写成模板条件会变成十几层嵌套, 而且"哪个字段是什么控件"这件事实会散在模板各处。
+ */
+type 字段控件 =
+  | { type: 'select'; 选项: readonly string[]; 空值文案: string; 提示: string }
+  | { type: 'number'; min: number; max: number; step: number; 提示: string }
+  | { type: 'tags'; 词表: readonly string[]; 上限: number; 提示: string }
+  | { type: 'date'; 提示: string }
+  | { type: 'cycle'; 提示: string }
+  | { type: 'textarea'; 提示: string };
+
+export type { 字段控件 };
+
+function 建字段控件表(): Record<string, 字段控件> {
+  return {
+    // ---- 6 个下拉(R8 / R9): 词表来自 恋爱规则.ts / 生理规则.ts ----
+    恋爱对象: { type: 'select', 选项: ['是'], 空值文案: '（空 / 未标记）', 提示: '空 = 未标记; 「是」= 参与恋爱折算' },
+    恋爱开局: { type: 'select', 选项: ['是'], 空值文案: '（空 / 允许重报开局）', 提示: '「待AI判断」只是界面临时态，不落盘' },
+    是否怀孕: { type: 'select', 选项: ['否', '是'], 空值文案: '（未记录）', 提示: '布尔语义，留空表示未记录' },
+    怀孕知晓: {
+      type: 'select',
+      选项: PREGNANCY_KNOWN_VALUES,
+      空值文案: '（未记录）',
+      提示: '未知 / 疑似 / 确认 —— 防全知：本人的认知可以落后于事实',
+    },
+    情感倾向: { type: 'select', 选项: Object.keys(情感倾向表), 空值文案: '（未设置）', 提示: '闭合词表，系数见 恋爱规则.ts' },
+    名分: { type: 'select', 选项: 名分词表, 空值文案: '（无 / 清空）', 提示: '清空即清空，不会自动补「无」' },
+    好感阶段: {
+      type: 'select',
+      选项: 好感阶段表.map(阶段 => 阶段.名),
+      空值文案: '（未结算）',
+      提示: '由好感值推导（±2 滞回），一般不用手改',
+    },
+    情欲阶段: {
+      type: 'select',
+      选项: 情欲阶段表.map(阶段 => 阶段.名),
+      空值文案: '（未结算）',
+      提示: '由情欲值推导（±2 滞回），一般不用手改',
+    },
+    // ---- 4 个数字框: 空 = 未结算, 不写成 0 ----
+    好感值: { type: 'number', min: 0, max: 100, step: 0.1, 提示: '0–100，可留一位小数；留空 = 未结算（不是 0）' },
+    情欲值: { type: 'number', min: 0, max: 100, step: 0.1, 提示: '0–100，可留一位小数；留空 = 未结算（不是 0）' },
+    孕程周数: {
+      type: 'number',
+      min: GESTATION_WEEKS_RANGE[0],
+      max: GESTATION_WEEKS_RANGE[1],
+      step: 1,
+      提示: `${GESTATION_WEEKS_RANGE[0]}–${GESTATION_WEEKS_RANGE[1]} 的整数（超出视为未填写）`,
+    },
+    哺乳期月数: {
+      type: 'number',
+      min: LACTATION_MONTHS_RANGE[0],
+      max: LACTATION_MONTHS_RANGE[1],
+      step: 1,
+      提示: `${LACTATION_MONTHS_RANGE[0]}–${LACTATION_MONTHS_RANGE[1]} 的整数（超出视为未填写）`,
+    },
+    // ---- 胶囊多选: 限 5 个, 只接受词表内的词 ----
+    恋爱标签: { type: 'tags', 词表: 标签词表, 上限: 标签上限, 提示: `闭合词表，最多 ${标签上限} 个；非词表内容保存时会被丢弃` },
+    // ---- 日期: 保持文本(不换 type=date), 因为丢时刻会破坏生理天数推进(R3) ----
+    生理周期日期: { type: 'date', 提示: '格式 YYYY-MM-DD HH:mm —— 保留时刻，改成纯日期会让生理推进算错天数' },
+    受孕日期: { type: 'date', 提示: '格式 YYYY-MM-DD HH:mm —— 保留时刻，改成纯日期会让生理推进算错天数' },
+    // ---- 生理周期: 阶段下拉 + 明细输入(两段拼装); `/NN` 只读(R5) ----
+    生理周期: {
+      type: 'cycle',
+      提示: '阶段 + 明细拼成「阶段 Day N/NN」；/NN 是彼方锁定值，只读（排卵日 = 周期长度 − 14）',
+    },
+  };
+}
 
 export type NPC面板 = {
   /** 数据与选中 */
@@ -70,6 +144,31 @@ export type NPC面板 = {
   切换恋爱对象: () => void;
   情感倾向选项: string[];
   名分词表: typeof 名分词表;
+  /** 受控字段的控件形态表(附表 B): 页面按 type 渲染, 词表与区间都已从数据源派生 */
+  字段控件表: Record<string, 字段控件>;
+  /** 胶囊多选的本地选中态(编辑态点一下切换; 保存时归一成逗号串写回) */
+  切换标签: (词: string) => void;
+  /** 当前草稿里的标签数组(展示与"满 5 个后置灰"都读它) */
+  草稿标签: ComputedRef<string[]>;
+
+  // ---- R4 拆项拼装: 生活状态 / 近期关键事件(整份回写, 不按类目合并) ----
+  /** 生活状态的三个类目值(吃饭 / 洗漱 / 睡眠); 写回时拼成 `类(值); 类(值)` */
+  生活状态项: ComputedRef<Record<string, string>>;
+  设生活状态项: (类目: string, 值: string) => void;
+  生活状态类目: readonly string[];
+  /** 近期关键事件的条目(最多 3); 写回时按 `；`/`、`/换行 分隔 */
+  近期事件项: ComputedRef<string[]>;
+  设近期事件项: (序号: number, 值: string) => void;
+  近期事件上限: number;
+
+  // ---- R5 生理周期: 阶段(7 值) + 明细; `/NN` 只读 ----
+  生理阶段: ComputedRef<string>;
+  生理明细: ComputedRef<string>;
+  /** 周期长度(隐藏键 `周期长度`): 只读展示, 不提供编辑框 */
+  周期长度: ComputedRef<string>;
+  设生理阶段: (阶段: string) => void;
+  设生理明细: (明细: string) => void;
+  生理阶段选项: readonly string[];
 };
 
 /**
@@ -177,13 +276,17 @@ export function 建NPC面板(源: {
 
   // ---- 派生 ----
   /** 详情页字段分组: 标题与分组留在展示层, "谁属于哪一组"来自 卡字段.ts。
-   *  「未完成事项」单独渲染成台账区块(状态按钮才是它的编辑方式), 「生活状态」也有自己的渲染块。 */
+   *  「未完成事项」单独渲染成台账区块(状态按钮才是它的编辑方式)。
+   *  「生活状态」**只在编辑态出现在分组里** —— 它有自己的三项拆项模板(吃饭/洗漱/睡眠, 页面-NPC.vue),
+   *  只读态则由页首的 生活状态条目 那段展示(类目 + 时刻 + 距今)。B11: 以前这里用同一个 filter
+   *  把两态一起砍掉, 于是拆项模板成了死分支, R9 声称的 18 项实际只有 17 项可达。 */
   const detailFields = computed(() =>
     分组展示
       .map(组 => ({
         ...组,
         字段: (字段分组表[组.key] || []).filter(
-          f => f !== 台账字段 && f !== '生活状态'
+          f => f !== 台账字段
+            && (f !== '生活状态' || editingNpc.value)
             && (editingNpc.value || !['生理', '恋爱'].includes(组.key))
             && (选中卡.value?.[f] || editingNpc.value),
         ),
@@ -203,6 +306,103 @@ export function 建NPC面板(源: {
 
   function cleanText(text: string): string {
     return (text || '').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  // ---- 恋爱标签: 胶囊多选(限 5) ----
+  /** 草稿里的标签数组: 拆自 `恋爱标签` 的逗号串(词表外的词不显示, 与写回口径一致) */
+  const 草稿标签 = computed<string[]>(() =>
+    String(editDraft.value['恋爱标签'] ?? '')
+      .split(/[,，、;；]/)
+      .map(词 => 词.trim())
+      .filter(词 => 词 && 标签词表.includes(词)),
+  );
+
+  /** 点一下切换一个词: 已选则移除, 未选且未满上限则加入; 始终用逗号串写回(与 校验标签 同口径) */
+  function 切换标签(词: string) {
+    const 当前 = 草稿标签.value;
+    const 已选 = 当前.includes(词);
+    if (!已选 && 当前.length >= 标签上限)
+      return;
+    const 下一个 = 已选 ? 当前.filter(x => x !== 词) : [...当前, 词];
+    editDraft.value['恋爱标签'] = 下一个.join(',');
+  }
+
+  // ---- R4 拆项: 生活状态(吃饭/洗漱/睡眠) 与 近期关键事件(最多 3) ----
+  /** 生活状态类目顺序(与 生活状态.ts 的协议一致) */
+  const 生活状态类目 = ['吃饭', '洗漱', '睡眠'] as const;
+  /** 近期关键事件最多保留几条(与 卡合并.ts 的 FIFO 上限一致) */
+  const 近期事件上限 = 3;
+
+  /** 从 `类(值); 类(值)` 里取出每个类目的值; 认不出的文本原样留在"其它"里, 不丢 */
+  const 生活状态项 = computed<Record<string, string>>(() => {
+    const 结果: Record<string, string> = {};
+    for (const 类目 of 生活状态类目)
+      结果[类目] = '';
+    const 原文 = String(editDraft.value['生活状态'] ?? '');
+    for (const 段 of 原文.split(/[;；]/)) {
+      const m = 段.match(/^\s*([^()（）]+?)\s*[(（](.*)[)）]\s*$/);
+      if (!m)
+        continue;
+      const 类目 = m[1].trim();
+      if (类目 in 结果)
+        结果[类目] = m[2].trim();
+    }
+    return 结果;
+  });
+
+  /** 改一个类目 → 整份重拼(空的类目不写进串, 与 生活状态.ts 的 join('; ') 同口径) */
+  function 设生活状态项(类目: string, 值: string) {
+    const 新值 = { ...生活状态项.value, [类目]: 值 };
+    editDraft.value['生活状态'] = 生活状态类目
+      .filter(类 => String(新值[类] ?? '').trim())
+      .map(类 => `${类}(${String(新值[类]).trim()})`)
+      .join('; ');
+  }
+
+  /** 近期关键事件: 按 卡合并.ts 的分隔约定(`；` `、` 换行)拆, 最多 3 条 */
+  const 近期事件项 = computed<string[]>(() => {
+    const 段 = String(editDraft.value['近期关键事件'] ?? '')
+      .split(/[；;、\n]/)
+      .map(x => x.trim())
+      .filter(Boolean)
+      .slice(0, 近期事件上限);
+    return [...段, ...new Array(Math.max(0, 近期事件上限 - 段.length)).fill('')];
+  });
+
+  /** 改第 N 条 → 整份重拼(空条目不写进串) */
+  function 设近期事件项(序号: number, 值: string) {
+    const 新 = [...近期事件项.value];
+    新[序号] = 值;
+    editDraft.value['近期关键事件'] = 新.map(x => x.trim()).filter(Boolean).join('；');
+  }
+
+  // ---- R5 生理周期: 阶段 + 明细, `/NN` 只读 ----
+  const 生理阶段选项 = CYCLE_STAGE_VALUES;
+
+  /** 阶段名: 取 `生理周期` 文本开头命中的那一个(认不出就是空) */
+  const 生理阶段 = computed(() => {
+    const m = String(editDraft.value['生理周期'] ?? '').match(CYCLE_STAGE_PREFIX_RE);
+    return m ? m[1] : '';
+  });
+
+  /** 明细: 去掉开头的阶段名之后的剩余部分(如 `Day 12/28`、`孕 16周+3天`) */
+  const 生理明细 = computed(() =>
+    String(editDraft.value['生理周期'] ?? '').replace(CYCLE_STAGE_PREFIX_RE, '').trim(),
+  );
+
+  /** 周期长度: 隐藏键, 只读(UI 不给编辑框 —— 分母是彼方锁定值) */
+  const 周期长度 = computed(() => String(选中卡.value?.['周期长度'] ?? ''));
+
+  /** 改阶段 → `阶段 + 空格 + 明细`; 明细为空时只写阶段 */
+  function 设生理阶段(阶段: string) {
+    const 明细 = 生理明细.value;
+    editDraft.value['生理周期'] = 明细 ? `${阶段} ${明细}` : 阶段;
+  }
+
+  /** 改明细 → 阶段原样保留; 阶段为空时只写明细 */
+  function 设生理明细(明细: string) {
+    const 阶段 = 生理阶段.value;
+    editDraft.value['生理周期'] = 阶段 ? `${阶段} ${明细}`.trim() : 明细;
   }
 
   return {
@@ -234,6 +434,21 @@ export function 建NPC面板(源: {
     切换恋爱对象: 源.切换恋爱对象,
     情感倾向选项: Object.keys(情感倾向表),
     名分词表,
+    字段控件表: 建字段控件表(),
+    切换标签,
+    草稿标签,
+    生活状态项,
+    设生活状态项,
+    生活状态类目,
+    近期事件项,
+    设近期事件项,
+    近期事件上限,
+    生理阶段,
+    生理明细,
+    周期长度,
+    设生理阶段,
+    设生理明细,
+    生理阶段选项,
   };
 }
 

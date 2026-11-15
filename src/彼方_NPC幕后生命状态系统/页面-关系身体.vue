@@ -48,10 +48,12 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { 身体迹象 } from './身体迹象';
+import { 好感阶段表, 情欲阶段表, 标签词表 } from './恋爱规则';
 
 const props = defineProps<{ card: Record<string, any> }>();
-const 好感档 = ['陌生', '认识', '熟悉', '朋友', '暧昧', '恋人', '挚爱'];
-const 情欲档 = ['无感', '有性趣', '想要', '饥渴'];
+// A13: 档位与词表一律从 恋爱规则.ts 派生, 不在组件里手抄第二份(改词表时界面自动跟随)
+const 好感档 = 好感阶段表.map(阶段 => 阶段.名);
+const 情欲档 = 情欲阶段表.map(阶段 => 阶段.名);
 const 有恋爱 = computed(() =>
   props.card['恋爱对象'] === '是'
   || ['好感值', '情欲值', '恋爱标签', '名分', '恋爱态度'].some(f => String(props.card[f] ?? '').trim() !== ''),
@@ -59,7 +61,8 @@ const 有恋爱 = computed(() =>
 const 标签 = computed(() => {
   const raw = props.card['恋爱标签'];
   const 列表 = Array.isArray(raw) ? raw : String(raw ?? '').split(/[,，、]/);
-  return 列表.map(x => String(x).trim()).filter(Boolean).slice(0, 5);
+  // 词表外的词不显示(与 校验标签 的写回口径一致)
+  return 列表.map(x => String(x).trim()).filter(x => x && 标签词表.includes(x)).slice(0, 5);
 });
 const 周期 = computed(() => {
   const m = String(props.card['生理周期'] ?? '').match(/Day\s*(\d+)\s*\/\s*(\d+)/i);

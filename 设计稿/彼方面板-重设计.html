@@ -1,0 +1,1974 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>彼方面板 · 重设计静态稿</title>
+<style>
+/* ============ 令牌：与 theme.ts 一一对应 ============ */
+.bf-root {
+  --bf-canvas:#10141f; --bf-shell:#171c29; --bf-paper:#212839; --bf-paper-hover:#293145;
+  --bf-field-bg:#131826; --bf-ink:#ece6d8; --bf-secondary:#c8c3b7; --bf-muted:#8e93a3;
+  --bf-line:#262d3e; --bf-control-line:#3a4256;
+  --bf-accent:#e9b46a; --bf-accent-ink:#23180a; --bf-accent-soft:#352c23; --bf-accent-text:#f0c585;
+  --bf-success:#8fc3a0; --bf-danger:#e58f80; --bf-danger-soft:#302329;
+  --bf-success-ink:#0f2412; --bf-success-soft:rgba(143,195,160,.42); --bf-danger-ink:#2b0d09;
+  --bf-love-past:rgba(229,143,156,.38); --bf-desire-past:rgba(191,154,216,.42);
+  --bf-code-bg:#131826; --bf-code-ink:#c8c3b7;
+  --bf-shadow:0 30px 80px rgba(0,0,0,.55), 0 0 0 1px #262d3e;
+  --bf-love:#e79aa8; --bf-love-soft:rgba(231,154,168,.16); --bf-love-ink:#f0b6c0;
+  --bf-desire:#bf9ad8; --bf-desire-soft:rgba(191,154,216,.18);
+  --av1b:#2f4a40; --av1i:#a9d3c0; --av2b:#2f4257; --av2i:#a8c6dd; --av3b:#443a55; --av3i:#cbb9d9;
+  --av4b:#4d3b2c; --av4i:#e6c4a6; --av5b:#44432c; --av5i:#d8d3a0; --av6b:#4d3038; --av6i:#e6b3ba;
+  --tab1:#20273a; --tab2:#251f2c; --tab3:#1d2a2d; --tab4:#29251f; --tab5:#222433; --tab-ink:#9aa0b2;
+  --serif:'Noto Serif SC','Source Han Serif SC','Songti SC',STSong,serif;
+  --mono:ui-monospace,'Cascadia Mono',Consolas,'Courier New',monospace;
+  /* 新增令牌 */
+  --bf-measure:720px;      /* 表单/长文的量宽上限 */
+  --bf-gutter:28px;        /* 页面左右留白 */
+}
+.bf-root[data-theme='light'] {
+  --bf-canvas:#d9dce1; --bf-shell:#f3f0e9; --bf-paper:#eae7df; --bf-paper-hover:#dfdcd3;
+  --bf-field-bg:#fbf9f4; --bf-ink:#28323e; --bf-secondary:#59616b; --bf-muted:#74777b;
+  --bf-line:#c8c5bc; --bf-control-line:#93918b;
+  --bf-accent:#9b6e35; --bf-accent-ink:#fffaf0; --bf-accent-soft:#e8dbc5; --bf-accent-text:#805724;
+  --bf-success:#56765f; --bf-danger:#a35d50; --bf-danger-soft:#f5e6e0;
+  --bf-success-ink:#f5fbf6; --bf-success-soft:rgba(86,118,95,.30); --bf-danger-ink:#fff6f4;
+  --bf-love-past:#e3a4b0; --bf-desire-past:#c9aede;
+  --bf-code-bg:#e7e6e1; --bf-code-ink:#4c5661;
+  --bf-shadow:0 28px 65px rgba(30,40,55,.2), 0 1px 3px rgba(30,40,55,.1);
+  --bf-love:#c2607a; --bf-love-soft:#f8e3e8; --bf-love-ink:#8f3f57;
+  --bf-desire:#8d6aa8; --bf-desire-soft:#efe6f5;
+  --av1b:#d3ece0; --av1i:#2f5c4a; --av2b:#d5e6f5; --av2i:#2c4d6b; --av3b:#e6dbf2; --av3i:#4a3860;
+  --av4b:#f7e2cf; --av4i:#6a4526; --av5b:#efebc8; --av5i:#57522a; --av6b:#f7d9de; --av6i:#6b3540;
+  --tab1:#d8d5ce; --tab2:#ded7df; --tab3:#d5deda; --tab4:#e3dccf; --tab5:#dadbe3; --tab-ink:#686770;
+}
+
+/* ============ 壳 ============ */
+* { box-sizing:border-box; }
+html,body { height:100%; margin:0; }
+body { font:14px/1.7 system-ui,'PingFang SC','Microsoft YaHei',sans-serif; }
+.bf-root { min-height:100%; display:grid; place-items:center; background:var(--bf-canvas); color:var(--bf-ink); padding:28px 0; }
+button,input,select,textarea { font:inherit; color:inherit; }
+button { cursor:pointer; }
+.bf-panel {
+  position:relative; width:min(1120px,95vw); height:min(760px,calc(100vh - 56px));
+  display:grid; grid-template-columns:minmax(0,1fr) 46px; grid-template-rows:auto minmax(0,1fr) auto;
+  grid-template-areas:'bar tabs' 'view tabs' 'status tabs';
+}
+.bf-panel::before { content:''; position:absolute; inset:0 46px 0 0; background:var(--bf-shell); border-radius:14px; box-shadow:var(--bf-shadow); }
+.bf-panel > * { position:relative; }
+.bf-topbar { grid-area:bar; display:flex; align-items:center; gap:16px; padding:14px 20px; border-bottom:1px solid var(--bf-line); }
+.bf-brand { display:flex; align-items:center; gap:10px; }
+.bf-brand-mark { width:22px; height:28px; border-radius:11px 11px 3px 3px; background:radial-gradient(70% 60% at 50% 70%,#ffd89a,#e9a85a 60%,#8a5a2a); }
+.bf-title { font:600 19px/1.2 var(--serif); }
+.bf-subtitle { font-size:12px; color:var(--bf-muted); }
+.bf-crumb { margin-left:auto; font-size:12.5px; color:var(--bf-muted); font-variant-numeric:tabular-nums; }
+.bf-crumb strong { font-weight:500; color:var(--bf-secondary); }
+.bf-topbar-actions { display:flex; align-items:center; gap:8px; flex:none; margin-left:12px; }
+.bf-icon-btn { width:30px; height:30px; border:0; border-radius:8px; background:none; color:var(--bf-muted); }
+.bf-icon-btn:hover { background:var(--bf-paper); color:var(--bf-ink); }
+.bf-rail-foot { grid-area:status; display:flex; align-items:center; gap:8px; padding:8px 20px; border-top:1px solid var(--bf-line); font-size:12px; color:var(--bf-muted); min-height:37px; }
+.bf-dot { width:7px; height:7px; border-radius:50%; background:var(--bf-success); flex:none; }
+.bf-dot.warn { background:var(--bf-accent); } .bf-dot.bad { background:var(--bf-danger); }
+.bf-rail-meta { margin-left:auto; font-variant-numeric:tabular-nums; }
+
+.bf-nav { grid-area:tabs; display:flex; flex-direction:column; gap:5px; padding:30px 0 0; }
+/* 书签：竖排靠 flex 排版（角标在上、竖排文字在下，都按列居中），不再用绝对定位算偏移 */
+.bf-nav-item {
+  width:40px; padding:14px 0; border:0; border-radius:0 8px 8px 0;
+  display:flex; flex-direction:column; align-items:center; gap:6px;
+  background:var(--tab1); color:var(--tab-ink);
+  transition:transform .15s, color .15s; position:relative;
+}
+.bf-nav-label { order:1; writing-mode:vertical-rl; font:600 14px/1.2 var(--serif); letter-spacing:4px; }
+.bf-nav-item:nth-child(2){background:var(--tab2)} .bf-nav-item:nth-child(3){background:var(--tab3)}
+.bf-nav-item:nth-child(4){background:var(--tab4)} .bf-nav-item:nth-child(5){background:var(--tab5)}
+.bf-nav-item:hover { transform:translateX(3px); }
+.bf-nav-item.active { width:46px; transform:translateX(-6px); padding:14px 0; background:var(--bf-shell); color:var(--bf-accent-text); }
+.bf-nav-item.active::after { content:''; position:absolute; left:50%; bottom:8px; width:5px; height:5px; margin-left:-2.5px; border-radius:50%; background:var(--bf-accent); box-shadow:0 0 8px var(--bf-accent); }
+/* 页签上的待办角标（过期事务数 / 报错）：正常流内，横向居中由 flex 保证 */
+.bf-nav-badge { order:0; writing-mode:horizontal-tb; letter-spacing:0; min-width:16px; height:16px; padding:0 4px; border-radius:8px; font:600 10.5px/16px system-ui; background:var(--bf-danger); color:var(--bf-danger-ink); text-align:center; flex:none; }
+
+.bf-main { grid-area:view; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
+/* 激活书签会向左探出 6px：顶栏 / 内容 / 底栏一起让出这 6px，
+   ① 滚动条不会被书签压住 ② 三条发丝线的右端仍然对齐，不会出现"缺一小口" */
+.bf-topbar, .bf-main, .bf-rail-foot { margin-right:6px; }
+.bf-page { flex:1 1 auto; min-width:0; min-height:0; overflow-y:auto; padding:24px var(--bf-gutter) 32px; scrollbar-width:thin; scrollbar-color:var(--bf-control-line) transparent; display:none; }
+.bf-page.on { display:block; animation:bfIn .16s ease-out; }
+@keyframes bfIn { from { opacity:0; transform:translateY(4px); } }
+@media (prefers-reduced-motion:reduce) { * { animation:none !important; transition:none !important; } }
+
+/* ============ 共用部件 ============ */
+.bf-page-head { display:flex; align-items:flex-end; justify-content:space-between; gap:20px; margin-bottom:22px; }
+.bf-page-title { margin:0; font:600 26px/1.25 var(--serif); }
+.bf-page-sub { margin:4px 0 0; color:var(--bf-muted); }
+.bf-actions { display:flex; gap:8px; align-items:center; flex:none; }
+.bf-btn { height:34px; padding:0 14px; border:1px solid var(--bf-control-line); border-radius:8px; background:none; white-space:nowrap; }
+.bf-btn:hover { background:var(--bf-paper); }
+.bf-btn-sm { height:28px; padding:0 10px; font-size:12.5px; }
+.bf-btn-primary { background:var(--bf-accent); border-color:var(--bf-accent); color:var(--bf-accent-ink); font-weight:600; }
+.bf-btn-primary:hover { background:var(--bf-accent-text); }
+.bf-btn-danger { border-color:var(--bf-danger); color:var(--bf-danger); }
+.bf-btn-danger:hover { background:var(--bf-danger-soft); }
+.bf-text-btn { border:0; background:none; padding:0; color:var(--bf-accent-text); font-size:12.5px; }
+.bf-text-btn:hover { text-decoration:underline; }
+.bf-text-btn.danger { color:var(--bf-danger); }
+:is(button,input,select,textarea,summary):focus-visible { outline:2px solid var(--bf-accent); outline-offset:2px; }
+.bf-input,.bf-textarea { width:100%; height:34px; padding:0 10px; border:1px solid var(--bf-control-line); border-radius:8px; background:var(--bf-field-bg); font:13px/1.6 var(--mono); }
+.bf-textarea { height:auto; padding:8px 10px; resize:vertical; }
+.bf-input::placeholder,.bf-textarea::placeholder { color:var(--bf-muted); }
+
+/* 数字条：四个页面共用（仪表盘/事实档案/日志回执） */
+.bf-summary { display:grid; grid-auto-flow:column; grid-auto-columns:minmax(0,1fr); margin:0 0 26px; }
+.bf-summary > * { padding:4px 18px 4px 0; text-align:left; border:0; background:none; }
+.bf-summary > * + * { border-left:1px solid var(--bf-line); padding-left:18px; }
+.bf-summary dt,.bf-summary .k { display:block; color:var(--bf-muted); font-size:12.5px; }
+.bf-summary dd,.bf-summary .v { display:block; margin:0; font:400 30px/1.2 var(--serif); font-variant-numeric:tabular-nums; }
+.bf-summary dd small,.bf-summary .v small { font:13px/1 system-ui; color:var(--bf-muted); margin-left:6px; }
+.bf-summary button.on .k { color:var(--bf-accent-text); }
+.bf-summary button.on .v { color:var(--bf-accent-text); }
+.bf-summary .is-late .v { color:var(--bf-danger); }
+.bf-summary .v.text { font-size:17px; line-height:36px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+.bf-section-head { display:flex; align-items:baseline; justify-content:space-between; gap:14px; padding-bottom:8px; border-bottom:1px solid var(--bf-line); }
+.bf-section-head h3 { margin:0; font:600 16px/1.4 var(--serif); }
+.bf-aside { font-size:12.5px; color:var(--bf-muted); font-variant-numeric:tabular-nums; }
+.bf-hint { margin:4px 0 0; font-size:12.5px; line-height:1.65; color:var(--bf-muted); max-width:62ch; }
+.bf-chip { display:inline-block; padding:0 8px; border-radius:99px; font-size:12px; line-height:20px; background:var(--bf-paper); color:var(--bf-secondary); white-space:nowrap; }
+.bf-chip-changed { background:var(--bf-accent-soft); color:var(--bf-accent-text); }
+.bf-chip-love { background:var(--bf-love-soft); color:var(--bf-love-ink); }
+.bf-chip-late { background:var(--bf-danger-soft); color:var(--bf-danger); }
+.bf-avatar { width:38px; height:38px; flex:none; display:grid; place-items:center; border-radius:19px 19px 6px 6px; font:600 16px/1 var(--serif); }
+.bf-avatar.sm { width:26px; height:26px; border-radius:13px 13px 4px 4px; font-size:12px; }
+.bf-avatar.lg { width:52px; height:62px; border-radius:26px 26px 8px 8px; font-size:22px; }
+.t1{background:var(--av1b);color:var(--av1i)} .t2{background:var(--av2b);color:var(--av2i)} .t3{background:var(--av3b);color:var(--av3i)}
+.t4{background:var(--av4b);color:var(--av4i)} .t5{background:var(--av5b);color:var(--av5i)} .t6{background:var(--av6b);color:var(--av6i)}
+.bf-seg { display:inline-flex; flex:none; border:1px solid var(--bf-control-line); border-radius:8px; overflow:hidden; }
+.bf-seg button { height:28px; padding:0 12px; border:0; background:none; font-size:12.5px; color:var(--bf-muted); white-space:nowrap; }
+.bf-seg button + button { border-left:1px solid var(--bf-control-line); }
+.bf-seg button.on { background:var(--bf-accent-soft); color:var(--bf-accent-text); }
+
+/* 空状态：左对齐、给下一步，不再 margin:auto */
+.bf-empty { display:flex; gap:18px; align-items:flex-start; padding:28px 0; max-width:var(--bf-measure); }
+.bf-empty-glyph { width:44px; height:56px; flex:none; border:1.5px dashed var(--bf-control-line); border-radius:22px 22px 6px 6px; }
+.bf-empty h4 { margin:0 0 4px; font:600 16px/1.4 var(--serif); }
+.bf-empty p { margin:0 0 12px; color:var(--bf-muted); }
+
+/* ============ 此刻的彼方 ============ */
+.bf-add-inline { display:flex; gap:6px; }
+.bf-add-inline .bf-input { width:170px; height:28px; }
+.bf-people { list-style:none; margin:0; padding:0; }
+.bf-person { display:grid; grid-template-columns:3px 38px minmax(0,1fr) auto; gap:0 14px; align-items:center; padding:12px 8px 12px 0; border-bottom:1px solid var(--bf-line); cursor:pointer; }
+.bf-person:hover { background:var(--bf-paper); }
+.bf-person::before { content:''; align-self:stretch; border-radius:2px; }
+.bf-person.is-changed::before { background:var(--bf-accent); }
+.bf-person-top { display:flex; align-items:baseline; gap:10px; }
+.bf-person-name { font:600 16px/1.4 var(--serif); }
+.bf-person-place { font-size:12.5px; color:var(--bf-muted); }
+.bf-person-doing { color:var(--bf-secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.bf-person-tags { display:flex; gap:6px; align-items:center; margin-left:auto; flex-wrap:wrap; row-gap:5px; }
+.bf-person-del { opacity:0; border:0; background:none; color:var(--bf-muted); width:26px; height:26px; border-radius:6px; }
+.bf-person:hover .bf-person-del,.bf-person-del:focus-visible { opacity:1; }
+.bf-person-del:hover { color:var(--bf-danger); background:var(--bf-danger-soft); }
+.bf-dashboard-foot { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-top:22px; }
+
+/* ============ 人物 ============ */
+.bf-page.bf-npc.on { display:grid; grid-template-columns:200px minmax(0,1fr); padding:0; overflow:hidden; }
+.bf-directory { border-right:1px solid var(--bf-line); padding:20px 10px; overflow-y:auto; }
+.bf-dir-list { display:flex; flex-direction:column; }
+.bf-dir-head { display:flex; justify-content:space-between; padding:0 10px 8px; font-size:12.5px; color:var(--bf-muted); }
+.bf-dir-item { display:flex; align-items:center; gap:10px; width:100%; padding:7px 10px; border:0; border-radius:8px; background:none; text-align:left; }
+.bf-dir-item:hover { background:var(--bf-paper); }
+.bf-dir-item.active { background:var(--bf-accent-soft); }
+.bf-dir-item.active .bf-dir-name { color:var(--bf-accent-text); }
+.bf-dir-name { display:block; line-height:1.35; }
+.bf-dir-place { display:block; font-size:12px; color:var(--bf-muted); line-height:1.35; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.bf-dir-mark { margin-left:auto; width:6px; height:6px; border-radius:50%; background:var(--bf-accent); }
+.bf-dir-mark.late { background:var(--bf-danger); }
+.bf-profile { overflow-y:auto; padding:24px var(--bf-gutter) 36px; scrollbar-width:thin; scrollbar-color:var(--bf-control-line) transparent; }
+.bf-profile > * { max-width:820px; }
+.bf-profile-head { display:flex; gap:16px; align-items:center; margin-bottom:20px; }
+.bf-profile-name { margin:0; font:600 26px/1.25 var(--serif); }
+.bf-profile-meta { color:var(--bf-muted); font-size:13px; }
+.bf-profile-actions { margin-left:auto; display:flex; gap:8px; }
+/* “当前在做”：整页唯一的一块纸面，衬线大字 */
+.bf-now { background:var(--bf-paper); border-radius:10px; padding:16px 20px; margin-bottom:28px; }
+.bf-label { font-size:12.5px; color:var(--bf-muted); }
+.bf-now-doing { margin:2px 0 12px; font:400 19px/1.6 var(--serif); max-width:34em; text-wrap:pretty; }
+.bf-now-doing.is-long { font-size:16px; line-height:1.85; max-width:38em; }
+.bf-now-side { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; margin:0; padding-top:12px; border-top:1px solid var(--bf-line); }
+.bf-now-side dt { font-size:12.5px; color:var(--bf-muted); }
+.bf-now-side dd { margin:0; text-wrap:pretty; }
+.bf-now-cell.is-state { grid-column:2 / -1; }
+.bf-now-cell.is-state.is-long { grid-column:1 / -1; }
+.bf-now-cell.is-state.is-long dd { font-size:13.5px; line-height:1.75; color:var(--bf-secondary); max-width:44em; }
+.bf-block { margin-bottom:30px; }
+.bf-ledger-list { list-style:none; margin:0; padding:0; }
+.bf-ledger-item { display:grid; grid-template-columns:3px 20px minmax(0,1fr) auto; gap:0 12px; align-items:start; padding:10px 0; border-bottom:1px solid var(--bf-line); }
+.bf-ledger-item::before { content:''; align-self:stretch; border-radius:2px; background:var(--bf-line); }
+.bf-ledger-item.is-late::before { background:var(--bf-danger); }
+.bf-ledger-item.is-soon::before { background:var(--bf-accent); }
+.bf-check { width:18px; height:18px; margin-top:3px; padding:0; border:1.5px solid var(--bf-control-line); border-radius:5px; background:none; font-size:11px; line-height:1; color:var(--bf-accent-ink); }
+.bf-check.checked { background:var(--bf-accent); border-color:var(--bf-accent); }
+.bf-ledger-item.is-done .bf-ledger-text { color:var(--bf-muted); text-decoration:line-through; }
+.bf-ledger-sub { font-size:12.5px; color:var(--bf-muted); }
+.bf-ledger-sub .late { color:var(--bf-danger); } .bf-ledger-sub .soon { color:var(--bf-accent-text); }
+.bf-ledger-editor { display:none; grid-column:3 / -1; gap:8px; align-items:center; flex-wrap:wrap; }
+.bf-ledger-item.open .bf-ledger-editor { display:flex; }
+.bf-led-res { flex:1 1 160px; min-width:0; }
+.bf-led-new { flex:1 1 180px; min-width:0; }
+.bf-ledger-add { margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.bf-now-life { margin:12px 0 0; padding-top:10px; border-top:1px dashed var(--bf-line); display:flex; flex-wrap:wrap; gap:6px 18px; font-size:12.5px; color:var(--bf-secondary); }
+.bf-now-life b { color:var(--bf-muted); font-weight:500; margin-right:4px; }
+/* ===== 关系 / 身体：沿用旧版（页面-关系身体.vue）的样式与布局 ===== */
+.bf-block-aside { color:var(--bf-muted); font-size:12.5px; }
+.bf-block-aside b { color:var(--bf-ink); font-weight:600; }
+.bf-love-row { display:grid; grid-template-columns:36px minmax(0,1fr) 44px; gap:12px; align-items:center; margin:8px 0; }
+.bf-love-axis,.bf-love-num { color:var(--bf-muted); font-size:13px; }
+.bf-love-num { text-align:right; font-variant-numeric:tabular-nums; }
+.bf-scale { display:flex; gap:3px; }
+.bf-scale-step { flex:1; display:grid; gap:4px; min-width:0; }
+.bf-scale-step i { display:block; height:6px; border-radius:3px; background:var(--bf-line); }
+.bf-scale-step b { font-weight:400; font-size:11.5px; color:var(--bf-muted); text-align:center; white-space:nowrap; }
+.bf-scale-affection .is-past i { background:var(--bf-love-past); }
+.bf-scale-affection .is-now i { background:var(--bf-love); }
+.bf-scale-desire .is-past i { background:var(--bf-desire-past); }
+.bf-scale-desire .is-now i { background:var(--bf-desire); }
+.bf-scale-step.is-now b { color:var(--bf-ink); font-weight:600; }
+.bf-love-attitude { margin:12px 0 6px; font-family:var(--serif); font-size:16px; }
+.bf-love-tags { display:flex; flex-wrap:wrap; gap:5px; margin:0 0 8px; }
+.bf-love-trend { margin:2px 0; font-size:12.5px; color:var(--bf-muted); }
+.bf-love-trend span { display:inline-block; width:64px; }
+.bf-love-Paused { font-size:12px; color:var(--bf-accent-text); padding:2px 8px; border-radius:99px; background:var(--bf-accent-soft); }
+.bf-body-stage { margin:0 0 8px; font-size:15px; font-variant-numeric:tabular-nums; }
+.bf-cycle { display:flex; gap:2px; }
+.bf-cycle i { flex:1; height:16px; border-radius:2px; opacity:.5; }
+.bf-cycle .bf-cycle-men { background:#d9707a; }
+.bf-cycle .bf-cycle-fol { background:#7ea6d8; }
+.bf-cycle .bf-cycle-ovu { background:#e9b46a; }
+.bf-cycle .bf-cycle-lut { background:#9bb98c; }
+.bf-cycle .is-today { opacity:1; outline:2px solid var(--bf-ink); outline-offset:1px; }
+.bf-cycle-legend { display:flex; gap:14px; margin:6px 0 0; font-size:12px; color:var(--bf-muted); }
+.bf-cycle-legend span::before { content:''; display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:5px; }
+.bf-lg-men::before { background:#d9707a; } .bf-lg-fol::before { background:#7ea6d8; }
+.bf-lg-ovu::before { background:#e9b46a; } .bf-lg-lut::before { background:#9bb98c; }
+/* 亮色下这两处固定色偏淡，单独加深一档（阶段色本身是语义色，不随主题反转） */
+.bf-root[data-theme='light'] .bf-cycle i { opacity:.66; }
+.bf-root[data-theme='light'] .bf-preg-bar i { background:#5f9a95; }
+.bf-root[data-theme='light'] .bf-brand-mark { box-shadow:0 0 0 1px rgba(120,80,30,.18); }
+.bf-preg-bar { height:8px; border-radius:4px; background:var(--bf-line); overflow:hidden; }
+.bf-preg-bar i { display:block; height:100%; background:#8fc3c0; }
+.bf-body-note { margin:8px 0 0; color:var(--bf-secondary); font-size:14px; }
+.bf-notes-group { margin:16px 0 4px; font-size:12.5px; font-weight:600; color:var(--bf-accent-text); letter-spacing:.04em; }
+.bf-notes-grid { display:grid; grid-template-columns:108px minmax(0,1fr); margin:0; }
+.bf-notes-grid dt,.bf-notes-grid dd { margin:0; padding:7px 0; border-bottom:1px solid var(--bf-line); }
+.bf-notes-grid dd { text-wrap:pretty; line-height:1.72; }
+.bf-notes-grid dt { white-space:nowrap; }
+/* 编辑态：受控字段的组合控件 */
+.bf-compose { display:flex; flex-direction:column; gap:6px; }
+.bf-compose-grid { gap:6px; }
+.bf-part { display:grid; grid-template-columns:64px minmax(0,1fr); gap:8px; align-items:center; }
+.bf-part > span { font-size:12px; color:var(--bf-muted); }
+.bf-tagpick-wrap { flex-direction:row; flex-wrap:wrap; gap:5px; }
+.bf-tagpick { padding:3px 9px; border:1px solid var(--bf-control-line); border-radius:99px; background:none; font-size:12.5px; color:var(--bf-muted); }
+.bf-tagpick:hover { border-color:var(--bf-love); color:var(--bf-love-ink); }
+.bf-tagpick.on { border-color:var(--bf-love); background:var(--bf-love-soft); color:var(--bf-love-ink); font-weight:500; }
+.bf-tagpick[disabled] { opacity:.45; }
+.bf-field-hint { display:block; margin-top:3px; font-size:11.5px; font-style:normal; color:var(--bf-muted); line-height:1.5; }
+.bf-demo-row { margin:-10px 0 18px; display:flex; flex-wrap:wrap; align-items:center; gap:4px; }
+.bf-demo-row .bf-text-btn { color:var(--bf-accent-text); }
+.bf-notes-grid dt { color:var(--bf-muted); font-size:13px; padding-right:10px; }
+.bf-scale-line { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px 16px; padding:8px 12px; margin-bottom:14px; border-radius:8px; border:1px solid var(--bf-line); background:var(--bf-paper); font-size:12.5px; color:var(--bf-secondary); }
+.bf-scale-line[data-bf-scale-warn="1"] { border-color:var(--bf-warning); background:var(--bf-accent-soft); color:var(--bf-accent-text); }
+.bf-modal-backdrop { position:fixed; inset:0; background:var(--bf-scrim); z-index:40; display:none; }
+.bf-modal-backdrop.open { display:block; }
+.bf-modal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); width:min(480px,92vw); max-height:86vh; overflow:auto; background:var(--bf-shell); border:1px solid var(--bf-control-line); border-radius:var(--bf-radius-xl); box-shadow:var(--bf-shadow); padding:20px 22px; z-index:41; display:none; }
+.bf-modal.open { display:block; }
+.bf-modal-head { display:flex; justify-content:space-between; align-items:center; padding-bottom:10px; margin-bottom:12px; border-bottom:1px solid var(--bf-line); }
+.bf-modal-title { margin:0; font:600 17px/1.3 var(--serif); }
+.bf-modal-row { display:grid; grid-template-columns:84px minmax(0,1fr); gap:8px 12px; align-items:start; margin-bottom:10px; }
+.bf-modal-radio { display:flex; gap:8px; align-items:center; margin-bottom:8px; cursor:pointer; font-size:13.5px; }
+.bf-modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; padding-top:12px; border-top:1px solid var(--bf-line); }
+
+/* ============ 事实档案 ============ */
+.bf-led-tools { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+.bf-led-group-title { margin:18px 0 0; padding-bottom:6px; border-bottom:1px solid var(--bf-line); font:600 15px/1.4 var(--serif); display:flex; gap:8px; align-items:baseline; }
+.bf-led-group-title span { font:12.5px/1 system-ui; color:var(--bf-muted); }
+.bf-led-row { display:grid; grid-template-columns:3px 26px minmax(0,1fr) auto; gap:0 12px; align-items:start; width:100%; padding:11px 8px 11px 0; border:0; border-bottom:1px solid var(--bf-line); background:none; text-align:left; }
+.bf-led-row:hover { background:var(--bf-paper); }
+.bf-led-row::before { content:''; align-self:stretch; border-radius:2px; background:var(--bf-line); }
+.bf-led-row.is-late::before { background:var(--bf-danger); }
+.bf-led-row.is-soon::before { background:var(--bf-accent); }
+.bf-led-claim { display:block; }
+.bf-led-row.is-done .bf-led-claim { color:var(--bf-muted); }
+.bf-led-meta { display:block; font-size:12.5px; color:var(--bf-muted); }
+.bf-led-meta b { font-weight:400; color:var(--bf-secondary); }
+.bf-led-due { font-size:12.5px; white-space:nowrap; color:var(--bf-muted); font-variant-numeric:tabular-nums; padding-top:2px; }
+.is-late .bf-led-due { color:var(--bf-danger); } .is-soon .bf-led-due { color:var(--bf-accent-text); }
+.bf-stamp { display:inline-block; margin-left:6px; padding:0 5px; border:1px solid currentColor; border-radius:3px; font-size:11px; line-height:16px; color:var(--bf-accent-text); transform:rotate(-2deg); }
+.bf-stamp.void { color:var(--bf-muted); }
+
+/* ============ 日志 ============ */
+.bf-log-alert { display:flex; gap:12px; align-items:center; padding:10px 14px; margin-bottom:20px; border-left:3px solid var(--bf-danger); border-radius:0 8px 8px 0; background:var(--bf-danger-soft); }
+.bf-log-alert b { color:var(--bf-danger); font-weight:600; }
+.bf-log-alert code { font:12.5px var(--mono); color:var(--bf-secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; flex:1; }
+.bf-tabs { display:flex; gap:22px; border-bottom:1px solid var(--bf-line); }
+.bf-tabs button { padding:6px 0 8px; border:0; border-bottom:2px solid transparent; margin-bottom:-1px; background:none; color:var(--bf-muted); white-space:nowrap; }
+.bf-tabs button.on { color:var(--bf-accent-text); border-color:var(--bf-accent); }
+.bf-tabs button small { margin-left:5px; font-size:12px; color:var(--bf-muted); font-variant-numeric:tabular-nums; }
+.bf-codebox { position:relative; margin:12px 0 30px; }
+.bf-code { margin:0; height:230px; overflow:auto; padding:14px 16px; border-radius:10px; background:var(--bf-code-bg); color:var(--bf-code-ink); font:12.5px/1.7 var(--mono); white-space:pre-wrap; word-break:break-word; scrollbar-width:thin; scrollbar-color:var(--bf-control-line) transparent; }
+.bf-codebox .bf-btn { position:absolute; top:8px; right:14px; background:var(--bf-shell); }
+.bf-console { list-style:none; margin:10px 0 0; padding:0; max-height:300px; overflow:auto; font:12.5px/1.75 var(--mono); }
+.bf-console li { display:grid; grid-template-columns:64px 44px minmax(0,1fr); gap:10px; padding:2px 0 2px 10px; border-left:2px solid transparent; color:var(--bf-secondary); }
+.bf-console time,.bf-console .lv { color:var(--bf-muted); }
+.bf-console .warn { border-left-color:var(--bf-accent); } .bf-console .warn .lv { color:var(--bf-accent-text); }
+.bf-console .error { border-left-color:var(--bf-danger); background:var(--bf-danger-soft); } .bf-console .error .lv,.bf-console .error span:last-child { color:var(--bf-danger); }
+/* ============ 设置：左侧分组索引 + 720px 量宽表单 ============ */
+.bf-page.bf-page-settings.on { display:grid; grid-template-columns:172px minmax(0,1fr); padding:0; overflow:hidden; }
+.bf-set-nav { border-right:1px solid var(--bf-line); padding:20px 10px; overflow-y:auto; display:flex; flex-direction:column; gap:3px; }
+.bf-set-nav-head { padding:0 10px 8px; font-size:12px; color:var(--bf-muted); }
+.bf-set-link { display:block; width:100%; padding:8px 10px; border:0; border-radius:8px; background:none; text-align:left; }
+.bf-set-link:hover { background:var(--bf-paper); }
+.bf-set-link.active { background:var(--bf-accent-soft); }
+.bf-set-link b { display:block; font-weight:500; font-size:13.5px; line-height:1.35; }
+.bf-set-link.active b { color:var(--bf-accent-text); }
+.bf-set-link span { display:block; font-size:11.5px; color:var(--bf-muted); line-height:1.35; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.bf-set-body { overflow-y:auto; padding:24px var(--bf-gutter) 44px; scroll-behavior:smooth; scrollbar-width:thin; scrollbar-color:var(--bf-control-line) transparent; }
+.bf-set-body > * { max-width:var(--bf-measure); }
+.bf-setting-group { padding:22px 0 26px; border-top:1px solid var(--bf-line); }
+.bf-setting-group:first-of-type { padding-top:4px; border-top:0; }
+.bf-set-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:14px; }
+.bf-set-head h3 { margin:0; font:600 17px/1.35 var(--serif); }
+.bf-set-aside { font-size:12.5px; color:var(--bf-muted); font-variant-numeric:tabular-nums; }
+details.bf-setting-group > summary { list-style:none; cursor:pointer; }
+details.bf-setting-group > summary::-webkit-details-marker { display:none; }
+details.bf-setting-group > summary .bf-set-head { margin-bottom:0; }
+details.bf-setting-group[open] > summary .bf-set-head { margin-bottom:14px; }
+details.bf-setting-group > summary h3::after { content:'▸'; margin-left:8px; font:12px/1 system-ui; color:var(--bf-muted); display:inline-block; transition:transform .15s; }
+details.bf-setting-group[open] > summary h3::after { transform:rotate(90deg); }
+.bf-subgroup-title { margin:18px 0 8px; font-size:12.5px; font-weight:600; color:var(--bf-secondary); letter-spacing:.02em; }
+
+.bf-set-row { display:grid; grid-template-columns:112px minmax(0,1fr); gap:12px; align-items:center; padding:7px 0; }
+.bf-set-row.align-top { align-items:start; }
+.bf-set-row.align-top .bf-form-label { padding-top:6px; }
+.bf-form-label { font-size:13.5px; color:var(--bf-secondary); }
+.bf-row-ctrl { display:flex; gap:8px; align-items:center; flex-wrap:wrap; min-width:0; }
+.bf-row-ctrl > .bf-input { flex:1; min-width:160px; }
+.bf-select { width:100%; max-width:100%; height:34px; padding:0 10px; border:1px solid var(--bf-control-line); border-radius:8px; background:var(--bf-field-bg); font-size:13px; }
+.bf-set-num { width:92px !important; flex:none !important; text-align:right; font-variant-numeric:tabular-nums; }
+.bf-preset-bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:10px 12px; margin-bottom:12px; border-radius:8px; background:var(--bf-paper); }
+.bf-preset-bar .bf-form-label { font-size:12.5px; color:var(--bf-muted); margin-right:2px; }
+.bf-preset-bar .bf-select,.bf-preset-bar .bf-input { height:28px; font-size:12.5px; }
+.bf-preset-sep { width:1px; height:16px; background:var(--bf-line); margin:0 4px; }
+
+.bf-model-wrap { position:relative; flex:1; min-width:180px; display:flex; }
+.bf-model-wrap .bf-input { padding-right:32px; }
+.bf-model-toggle { position:absolute; right:4px; top:4px; width:26px; height:26px; border:0; border-radius:6px; background:none; color:var(--bf-muted); }
+.bf-model-toggle:hover { background:var(--bf-paper); color:var(--bf-ink); }
+.bf-model-cand { display:none; position:absolute; z-index:10; left:0; right:0; top:calc(100% + 4px); max-height:190px; overflow-y:auto; margin:0; padding:4px; list-style:none; border:1px solid var(--bf-control-line); border-radius:8px; background:var(--bf-shell); box-shadow:var(--bf-shadow); }
+.bf-model-cand.open { display:block; }
+.bf-model-cand li { padding:6px 10px; border-radius:6px; font:12.5px var(--mono); cursor:pointer; display:flex; justify-content:space-between; }
+.bf-model-cand li:hover,.bf-model-cand li.active { background:var(--bf-accent-soft); color:var(--bf-accent-text); }
+.bf-test-res { font-size:12.5px; color:var(--bf-success); font-variant-numeric:tabular-nums; }
+.bf-test-res.err { color:var(--bf-danger); }
+
+.bf-switch-row { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:10px 0; cursor:pointer; }
+.bf-switch-row + .bf-switch-row { border-top:1px solid var(--bf-line); }
+.bf-switch-copy b { display:block; font-weight:500; }
+.bf-switch-copy span { display:block; font-size:12.5px; color:var(--bf-muted); }
+.bf-switch { appearance:none; width:38px; height:22px; border-radius:99px; border:1px solid var(--bf-control-line); background:var(--bf-field-bg); position:relative; flex:none; cursor:pointer; transition:background .15s, border-color .15s; }
+.bf-switch::after { content:''; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:var(--bf-muted); transition:transform .15s, background .15s; }
+.bf-switch:checked { background:var(--bf-accent); border-color:var(--bf-accent); }
+.bf-switch:checked::after { transform:translateX(16px); background:var(--bf-accent-ink); }
+/* 从属子项：缩进 + 左竖线，直观表达开关管辖关系 */
+.bf-set-sub { margin:2px 0 10px 6px; padding:6px 0 6px 16px; border-left:2px solid var(--bf-line); }
+.bf-set-sub.is-off { opacity:.45; pointer-events:none; }
+.bf-set-pairs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px 20px; margin-top:6px; }
+.bf-field-block label { display:block; font-size:13px; color:var(--bf-secondary); margin-bottom:4px; }
+.bf-danger-foot { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:8px; padding-top:8px; border-top:1px dashed var(--bf-line); font-size:12.5px; color:var(--bf-muted); }
+
+.bf-set-seg-card { padding:12px 14px; margin:10px 0; border:1px solid var(--bf-line); border-radius:10px; background:var(--bf-paper); }
+.bf-set-seg-grid { display:grid; grid-template-columns:1fr 150px; gap:8px; margin-bottom:8px; }
+.bf-set-seg-foot { display:flex; justify-content:space-between; align-items:center; margin-top:8px; font-size:12.5px; color:var(--bf-muted); }
+.bf-fold { margin-top:10px; border-top:1px solid var(--bf-line); padding-top:8px; }
+.bf-fold > summary { cursor:pointer; font-size:12.5px; color:var(--bf-accent-text); }
+.bf-set-order { margin:8px 0 0; padding:10px 12px; border-radius:8px; background:var(--bf-code-bg); color:var(--bf-code-ink); font:12px/1.7 var(--mono); white-space:pre-wrap; }
+
+/* ============ 窄屏适配 ============ */
+@media (max-width:1050px) {
+  .bf-root { --bf-gutter:20px; }
+  .bf-page.bf-npc.on { grid-template-columns:176px minmax(0,1fr); }
+  .bf-page.bf-page-settings.on { grid-template-columns:148px minmax(0,1fr); }
+  .bf-tabs { flex-wrap:wrap; gap:4px 18px; }
+  .bf-log-alert code { white-space:normal; overflow-wrap:anywhere; }
+  .bf-summary dd,.bf-summary .v { font-size:26px; }
+}
+@media (max-width:800px) {
+  .bf-root { padding:0; --bf-gutter:16px; }
+  .bf-panel { width:100vw; height:100dvh; grid-template-columns:minmax(0,1fr); grid-template-rows:auto auto minmax(0,1fr) auto; grid-template-areas:'bar' 'tabs' 'view' 'status'; }
+  .bf-panel::before { inset:0; border-radius:0; }
+  .bf-main { margin-right:0; }
+  .bf-topbar, .bf-rail-foot { margin-right:0; }
+  /* 顶栏：剧情时间/上次更新换到第二行常显，不再直接隐藏 */
+  .bf-topbar { flex-wrap:wrap; gap:10px 12px; padding:10px 14px; }
+  .bf-crumb { order:3; flex:1 0 100%; margin-left:0; font-size:11.5px; white-space:nowrap; overflow-x:auto; scrollbar-width:none; }
+  /* 动作组留在第一行并靠右（不再跟着品牌挤在左边） */
+  .bf-topbar-actions { order:2; margin-left:auto; }
+  .bf-crumb::-webkit-scrollbar { display:none; }
+  /* 竖排书签轨 → 顶部横排，可横向滚动 */
+  .bf-nav { flex-direction:row; padding:0 10px; gap:4px; border-bottom:1px solid var(--bf-line); overflow-x:auto; scrollbar-width:none; }
+  .bf-nav::-webkit-scrollbar { display:none; }
+  /* 关键：激活态宽度/位移也必须一起覆盖，否则 .bf-nav-item.active 的 46px 宽 + translateX 会让
+     「此刻的彼方」「事实档案」这类长标签溢出自己的按钮、被后面的书签压住 */
+  .bf-nav-item, .bf-nav-item.active { width:auto; flex:none; flex-direction:row; gap:5px; padding:9px 12px 11px; border-radius:6px 6px 0 0; transform:none; }
+  .bf-nav-label { order:0; writing-mode:horizontal-tb; letter-spacing:0; font:600 14px/1.2 var(--serif); white-space:nowrap; }
+  .bf-nav-badge { order:1; }
+  .bf-nav-item:hover { transform:none; }
+  /* 横排时激活指示改为底部发光下划线，不再用贴在字边上的圆点 */
+  .bf-nav-item.active::after {
+    content:''; position:absolute; left:10px; right:10px; top:auto; bottom:3px;
+    width:auto; height:2px; margin-left:0; border-radius:2px;
+    background:var(--bf-accent); box-shadow:0 0 6px var(--bf-accent);
+  }
+  .bf-page { padding:18px var(--bf-gutter) 26px; }
+  /* 页头：标题不再被动作组挤成竖排 */
+  .bf-page-head { flex-wrap:wrap; align-items:flex-start; gap:10px 14px; }
+  .bf-page-title { font-size:22px; }
+  .bf-actions { flex:1 1 auto; min-width:0; flex-wrap:wrap; margin-left:auto; justify-content:flex-end; }
+  /* 人物 / 设置：索引列转横向滚动条 */
+  .bf-page.bf-npc.on,.bf-page.bf-page-settings.on { grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); }
+  .bf-directory { display:block; }
+  .bf-dir-list { flex-direction:row; gap:6px; }
+  .bf-directory,.bf-set-nav { flex-direction:row; border-right:0; border-bottom:1px solid var(--bf-line); padding:8px 12px; overflow-x:auto; overflow-y:hidden; gap:6px; scrollbar-width:none; }
+  .bf-directory::-webkit-scrollbar,.bf-set-nav::-webkit-scrollbar { display:none; }
+  .bf-dir-head,.bf-set-nav-head,.bf-set-link span,.bf-dir-place { display:none; }
+  .bf-dir-item,.bf-set-link { width:auto; flex:none; white-space:nowrap; padding:6px 10px; }
+  .bf-profile { padding:18px var(--bf-gutter) 32px; }
+  .bf-profile-head { flex-wrap:wrap; gap:12px; }
+  .bf-profile-name { font-size:22px; }
+  .bf-profile-meta { font-size:12px; }
+  .bf-profile-actions { margin-left:0; width:100%; flex-wrap:wrap; }
+  .bf-summary { grid-auto-flow:row; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 0; }
+  .bf-summary > *:nth-child(odd) { border-left:0; padding-left:0; }
+  .bf-set-row,.bf-set-pairs,.bf-set-seg-grid { grid-template-columns:minmax(0,1fr); gap:6px; }
+  .bf-dashboard-foot { flex-wrap:wrap; }
+  .bf-tabs { gap:16px; overflow-x:auto; scrollbar-width:none; }
+  .bf-tabs::-webkit-scrollbar { display:none; }
+  .bf-tabs button { white-space:nowrap; }
+  .bf-log-alert { flex-wrap:wrap; }
+  .bf-log-alert code { flex:1 0 100%; }
+  .bf-rail-foot { flex-wrap:wrap; row-gap:0; }
+}
+
+/* ============ 窄屏适配：手机竖屏 ============ */
+@media (max-width:560px) {
+  .bf-root { --bf-gutter:14px; }
+  .bf-title { font-size:17px; }
+  /* 统计/元数据行：手机上数字收小、长文本换行显示，不再单行截断 */
+  .bf-summary dd,.bf-summary .v { font-size:24px; }
+  .bf-summary .v.text { white-space:normal; line-height:1.45; font-size:15px; overflow:visible; }
+  .bf-summary .v.text small { display:block; margin-left:0; font-size:12px; }
+  .bf-nav-item, .bf-nav-item.active { padding:8px 9px 10px; }
+  .bf-nav-label { font-size:13px; }
+  /* 人物头部：头像与姓名同一行，动作组整行下移 */
+  .bf-profile-head { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; gap:10px 12px; }
+  .bf-profile-actions { grid-column:1 / -1; width:auto; }
+  .bf-rail-meta { display:none; }
+  /* 人物行：头像 + 文本，胶囊独占一行，避免姓名/位置被压成竖排 */
+  .bf-person { grid-template-columns:3px 32px minmax(0,1fr) 24px; gap:6px 10px; padding:10px 4px 10px 0; }
+  .bf-person-top { flex-wrap:wrap; row-gap:3px; }
+  .bf-person-tags { width:100%; margin-left:0; }
+  .bf-person-doing { white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+  /* 焦点纸面与字段表在手机上单列 */
+  .bf-now { padding:14px; }
+  .bf-now-doing { font-size:17px; }
+  .bf-now-side { grid-template-columns:minmax(0,1fr); gap:10px; }
+  .bf-now-side > div { grid-column:auto !important; }
+  .bf-notes-grid { grid-template-columns:88px minmax(0,1fr); }
+  .bf-notes-grid dt { font-size:13px; white-space:nowrap; }  .bf-notes-grid dd { font-size:13.5px; }
+  /* 16px：避免 iOS 聚焦输入框时自动放大页面 */
+  .bf-input,.bf-select,.bf-textarea { font-size:16px; }
+  .bf-modal-row { grid-template-columns:minmax(0,1fr); gap:2px; }
+  /* 弹窗改底部抽屉 */
+  .bf-modal { top:auto; bottom:0; left:0; width:100vw; max-height:88dvh; transform:none; border-radius:16px 16px 0 0; padding:18px 16px calc(18px + env(safe-area-inset-bottom)); }
+  .bf-modal-actions > * { flex:1; }
+  /* 账本行：到期信息折到正文下方；行内编辑器改纵向堆叠，避免状态切换器被挤出屏幕 */
+  .bf-led-row { grid-template-columns:3px 24px minmax(0,1fr); gap:2px 10px; padding:10px 4px 10px 0; }
+  .bf-led-due { grid-column:3; padding-top:0; }
+  .bf-ledger-editor { grid-column:1 / -1; flex-direction:column; align-items:stretch; margin-top:8px; }
+  .bf-ledger-editor .bf-input { flex:1 1 auto; }
+  .bf-ledger-editor .bf-seg { display:flex; width:100%; }
+  .bf-ledger-editor .bf-seg button { flex:1; padding:0 6px; }
+  .bf-ledger-add .bf-btn-sm, .bf-ledger-add .bf-text-btn { flex:none; }
+  .bf-code { height:190px; font-size:12px; }
+  .bf-btn { padding:0 12px; }
+  /* 工具条与代码标签在手机上换行，避免挤成竖排/横向溢出 */
+  .bf-led-tools { flex-wrap:wrap; gap:8px; }
+  .bf-tabs { flex-wrap:wrap; gap:6px 18px; }
+  .bf-log-alert code { white-space:normal; overflow-wrap:anywhere; }
+}
+
+/* ===== 更新状态动效：顶栏与主体之间那条分割线上的光效（不弹浮层、不遮挡内容） ===== */
+.bf-topbar::after {
+  content:''; position:absolute; left:0; right:0; bottom:-1px; height:2px;
+  pointer-events:none; opacity:0; transition:opacity .24s ease;
+  background:linear-gradient(90deg, transparent, var(--bf-accent), transparent);
+  background-size:38% 100%; background-repeat:no-repeat; background-position:-40% 0;
+}
+/* 运行中：一段暖光沿分割线反复扫过 + 轻微外发光 */
+.bf-panel.is-running .bf-topbar::after {
+  opacity:1;
+  box-shadow:0 0 10px var(--bf-accent-soft);
+  animation:bfLineSweep 1.7s linear infinite;
+}
+/* 成功：整条线一次绿闪 */
+.bf-panel.is-ok .bf-topbar::after {
+  opacity:1; background:var(--bf-success); background-size:100% 100%;
+  box-shadow:0 0 12px var(--bf-success-soft);
+  animation:bfLineFlash 1.1s ease-out forwards;
+}
+/* 失败：整条线红闪两下 */
+.bf-panel.is-err .bf-topbar::after {
+  opacity:1; background:var(--bf-danger); background-size:100% 100%;
+  box-shadow:0 0 12px var(--bf-danger-soft);
+  animation:bfLineFlash 1.4s ease-out 2 forwards;
+}
+@keyframes bfLineSweep { from { background-position:-40% 0; } to { background-position:140% 0; } }
+@keyframes bfLineFlash { 0% { opacity:0; } 25% { opacity:1; } 100% { opacity:0; } }
+/* 底栏指示灯与状态文字：运行时呼吸放大、成功后常绿、失败常红 */
+.bf-dot.is-running { animation:bfDotPulse 1s ease-in-out infinite; }
+@keyframes bfDotPulse { 50% { transform:scale(1.55); opacity:.55; } }
+#runText.is-running { color:var(--bf-accent-text); }
+#runText.is-ok { color:var(--bf-success); }
+#runText.is-err { color:var(--bf-danger); }
+#runText.clickable { cursor:pointer; text-decoration:underline dotted; text-underline-offset:3px; }
+#runText.clickable:hover { color:var(--bf-ink); }
+/* 顶栏「更新」按钮的三态：转圈 → 成功 / 失败（底色不做过渡，状态必须立刻可见） */
+#topUpdateBtn { position:relative; min-width:60px; justify-content:center; transition:border-color .18s; }
+#topUpdateBtn.is-running { padding-left:28px; }
+#topUpdateBtn.is-running::before { content:''; position:absolute; left:10px; top:50%; width:11px; height:11px; margin-top:-5.5px; border-radius:50%; border:2px solid currentColor; border-right-color:transparent; animation:bfSpin .72s linear infinite; }
+#topUpdateBtn.is-ok { background:var(--bf-success); border-color:var(--bf-success); color:var(--bf-success-ink); }
+#topUpdateBtn.is-err { background:var(--bf-danger); border-color:var(--bf-danger); color:var(--bf-danger-ink); }
+@keyframes bfSpin { to { transform:rotate(360deg); } }
+
+/* 320px 级小屏：收紧书签间距与内边距，让 5 个书签仍能一屏放下，不用横向滑动 */
+@media (max-width:380px) {
+  .bf-nav { gap:3px; padding:0 8px; }
+  .bf-nav-item, .bf-nav-item.active { padding:8px 7px 10px; }
+  .bf-nav-label { font-size:12.5px; }
+}
+
+/* 触摸设备无 hover：删除按钮常显，否则手机上无法移出名单 */
+@media (hover:none) {
+  .bf-person-del { opacity:1; }
+}
+
+</style>
+</head>
+<body>
+<div class="bf-root" id="root">
+<div class="bf-panel">
+  <header class="bf-topbar">
+    <div class="bf-brand">
+      <span class="bf-brand-mark" aria-hidden="true"></span>
+      <div><div class="bf-title">彼方</div><div class="bf-subtitle">幕后人物档案</div></div>
+    </div>
+    <div class="bf-crumb">剧情时间 <strong>2026年8月15日 周六 21:40</strong>　·　<span id="crumbLast">上次更新 15:31（第 42 楼）</span></div>
+    <div class="bf-topbar-actions">
+      <button class="bf-btn bf-btn-sm bf-btn-primary" id="topUpdateBtn" type="button">更新</button>
+      <button class="bf-icon-btn" id="themeBtn" title="切换日间 / 夜间" aria-label="切换日间 / 夜间">◐</button>
+      <button class="bf-icon-btn" title="收起彼方" aria-label="收起彼方">✕</button>
+    </div>
+  </header>
+
+  <main class="bf-main">
+<!-- ============ 此刻的彼方 ============ -->
+<section class="bf-page on" data-page="dashboard">
+  <header class="bf-page-head">
+    <div><h2 class="bf-page-title">此刻的彼方</h2><p class="bf-page-sub">故事之外，他们也在继续生活。</p></div>
+  </header>
+  <dl class="bf-summary">
+    <div><dt>人物</dt><dd id="sumTotal">5</dd></div>
+    <div><dt>有档案</dt><dd id="sumArchived">5<small>本轮 2 人有变化</small></dd></div>
+    <div><dt>待续事务</dt><dd id="sumPending">7<small>其中 2 件过期</small></dd></div>
+    <div><dt>幕后更新</dt><dd>18<small>次</small></dd></div>
+  </dl>
+  <div class="bf-section-head">
+    <h3>正在追踪</h3>
+    <div class="bf-add-inline">
+      <input class="bf-input" id="newNpcName" placeholder="输入人物姓名">
+      <button class="bf-btn bf-btn-sm" id="openAddModalBtn" type="button">添加</button>
+    </div>
+  </div>
+  <ul class="bf-people" id="people"></ul>
+  <footer class="bf-dashboard-foot">
+    <p class="bf-hint">点右上角「更新」会读取最近的剧情，并同步人物档案与世界书条目。</p>
+    <div class="bf-actions">
+      <button class="bf-text-btn" id="refreshBtn" type="button">刷新记录</button>
+      <button class="bf-text-btn danger" id="wipeBtn" type="button">清空数据</button>
+    </div>
+  </footer>
+</section>
+
+<!-- ============ 人物 ============ -->
+<section class="bf-page bf-npc" data-page="npc">
+  <aside class="bf-directory">
+    <div class="bf-dir-head"><span>人物索引</span><span id="dirCount">5</span></div>
+    <div class="bf-dir-list" id="dir"></div>
+  </aside>
+  <article class="bf-profile" id="npcProfile"></article>
+</section>
+
+<!-- ============ 事实档案 ============ -->
+<section class="bf-page" data-page="consistency">
+  <header class="bf-page-head">
+    <div><h2 class="bf-page-title">事实档案</h2><p class="bf-page-sub">他们答应过的、欠着的、已经了结的。点一行去那个人的页面。</p></div>
+  </header>
+  <div class="bf-summary" id="ledFilter" role="group" aria-label="筛选">
+    <button class="on" data-f="all"><span class="k">全部（总条数）</span><span class="v" id="cntAll">11</span></button>
+    <button class="is-late" data-f="late"><span class="k">已过期</span><span class="v" id="cntLate">2</span></button>
+    <button data-f="ongoing"><span class="k">进行中</span><span class="v" id="cntOngoing">5</span></button>
+    <button data-f="done"><span class="k">最近了结</span><span class="v" id="cntDone">4</span></button>
+  </div>
+  <div class="bf-led-tools">
+    <span class="bf-aside" id="ledPeopleAside">涉及 4 人 · 过期门限：约定日期已过或挂满 7 天 · 最近了结保留 6 条</span>
+    <div class="bf-seg" id="ledSort"><button class="on" data-s="urgency">按紧迫分组</button><button data-s="who">按人物分组</button></div>
+  </div>
+  <div id="ledBody"></div>
+
+  <div class="bf-section-head" style="margin-top:34px"><h3>空状态示意</h3><span class="bf-aside">一条事务都没有时显示（修复原 CSS 居中偏移）</span></div>
+  <div class="bf-empty">
+    <span class="bf-empty-glyph" aria-hidden="true"></span>
+    <div>
+      <h4>账上还是空的</h4>
+      <p>人物在剧情里答应了什么、约了什么，更新后会记在这里。</p>
+      <button class="bf-btn bf-btn-sm bf-btn-primary" type="button">立即更新</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 日志 ============ -->
+<section class="bf-page" data-page="logs">
+  <header class="bf-page-head">
+    <div><h2 class="bf-page-title">日志</h2><p class="bf-page-sub">上一轮更新发了什么、回了什么、写了什么。</p></div>
+    <div class="bf-actions">
+      <button class="bf-btn bf-btn-sm" id="toggleScaleWarnBtn" type="button">切换超限警示态</button>
+      <button class="bf-btn bf-btn-sm" id="copyErrHeadBtn" type="button">复制报错信息</button>
+      <button class="bf-text-btn danger" id="clearDebugBtn" type="button">清空更新记录</button>
+    </div>
+  </header>
+  <p class="bf-hint bf-demo-row">演示顶部那条分割线的状态光效：<button class="bf-text-btn" id="demoRunBtn" type="button">跑一次更新</button> · <button class="bf-text-btn" id="demoFailBtn" type="button">跑一次失败</button>（右上角「更新」也会触发）</p>
+
+  <div class="bf-scale-line" id="scaleLine" title="中日韩字符 1 字≈1 token, 其余 4 字符≈1 token(粗估)">
+    <span id="scaleMain">当前 5 人 · 状态卡约 4,820 字（建议 ≤ 20 人 / 60,000 字） · 本次请求约 3,640 tokens</span>
+    <span style="opacity:.8">口径：中日韩 1字≈1 token，其余 4字符≈1 token（粗估）</span>
+  </div>
+
+  <div class="bf-log-alert" id="logAlert" role="alert">
+    <b>报错内容</b>
+    <code>JSON 解析失败：Unexpected token '`' at position 0（可尝试在设置中关闭「预填充」）</code>
+    <button class="bf-btn bf-btn-sm" id="copyErrAssistBtn" type="button">复制报错内容发给助手</button>
+  </div>
+
+  <dl class="bf-summary">
+    <div><dt>更新楼层</dt><dd>#42</dd></div>
+    <div><dt>模型</dt><dd class="v text">deepseek-chat</dd></div>
+    <div><dt>更新时间</dt><dd class="v text">2026-08-15 15:31:07</dd></div>
+    <div><dt>更新人物 / 移除人物</dt><dd class="v text">更新：苏禾、陆沉舟<small>移除人物：无</small></dd></div>
+  </dl>
+  <p class="bf-hint" style="margin:-8px 0 18px"><strong style="color:var(--bf-secondary)">回复开头：</strong>雨停之后，青石巷的积水映着旧书店廊下那盏暖黄的灯，苏禾把湿透的油纸伞靠在门边……</p>
+
+  <div class="bf-tabs" id="logTabs" role="tablist">
+    <button class="on" data-k="send">发送给 AI 的内容<small>12,480 字</small></button>
+    <button data-k="recv">AI 输出内容<small>1,936 字</small></button>
+    <button data-k="wb">世界书写入 · 幕后状态条目<small>记录于 15:18:22 · 已记录 18 次</small></button>
+    <button data-k="err">报错内容<small>142 字</small></button>
+  </div>
+  <div class="bf-codebox">
+    <pre class="bf-code" id="logCode"></pre>
+    <button class="bf-btn bf-btn-sm" id="copyCodeBtn" type="button">复制</button>
+  </div>
+
+  <div class="bf-section-head">
+    <h3>控制台</h3>
+    <div class="bf-actions">
+      <div class="bf-seg" id="conFilter"><button class="on" data-l="all">全部</button><button data-l="warn">警告 1</button><button data-l="error">报错 1</button></div>
+      <button class="bf-text-btn" id="clearConsoleBtn" type="button">清空</button>
+    </div>
+  </div>
+  <ol class="bf-console" id="console"></ol>
+</section>
+<!-- ============ 设置 ============ -->
+<section class="bf-page bf-page-settings" data-page="settings">
+  <aside class="bf-set-nav" aria-label="设置分组">
+    <div class="bf-set-nav-head">分组索引</div>
+    <button class="bf-set-link active" data-target="bf-set-api"><b>接口</b><span id="navSumApi">deepseek-chat</span></button>
+    <button class="bf-set-link" data-target="bf-set-update"><b>幕后更新</b><span>每 3 条回复</span></button>
+    <button class="bf-set-link" data-target="bf-set-worldbook"><b>世界书</b><span>聊天世界书</span></button>
+    <button class="bf-set-link" data-target="bf-set-prompt"><b>提示词</b><span>1 段自定义</span></button>
+    <button class="bf-set-link" data-target="bf-set-tags"><b>标签过滤</b><span>排除模式</span></button>
+    <button class="bf-set-link" data-target="bf-set-backup"><b>数据备份</b><span>仅存楼层快照</span></button>
+  </aside>
+
+  <div class="bf-set-body" id="setBody">
+    <header class="bf-page-head">
+      <div>
+        <h2 class="bf-page-title">设置</h2>
+        <p class="bf-page-sub">接口、更新、世界书、提示词、标签与备份。改动即时保存。</p>
+      </div>
+    </header>
+
+    <!-- 接口 -->
+    <section class="bf-setting-group" id="bf-set-api">
+      <header class="bf-set-head">
+        <h3>接口</h3>
+        <span class="bf-set-aside" id="headSumApi">deepseek-chat</span>
+      </header>
+
+      <div class="bf-preset-bar">
+        <span class="bf-form-label">配置预设</span>
+        <select class="bf-select" aria-label="已保存预设">
+          <option>DeepSeek 官方（当前）</option>
+          <option>Claude 反代 · Haiku</option>
+          <option>本地 Ollama</option>
+        </select>
+        <button class="bf-btn bf-btn-sm">加载</button>
+        <button class="bf-text-btn danger">删除</button>
+        <span class="bf-preset-sep"></span>
+        <input class="bf-input" style="width:130px" placeholder="新预设名，如 DeepSeek">
+        <button class="bf-btn bf-btn-sm">保存当前</button>
+      </div>
+
+      <div class="bf-set-row">
+        <label class="bf-form-label">地址</label>
+        <div class="bf-row-ctrl">
+          <input class="bf-input" value="https://api.deepseek.com/v1">
+        </div>
+      </div>
+
+      <div class="bf-set-row">
+        <label class="bf-form-label">API 密钥</label>
+        <div class="bf-row-ctrl">
+          <input class="bf-input" id="apiKeyInput" type="password" value="sk-bf98a20001e34f9b">
+          <button class="bf-btn bf-btn-sm" id="toggleKeyBtn">显示</button>
+        </div>
+      </div>
+
+      <div class="bf-set-row align-top">
+        <label class="bf-form-label">模型</label>
+        <div>
+          <div class="bf-row-ctrl">
+            <div class="bf-model-wrap" id="modelWrap">
+              <input class="bf-input" id="modelInput" value="deepseek-chat" placeholder="手填模型名，或点右侧展开候选">
+              <button class="bf-model-toggle" id="modelToggle" type="button" title="展开全部候选模型">▾</button>
+              <ul class="bf-model-cand" id="modelCand">
+                <li class="active" data-m="deepseek-chat"><span>deepseek-chat</span><small style="color:var(--bf-muted)">推荐</small></li>
+                <li data-m="deepseek-reasoner"><span>deepseek-reasoner</span><small style="color:var(--bf-muted)">R1</small></li>
+                <li data-m="claude-3-7-sonnet-latest"><span>claude-3-7-sonnet-latest</span></li>
+                <li data-m="gemini-2.5-flash"><span>gemini-2.5-flash</span></li>
+              </ul>
+            </div>
+            <button class="bf-btn bf-btn-sm" id="fetchModelBtn">获取模型列表</button>
+            <button class="bf-btn bf-btn-sm" id="testApiBtn">测试连接</button>
+            <span class="bf-test-res" id="testApiRes">✓ 连通 · 412ms</span>
+          </div>
+          <p class="bf-hint">没有 /models 端点的接口拉不到列表属正常，直接手填模型名再点「测试连接」即可。</p>
+        </div>
+      </div>
+
+      <div class="bf-set-row">
+        <label class="bf-form-label">采样与长度</label>
+        <div class="bf-row-ctrl">
+          <span class="bf-aside">温度</span>
+          <input class="bf-input bf-set-num" type="number" step="0.1" min="0" max="2" value="0.7">
+          <span class="bf-aside" style="margin-left:8px">最大输出 Token</span>
+          <input class="bf-input bf-set-num" style="width:108px!important" type="number" min="1" max="131072" value="4096">
+        </div>
+      </div>
+
+      <label class="bf-switch-row">
+        <span class="bf-switch-copy"><b>流式输出</b><span>逐段接收模型返回的内容</span></span>
+        <input class="bf-switch" type="checkbox" checked>
+      </label>
+      <label class="bf-switch-row">
+        <span class="bf-switch-copy"><b>直连接口</b><span>开：浏览器直连（需允许跨域，预设与其他扩展碰不到请求体）；关：酒馆服务器转发</span></span>
+        <input class="bf-switch" type="checkbox">
+      </label>
+    </section>
+
+    <!-- 幕后更新 -->
+    <section class="bf-setting-group" id="bf-set-update">
+      <header class="bf-set-head">
+        <h3>幕后更新</h3>
+        <span class="bf-set-aside">每 3 条回复 · 读近 6 条</span>
+      </header>
+
+      <label class="bf-switch-row">
+        <span class="bf-switch-copy"><b>启用幕后系统</b><span>关闭后不再调用 AI 更新或注入，已有状态数据保留</span></span>
+        <input class="bf-switch" type="checkbox" checked>
+      </label>
+
+      <label class="bf-switch-row">
+        <span class="bf-switch-copy"><b>AI 回复后自动更新</b><span>按照设定的频率读取最近剧情</span></span>
+        <input class="bf-switch" type="checkbox" checked data-sub="subAutoUpd">
+      </label>
+      <div class="bf-set-sub" id="subAutoUpd">
+        <div class="bf-row-ctrl">
+          <span class="bf-aside">更新频率：每</span>
+          <input class="bf-input bf-set-num" type="number" min="1" value="3">
+          <span class="bf-aside">条回复更新一次；读取回复数：每次读取最近</span>
+          <input class="bf-input bf-set-num" type="number" min="1" max="20" value="6">
+          <span class="bf-aside">条 AI 回复</span>
+        </div>
+      </div>
+
+      <label class="bf-switch-row">
+        <span class="bf-switch-copy"><b>慢一步（不分析最新一层）</b><span>开启后只分析到倒数第二层——状态永远比正文晚一步，但刚生成、可能被重 roll 的回复不会影响状态（点「立即更新」仍分析到最新一层）</span></span>
+        <input class="bf-switch" type="checkbox">
+      </label>
+
+      <label class="bf-switch-row">
+        <span class="bf-switch-copy"><b>正文新角色自动建档</b><span>只追踪剧情中有持续作用的人物；关闭后只更新已追踪的人物（手动加到名单里的名字仍会建档）</span></span>
+        <input class="bf-switch" type="checkbox" checked>
+      </label>
+
+      <label class="bf-switch-row">
+        <span class="bf-switch-copy"><b>追踪当前角色卡角色</b><span>仅群聊时角色卡名才是角色；角色写在世界书里时保持关闭</span></span>
+        <input class="bf-switch" type="checkbox">
+      </label>
+
+      <label class="bf-switch-row">
+        <span class="bf-switch-copy"><b>女性 NPC 生理监测</b><span>维护周期、受孕与结算字段，随状态卡一同注入；关掉只是暂停，数据留在卡上</span></span>
+        <input class="bf-switch" type="checkbox" checked data-sub="subBody">
+      </label>
+      <div class="bf-set-sub" id="subBody">
+        <div class="bf-danger-foot" style="border-top:0;margin-top:0;padding-top:0">
+          <span>要彻底清掉所有角色卡上的生理与孕期字段才点右边：</span>
+          <button class="bf-text-btn danger" id="wipeBodyBtn" type="button">清空生理数据</button>
+        </div>
+      </div>
+
+      <label class="bf-switch-row">
+        <span class="bf-switch-copy"><b>预填充（prefill）</b><span>追加 assistant 消息，引导直接从 JSON 输出；报错时先关掉它</span></span>
+        <input class="bf-switch" type="checkbox" checked>
+      </label>
+    </section>
+
+    <!-- 世界书 -->
+    <section class="bf-setting-group" id="bf-set-worldbook">
+      <header class="bf-set-head">
+        <h3>世界书</h3>
+        <span class="bf-set-aside">聊天世界书</span>
+      </header>
+
+      <h4 class="bf-subgroup-title">写入 · 把状态存成条目</h4>
+      <div class="bf-set-row align-top">
+        <span class="bf-form-label">目标</span>
+        <div>
+          <div class="bf-seg" data-seg>
+            <button type="button">角色卡主世界书</button>
+            <button type="button" class="on">聊天世界书</button>
+          </div>
+          <p class="bf-hint">角色卡主世界书随当前发言者变（群聊里每个成员一本）；聊天世界书一场聊天一本。换目标不会删掉另一本里的旧条目。</p>
+        </div>
+      </div>
+
+      <h4 class="bf-subgroup-title">读取 · 给彼方接口注入世界书</h4>
+      <label class="bf-switch-row">
+        <span class="bf-switch-copy"><b>注入世界书内容</b><span>按酒馆 AI 的方式激活世界书条目（不读全局世界书，只读当前角色卡与聊天绑定的世界书）</span></span>
+        <input class="bf-switch" type="checkbox" checked data-sub="subWbRead">
+      </label>
+      <div class="bf-set-sub" id="subWbRead">
+        <div class="bf-set-pairs">
+          <div class="bf-field-block">
+            <label>常驻注入条目</label>
+            <textarea class="bf-textarea" rows="3" placeholder="角色名 / 人设条目名，如「苏禾」或「人设」">苏禾
+青石巷风物志</textarea>
+            <p class="bf-hint">每行一个条目名或关键词，每次都强制注入；匹配不到会静默跳过。</p>
+          </div>
+          <div class="bf-field-block">
+            <label>排除条目</label>
+            <textarea class="bf-textarea" rows="3" placeholder="[mvu_update]">[mvu_update]
+状态栏渲染</textarea>
+            <p class="bf-hint">每行一条，条目标题或备注里含这些字就排除（不分大小写），不用写全名——填一条 [mvu_update] 就能排掉整组。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 提示词 -->
+    <details class="bf-setting-group" id="bf-set-prompt" open>
+      <summary>
+        <header class="bf-set-head">
+          <h3>提示词</h3>
+          <span class="bf-set-aside">1 段自定义</span>
+        </header>
+      </summary>
+      <p class="bf-hint" style="margin-bottom:10px">内置提示词固定不动，这里只往它的锚点里插你自己写的段（破限也不再内置 —— 要的话在这里插一段）。</p>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span class="bf-form-label">自定义提示词段</span>
+        <button class="bf-btn bf-btn-sm" type="button">＋ 添加一段</button>
+      </div>
+      <div class="bf-set-seg-card">
+        <div class="bf-set-seg-grid">
+          <select class="bf-select" aria-label="插入位置">
+            <option value="最前">插入位置：最前</option>
+            <option value="主提示词之后">插入位置：主提示词之后</option>
+            <option value="任务之前">插入位置：任务之前</option>
+            <option value="任务之后" selected>插入位置：任务之后</option>
+            <option value="最后">插入位置：最后</option>
+          </select>
+          <select class="bf-select" aria-label="身份（role）">
+            <option value="system" selected>system</option>
+            <option value="user">user</option>
+            <option value="assistant">assistant</option>
+          </select>
+        </div>
+        <textarea class="bf-textarea" rows="3" placeholder="这一段的内容（支持酒馆宏：user / char）">日常细节保持克制纪实口吻，不要替未出场角色强行制造巧合偶遇。</textarea>
+        <div class="bf-set-seg-foot">
+          <label style="display:inline-flex;gap:8px;align-items:center;cursor:pointer"><input class="bf-switch" type="checkbox" checked> 启用</label>
+          <button class="bf-text-btn danger" type="button">删除这一段</button>
+        </div>
+      </div>
+      <p class="bf-hint">锚点＝消息级位置。插在「任务之前」的规则会被后面的内置段覆盖；想要更强的约束就插在「任务之后」或「最后」。</p>
+      <details class="bf-fold">
+        <summary>发送顺序：五个锚点落在哪</summary>
+        <pre class="bf-set-order">① 最前          你的段
+② system        身份句 + 全部更新规则（内置，含生理段：开关开时才有）
+③ 主提示词之后  你的段
+④ system        【最新用户输入·仅供场景判断】（有玩家输入时才有）
+⑤ 任务之前      你的段
+⑥ user          任务正文 ← 最长的内置段（正文 / 世界书 / 状态卡 / 台账 / 生理说明 / 恋爱说明 / 仅更新已追踪）
+⑦ 任务之后      你的段（以前破限的位置）
+⑧ 最后          你的段
+（末条若是 assistant 且预填充关着，会自动补一句收尾 user）</pre>
+      </details>
+    </details>
+
+    <!-- 标签过滤 -->
+    <details class="bf-setting-group" id="bf-set-tags">
+      <summary>
+        <header class="bf-set-head">
+          <h3>标签过滤</h3>
+          <span class="bf-set-aside" id="tagModeAside">排除</span>
+        </header>
+      </summary>
+      <div class="bf-set-row">
+        <span class="bf-form-label">模式</span>
+        <div class="bf-seg" data-seg id="tagModeSeg">
+          <button type="button" class="on" data-tagmode="排除">排除</button>
+          <button type="button" data-tagmode="只读">只读</button>
+        </div>
+      </div>
+      <div class="bf-set-row align-top">
+        <label class="bf-form-label">标签列表</label>
+        <div>
+          <textarea class="bf-textarea" rows="3" placeholder="aftertalk&#10;thinking&#10;branches">aftertalk
+thinking
+branches</textarea>
+          <p class="bf-hint" id="tagModeHint">排除这些标签里的内容，一行一条，直接写标签名（如 thinking，不用尖括号）；残留的孤立 &lt;/标签&gt; 只删标签本身，不会连正文一起删。</p>
+        </div>
+      </div>
+    </details>
+
+    <!-- 数据备份 -->
+    <details class="bf-setting-group" id="bf-set-backup">
+      <summary>
+        <header class="bf-set-head">
+          <h3>数据备份</h3>
+          <span class="bf-set-aside">状态只存楼层里，删楼就没</span>
+        </header>
+      </summary>
+      <p class="bf-hint" style="margin-bottom:12px">导出复制成一段文本；导入走同一条保存通道（写快照 + 重同步世界书）。大段删楼（/cut）之后靠它恢复。</p>
+      <div class="bf-row-ctrl">
+        <button class="bf-btn bf-btn-sm" type="button">导出并复制</button>
+      </div>
+      <details class="bf-fold">
+        <summary>从文本导入</summary>
+        <div style="margin-top:8px">
+          <textarea class="bf-textarea" rows="3" placeholder='{"备份版本":1,"数据":{…}}'></textarea>
+          <div style="margin-top:8px"><button class="bf-btn bf-btn-sm" type="button">导入</button></div>
+        </div>
+      </details>
+    </details>
+  </div>
+</section>
+  </main>
+
+  <footer class="bf-rail-foot">
+    <span class="bf-dot" id="runDot"></span><span id="runText">接口已就绪 · deepseek-chat</span>
+    <span class="bf-rail-meta">当前页：<strong id="crumb" style="color:var(--bf-secondary);font-weight:500">此刻的彼方</strong>　|　静态演示稿（全字段对齐源码）</span>
+  </footer>
+
+  <nav class="bf-nav" aria-label="页面">
+    <button class="bf-nav-item active" data-tab="dashboard"><span class="bf-nav-label">此刻的彼方</span></button>
+    <button class="bf-nav-item" data-tab="npc"><span class="bf-nav-label">人物</span></button>
+    <button class="bf-nav-item" data-tab="consistency"><span class="bf-nav-badge">2</span><span class="bf-nav-label">事实档案</span></button>
+    <button class="bf-nav-item" data-tab="logs"><span class="bf-nav-label">日志</span></button>
+    <button class="bf-nav-item" data-tab="settings"><span class="bf-nav-label">设置</span></button>
+  </nav>
+</div>
+
+<!-- 弹窗 1：添加人物（对应 建档字段 5 项 + 姓名） -->
+<div class="bf-modal-backdrop" id="modalBackdrop"></div>
+<form class="bf-modal" id="addNpcModal" role="dialog" aria-modal="true" aria-labelledby="bf-add-title">
+  <header class="bf-modal-head">
+    <h2 id="bf-add-title" class="bf-modal-title">添加人物</h2>
+    <button type="button" class="bf-icon-btn" data-close-modal aria-label="关闭">✕</button>
+  </header>
+  <label class="bf-modal-row"><span class="bf-form-label">姓名</span><input class="bf-input" id="addModalName" placeholder="人物姓名" required></label>
+  <label class="bf-modal-row"><span class="bf-form-label" title="职业/身份、和谁住、常去哪">身份锚点</span><textarea class="bf-textarea" rows="2" placeholder="如：旧书店店主，独居青石巷14号二楼"></textarea></label>
+  <label class="bf-modal-row"><span class="bf-form-label">当前在做</span><textarea class="bf-textarea" rows="2" placeholder="正在做的事"></textarea></label>
+  <label class="bf-modal-row"><span class="bf-form-label">当前状态</span><textarea class="bf-textarea" rows="2" placeholder="衣着、身体状态、情绪等"></textarea></label>
+  <label class="bf-modal-row"><span class="bf-form-label">位置</span><input class="bf-input" placeholder="如：青石巷 · 旧书店"></label>
+  <label class="bf-modal-row"><span class="bf-form-label">接下来想做</span><textarea class="bf-textarea" rows="2" placeholder="近期打算做的事"></textarea></label>
+  <p class="bf-hint">初始状态可稍后在人物详情里补充；生理监测字段不在这里填。</p>
+  <div class="bf-modal-actions">
+    <button type="button" class="bf-btn" data-close-modal>取消</button>
+    <button type="submit" class="bf-btn bf-btn-primary">添加人物</button>
+  </div>
+</form>
+
+<!-- 弹窗 2：设定关系起点（标记恋爱对象弹窗） -->
+<form class="bf-modal" id="romanceModal" role="dialog" aria-modal="true" aria-labelledby="bf-rom-title">
+  <header class="bf-modal-head">
+    <h2 id="bf-rom-title" class="bf-modal-title">设定和陆沉舟的关系起点</h2>
+    <button type="button" class="bf-icon-btn" data-close-modal aria-label="关闭">✕</button>
+  </header>
+  <p class="bf-hint" style="margin:0 0 12px">如果两人的关系在故事开始前就存在，在这里定好起点；之后每轮按正文事件变化。</p>
+  <label class="bf-modal-radio"><input type="radio" name="romMode" value="AI" checked><span>让 AI 读人设和已有档案判断（下一轮更新时给出）</span></label>
+  <label class="bf-modal-radio"><input type="radio" name="romMode" value="手动"><span>我自己选</span></label>
+  <div id="romManualFields" style="display:none;margin:8px 0 6px;padding-left:12px;border-left:2px solid var(--bf-line)">
+    <label class="bf-modal-row"><span class="bf-form-label">好感</span><select class="bf-select" id="romFav"><option>陌生</option><option>认识</option><option selected>熟悉</option><option>朋友</option><option>暧昧</option><option>恋人</option><option>挚爱</option></select></label>
+    <label class="bf-modal-row"><span class="bf-form-label">情欲</span><select class="bf-select" id="romDes"><option selected>无感</option><option>有性趣</option><option>想要</option><option>饥渴</option></select></label>
+    <label class="bf-modal-row"><span class="bf-form-label">名分</span><select class="bf-select" id="romRole"><option selected>无</option><option>恋人</option><option>未婚妻</option><option>未婚夫</option><option>夫妻</option><option>炮友</option></select></label>
+  </div>
+  <label class="bf-modal-row" style="margin-top:8px"><span class="bf-form-label">情感倾向</span><select class="bf-select" id="romTend"><option value="">让 AI 按人设判断</option><option>内敛</option><option>常规</option><option>外放</option><option>慢热</option><option>病娇</option></select></label>
+  <div class="bf-modal-actions">
+    <button type="button" class="bf-btn" data-close-modal>取消</button>
+    <button type="submit" class="bf-btn bf-btn-primary">标记为恋爱对象</button>
+  </div>
+</form>
+</div>
+<script>
+const TAB_NAMES = { dashboard:'此刻的彼方', npc:'人物', consistency:'事实档案', logs:'日志', settings:'设置' };
+const FAV_STAGES = ['陌生','认识','熟悉','朋友','暧昧','恋人','挚爱'];
+const DES_STAGES = ['无感','有性趣','想要','饥渴'];
+const TEND_OPTS = ['内敛','常规','外放','慢热','病娇'];
+const ROLE_OPTS = ['无','恋人','未婚妻','未婚夫','夫妻','炮友'];
+const NOTE_GROUPS_VIEW = [
+  ['生活动态', ['身份锚点','近期关键事件','接下来想做','当前目标']],
+  ['内心世界', ['心里惦记','秘密想法','隐藏目标']]
+];
+const NOTE_GROUPS_EDIT = [
+  ['生活动态', ['身份锚点','近期关键事件','生活状态','接下来想做','当前目标']],
+  ['内心世界', ['心里惦记','秘密想法','隐藏目标']],
+  ['生理状态', ['生理周期','生理周期日期','受孕日期','是否怀孕','怀孕知晓','孕程周数','哺乳期月数','周期影响','当前防护','近期性行为']],
+  ['恋爱', ['恋爱对象','情感倾向','好感值','情欲值','好感阶段','情欲阶段','名分','恋爱标签','恋爱态度','恋爱动向','恋爱开局']]
+];
+
+/* ===== 字段编辑控件规范：有闭合词表的字段一律给选择器，绝不放开自由填写 ===== */
+const TAG_WORDS = ['青梅竹马','主仆','单恋','冷战','心结','猜忌','占有欲','依赖','口是心非','敌意','恐惧','厌恶'];
+const CYCLE_STAGES = ['月经期','卵泡期','排卵期','黄体期','经前期','孕期','哺乳期'];
+const SEL_FIELDS = {
+  恋爱对象: { 空: '（空 / 未标记，点上方「标记恋爱」开启）', 选项: ['是'] },
+  恋爱开局: { 空: '（空 / 允许下一轮重报开局）', 选项: ['是'] },
+  是否怀孕: { 空: '（未记录）', 选项: ['否', '是'] },
+  怀孕知晓: { 空: '（未记录）', 选项: ['未知', '疑似', '确认'] },
+  好感阶段: { 空: '（未结算）', 选项: FAV_STAGES },
+  情欲阶段: { 空: '（未结算）', 选项: DES_STAGES },
+  情感倾向: { 空: '（未设置）', 选项: TEND_OPTS },
+  名分: { 空: '（无 / 清空）', 选项: ROLE_OPTS }
+};
+const NUM_FIELDS = {
+  好感值: { min: 0, max: 100, step: 0.1, 提示: '0–100，1 位小数；空 = 未结算（不等于 0）' },
+  情欲值: { min: 0, max: 100, step: 0.1, 提示: '0–100，1 位小数；空 = 未结算（不等于 0）' },
+  孕程周数: { min: 1, max: 200, step: 1, 提示: '1–200 的整数（该种族从受孕到分娩的周数）' },
+  哺乳期月数: { min: 1, max: 120, step: 1, 提示: '1–120 的整数（该种族产后哺乳月数）' }
+};
+const DATE_FIELDS = ['生理周期日期', '受孕日期'];
+const FIELD_HINT = {
+  生理周期: '阶段名由彼方按 Day 重算：排卵日 = 周期长度 − 14',
+  近期关键事件: 'FIFO 最多 3 条，新事件挤掉最旧的；重启一行即清空该条',
+  生活状态: '按类目合并：只填这一项时，另外两项沿用旧值',
+  恋爱标签: '闭合词表，最多 5 个；只接受词表内的词',
+  名分: '来自名分词表，未说定前留空（不会自动补「无」）',
+  好感阶段: '由好感值按 ±2 滞回得出，手改后建议核对数值',
+  情欲阶段: '由情欲值按 ±2 滞回得出，手改后建议核对数值'
+};
+function partsOf(text, re, sep) {
+  const out = {};
+  String(text || '').split(sep || /\s*\|\s*/).forEach(seg => {
+    const m = seg.trim().match(re);
+    if (m) out[m[1].trim()] = m[2].trim();
+  });
+  return out;
+}
+function composeField(f, root) {
+  const val = k => (root.querySelector(`[data-part="${k}"]`)?.value || '').trim();
+  if (f === '恋爱标签') return [...root.querySelectorAll('.bf-tagpick.on')].map(b => b.dataset.tag).join('、');
+  // R4：拼装一律以源码为准 —— 生活状态用 `类(值); 类(值)`（生活状态.ts join('; ')），近期关键事件用 `；` 分隔（卡合并.ts）
+  if (f === '生活状态') return ['吃饭', '洗漱', '睡眠'].map(k => val(k) ? `${k}(${val(k)})` : '').filter(Boolean).join('; ');
+  if (f === '近期关键事件') return ['1', '2', '3'].map(k => val(k) || '').filter(Boolean).join('；');
+  // R5：周期长度（/NN）由隐藏键 `周期长度` 决定，只读 —— 这里只拼「阶段 + 明细」，明细不含 /NN
+  if (f === '生理周期') { const st = val('stage'); const d = val('detail'); return (st + (d ? ' ' + d : '')).trim(); }
+  return '';
+}
+function editControl(f, card) {
+  const val = card[f] ?? '';
+  const hint = FIELD_HINT[f] ? `<em class="bf-field-hint">${FIELD_HINT[f]}</em>` : '';
+  const sel = SEL_FIELDS[f];
+  if (sel) {
+    return `<select class="bf-select" data-edit-field="${f}">
+      <option value="">${sel.空}</option>
+      ${sel.选项.map(o => `<option value="${o}" ${val === o ? 'selected' : ''}>${o}</option>`).join('')}
+    </select>${hint}`;
+  }
+  const num = NUM_FIELDS[f];
+  if (num) {
+    return `<input class="bf-input" type="number" min="${num.min}" max="${num.max}" step="${num.step}"
+      data-edit-field="${f}" value="${esc(val)}" placeholder="${num.提示}">${hint}`;
+  }
+  if (DATE_FIELDS.includes(f)) {
+    // R3：不换 type="date"（会丢时刻、破坏生理推进），保持文本 + 格式提示
+    return `<input class="bf-input" data-edit-field="${f}" value="${esc(val)}" placeholder="YYYY-MM-DD HH:mm（保留时刻，别只写日期）">${hint}`;
+  }
+  if (f === '恋爱标签') {
+    const cur = String(val).split(/[、,，\s]+/).filter(Boolean);
+    return `<div class="bf-compose bf-tagpick-wrap" data-compose="恋爱标签">
+      ${TAG_WORDS.map(t => `<button type="button" class="bf-tagpick ${cur.includes(t) ? 'on' : ''}" data-tag="${t}">${t}</button>`).join('')}
+    </div>${hint}`;
+  }
+  if (f === '生活状态' || f === '近期关键事件') {
+    const 项 = f === '生活状态' ? ['吃饭', '洗漱', '睡眠'] : ['1', '2', '3'];
+    // R4：拆解也用源码协议 —— 生活状态 `类(值);`，近期关键事件 `；`
+    const re = f === '生活状态' ? /^([^()（）]+)\(([^()]*)\)$/ : /^(.*)$/;
+    const sep = f === '生活状态' ? /\s*;\s*|\s*；\s*/ : /\s*[；;]\s*/;
+    const parts = f === '生活状态' ? partsOf(val, re, sep) : Object.fromEntries(String(val || '').split(sep).map((s, i) => [String(i + 1), s.trim()]).filter(([, v]) => v));
+    return `<div class="bf-compose bf-compose-grid" data-compose="${f}">
+      ${项.map(k => `<label class="bf-part"><span>${f === '生活状态' ? k : '第 ' + k + ' 条'}</span>
+        <input class="bf-input" data-part="${k}" value="${esc(parts[k] || '')}"
+          placeholder="${f === '生活状态' ? '时间 + 事件，如 2026-08-15 18:30' : '一句话事件，含具体物件/人名'}"></label>`).join('')}
+    </div>${hint}`;
+  }
+  if (f === '生理周期') {
+    const m = String(val).match(/^(月经期|卵泡期|排卵期|黄体期|经前期|孕期|哺乳期)\s*(.*)$/);
+    let stage = m ? m[1] : '', detail = (m ? m[2] : (val ? String(val).replace(/^\S+\s*/, '') : '')).replace(/^[·・.\-—\s]+/, '');
+    // R5：周期长度 `/NN` 是彼方锁定值（隐藏键 周期长度）→ 从明细里剥出来，单独只读展示
+    let 周期长度 = '';
+    const mm = detail.match(/\/\s*(\d{1,2})/);
+    if (mm) { 周期长度 = mm[1]; detail = detail.replace(/\/\s*\d{1,2}/, '').replace(/[（(]\s*[）)]/g, '').trim(); }
+    return `<div class="bf-compose bf-compose-grid" data-compose="生理周期">
+      <label class="bf-part"><span>阶段</span>
+        <select class="bf-select" data-part="stage">
+          <option value="">（未记录）</option>
+          ${CYCLE_STAGES.map(s => `<option value="${s}" ${stage === s ? 'selected' : ''}>${s}</option>`).join('')}
+        </select></label>
+      <label class="bf-part"><span>明细</span>
+        <input class="bf-input" data-part="detail" value="${esc(detail)}" placeholder="Day 12 或 孕 16周+3天"></label>
+      ${周期长度 ? `<em class="bf-field-hint">周期长度 ${周期长度} 天（只读：由隐藏键「周期长度」决定，不可在此编辑）</em>` : ''}
+    </div>${hint}`;
+  }
+  const rows = String(val).length > 34 ? 3 : String(val).length > 16 ? 2 : 1;
+  return `<textarea class="bf-textarea" rows="${rows}" data-edit-field="${f}">${esc(val)}</textarea>${hint}`;
+}
+
+const NPCS = [
+  {
+    name:'苏禾', ch:'苏', tone:'t1', changed:true, updatedAt:'15:31（第 42 楼）',
+    lifeItems:[['吃饭','18:30 · 3小时前'],['洗漱','昨日 23:10'],['睡眠','07:20 起床 · 清醒 14小时']],
+    cycle:{ len:28, day:12 },
+    card:{
+      当前在做:'关了店门，在里屋翻那箱从旧宅收来的信，想找出寄信人的地址。',
+      当前状态:'灰色开衫袖口沾了点旧纸灰，有些疲惫但神色温和',
+      位置:'青石巷 · 书店里屋',
+      身份锚点:'旧书店店主，独居青石巷 14 号二楼，常去城南旧货市场与邮局旧档室',
+      近期关键事件:'8月12日收下城南旧宅整箱书信；8月14日答应修补《南山志》封面；8月15日雨夜留门借伞',
+      生活状态:'吃饭(2026-08-15 18:30); 洗漱(2026-08-14 23:10); 睡眠(2026-08-15 07:20起床)',
+      接下来想做:'把信按年份排好，周末去一趟邮局查旧档。',
+      当前目标:'赶在月底房东续签前凑齐下半年店租，同时查清旧信里的寄信人下落',
+      心里惦记:'那本散页的《南山志》还没来得及调浆糊，怕你周五白跑一趟。',
+      秘密想法:'其实昨晚听见你在廊下躲雨的脚步声了，故意晚了十分钟才去关门。',
+      隐藏目标:'想把二楼临街那间空阁楼收拾出来留给你落脚看书',
+      生理周期:'卵泡期 · 第 12 天（周期 28 天）', 生理周期日期:'2026-08-04', 受孕日期:'', 是否怀孕:'否', 怀孕知晓:'', 孕程周数:'', 哺乳期月数:'',
+      周期影响:'精力回升，夜里整理旧书也不太觉得冷', 当前防护:'短效避孕药（每日 22:00）', 近期性行为:'无',
+      恋爱对象:'是', 情感倾向:'慢热', 好感值:'74.5', 情欲值:'32', 好感阶段:'暧昧', 情欲阶段:'有性趣', 名分:'无',
+      恋爱标签:'青梅竹马、口是心非、依赖',
+      恋爱态度:'嘴上总拿修书抵账搪塞，但每次你来都会提前温好陈皮茶。',
+      恋爱动向:'好感+3(雨夜交心) / 情欲+2(擦头发靠近) · 2026-08-15',
+      恋爱开局:'朋友 / 无感 / 无'
+    },
+    ledger:[
+      { id:'T1', text:'答应周五前帮你修好那本散页的《南山志》封面', state:'进行中', urg:'late', due:'已过期 1 天', date:'存于 2026-08-11', mark:'', res:'', bg:false },
+      { id:'T2', text:'约好周六傍晚一起去旧货市场淘黄铜台灯', state:'进行中', urg:'soon', due:'今天到期', date:'存于 2026-08-14', mark:'本轮新增', res:'', bg:false },
+      { id:'T3', text:'替你向隔壁装裱匠打听宣纸托裱的价格', state:'进行中', urg:'', due:'已挂 2 天', date:'存于 2026-08-13', mark:'', res:'', bg:false },
+      { id:'T4', text:'把借你的那把黑柄长伞收回书店', state:'已完成', urg:'', due:'已完结', date:'存于 2026-08-12', mark:'本轮已完成', res:'雨停后已顺路还到柜台伞桶。', bg:false }
+    ]
+  },
+  {
+    name:'陆沉舟', ch:'陆', tone:'t2', changed:true, updatedAt:'15:31（第 42 楼）',
+    lifeItems:[['吃饭','12:40 · 9小时前'],['洗漱','06:50 · 15小时前'],['睡眠','昨日 04:10–06:40（仅睡 2.5小时）']],
+    cycle:null,
+    card:{
+      当前在做:'把桌上散开的监控截图按时间顺序重排过一遍，又拿红笔在套牌货车的行车路线旁打了两个问号，抬手把烟按熄在已经满出来的烟灰缸里，起身去窗边透了口气，才回头继续盯那块白板。',
+      当前状态:'深色夹克领口敞着，下巴一层青茬，熬夜后嗓音沙哑紧绷',
+      位置:'城北分局 · 二楼值班室',
+      身份锚点:'市局城北分局刑警队副队长，住分局家属院单身宿舍',
+      近期关键事件:'三号码头仓库夜半起火；调取沿江卡口监控发现套牌厢式货车',
+      生活状态:'吃饭(2026-08-15 12:40); 洗漱(2026-08-15 06:50); 睡眠(2026-08-15 06:40起床)',
+      接下来想做:'天亮前去货运站堵那个跑船的线人。',
+      当前目标:'48 小时内锁定三号码头失火案的纵火嫌疑人与套牌车去向',
+      心里惦记:'上次提醒你夜里别靠近城北码头，不知道你听进去没有。',
+      秘密想法:'怀疑分局档案室有人提前翻过三年前那桩旧卷宗。',
+      隐藏目标:'私下重查师父当年留下的钟表铺失踪悬案',
+      生理周期:'', 生理周期日期:'', 受孕日期:'', 是否怀孕:'', 怀孕知晓:'', 孕程周数:'', 哺乳期月数:'', 周期影响:'', 当前防护:'', 近期性行为:'',
+      恋爱对象:'', 情感倾向:'', 好感值:'', 情欲值:'', 好感阶段:'', 情欲阶段:'', 名分:'', 恋爱标签:'', 恋爱态度:'', 恋爱动向:'', 恋爱开局:''
+    },
+    ledger:[
+      { id:'T1', text:'查清三号码头那辆无牌厢式货车的套牌来源', state:'进行中', urg:'late', due:'已过期 2 天', date:'存于 2026-08-06', mark:'', res:'', bg:false },
+      { id:'T2', text:'把旧案目击证人的笔录复印件当面交给你', state:'进行中', urg:'soon', due:'还剩 1 天', date:'存于 2026-08-14', mark:'', res:'', bg:false },
+      { id:'T3', text:'核实失踪钟表匠的出入境记录', state:'已完成', urg:'', due:'已完结', date:'存于 2026-08-10', mark:'', res:'确认未出境，最后刷卡记录在南站。', bg:true }
+    ]
+  },
+  {
+    name:'温知夏', ch:'温', tone:'t6', changed:false, updatedAt:'15:18（第 39 楼）',
+    lifeItems:[['吃饭','20:10 · 温牛奶与全麦吐司'],['洗漱','20:45 · 1小时前'],['睡眠','准备小睡补眠']],
+    cycle:null, preg:{ text:'孕 16 周 + 3 天', pct:41, know:'本人知晓：确认' },
+    card:{
+      当前在做:'刚下急诊白班，靠在值班休息室折叠床边热牛奶，翻看产检记录单。',
+      当前状态:'神色沉静干练，带着些许高强度处理公事后的轻微倦意，心底仍对刚才厨房过大的水声和老公局促的反应留着一分审视',
+      位置:'市立医院 · 值班休息室',
+      身份锚点:'市立医院急诊科主治医生，与玩家同住江畔公寓 902',
+      近期关键事件:'本周调离夜班改排白班；孕 16 周产检各项指标平稳',
+      生活状态:'吃饭(2026-08-15 20:10); 洗漱(2026-08-15 20:45); 睡眠(2026-08-15 07:00起床)',
+      接下来想做:'歇半小时等雨停，给你发消息问来不来医院北门接她。',
+      当前目标:'把急诊排班交接顺畅，平安度过孕中期',
+      心里惦记:'你手腕上周扭伤还没复查，家里医药箱的护腕得提醒你戴上。',
+      秘密想法:'每次胎动明显的时候都想第一时间抓你的手过来摸一下。',
+      隐藏目标:'悄悄挑好了婴儿房的暖光壁灯款式，想等周末带你去看',
+      生理周期:'孕期停经', 生理周期日期:'2026-04-22', 受孕日期:'2026-05-06', 是否怀孕:'是', 怀孕知晓:'确认', 孕程周数:'16周+3天', 哺乳期月数:'',
+      周期影响:'早孕反胃已消退，久站后腰背微酸，嗜睡', 当前防护:'孕期无避孕', 近期性行为:'8月11日（温和边缘亲密）',
+      恋爱对象:'是', 情感倾向:'内敛', 好感值:'96.5', 情欲值:'48', 好感阶段:'挚爱', 情欲阶段:'想要', 名分:'夫妻',
+      恋爱标签:'依赖、占有欲',
+      恋爱态度:'在外维持冷静医生的分寸感，私下对你极度安心依恋。',
+      恋爱动向:'好感+1(陪检守候) / 情欲+2(夜归相拥) · 2026-08-14',
+      恋爱开局:'挚爱 / 有性趣 / 夫妻'
+    },
+    ledger:[
+      { id:'T1', text:'下周二帮你复查手腕扭伤并换药', state:'进行中', urg:'', due:'还剩 3 天', date:'存于 2026-08-13', mark:'', res:'', bg:false },
+      { id:'T2', text:'原本约好周四晚一起去吃潮汕砂锅粥', state:'已作废', urg:'', due:'已作废', date:'存于 2026-08-12', mark:'', res:'临时遇上连环追尾会诊抢救，改约下周。', bg:false }
+    ]
+  },
+  {
+    name:'顾行简', ch:'顾', tone:'t4', changed:false, updatedAt:'14:50（第 36 楼）',
+    lifeItems:[['吃饭','17:50 · 食堂清汤面'],['洗漱','07:10'],['睡眠','昨日 22:40–06:50']],
+    cycle:null,
+    card:{
+      当前在做:'调配小麦淀粉浆糊修补一批民国地方小报，收音机小声放着评弹。',
+      当前状态:'亚麻衬衫配深棕围裙，专注闲适',
+      位置:'省图书馆 · 地下特藏修复室',
+      身份锚点:'省图特藏部古籍修复师，住鼓楼老教师大院',
+      近期关键事件:'接收民国小报修复专案；托徽州同门捎来老胡开文松烟墨',
+      生活状态:'吃饭(2026-08-15 17:50); 洗漱(2026-08-15 07:10); 睡眠(2026-08-15 06:50起床)',
+      接下来想做:'把今日修平的八页报刊压上砑石，拍照归档。',
+      当前目标:'赶在中秋特展前完成整册地方小报的装帧修复',
+      心里惦记:'立秋后连日阴雨，地下库房湿度偏高，得催后勤修除湿机。',
+      秘密想法:'觉得你带来的那两方家传闲章刀法很像晚清浙派名家真迹。',
+      隐藏目标:'想邀请你一起署名撰写特展图录的藏品考据附录',
+      生理周期:'', 生理周期日期:'', 受孕日期:'', 是否怀孕:'', 怀孕知晓:'', 孕程周数:'', 哺乳期月数:'', 周期影响:'', 当前防护:'', 近期性行为:'',
+      恋爱对象:'', 情感倾向:'', 好感值:'', 情欲值:'', 好感阶段:'', 情欲阶段:'', 名分:'', 恋爱标签:'', 恋爱态度:'', 恋爱动向:'', 恋爱开局:''
+    },
+    ledger:[
+      { id:'T1', text:'帮你辨认家传印谱残页上的两方闲章', state:'进行中', urg:'', due:'还剩 5 天', date:'存于 2026-08-11', mark:'', res:'', bg:false },
+      { id:'T2', text:'代买二两徽州老胡开文松烟墨', state:'已完成', urg:'', due:'已完结', date:'存于 2026-08-09', mark:'', res:'已托徽州同门寄到馆里收发室。', bg:true }
+    ]
+  },
+  {
+    name:'林小满', ch:'林', tone:'t3', changed:false, updatedAt:'14:50（第 36 楼）',
+    lifeItems:[['吃饭','19:00 · 便利店饭团'],['洗漱','07:30'],['睡眠','07:15 起床']],
+    cycle:{ len:30, day:3 },
+    card:{
+      当前在做:'蹲在花店门口桶边给新到的洋桔梗醒花，顺便喂那只溜达来的三花猫。',
+      当前状态:'牛仔背带裤帆布鞋沾着水渍，稍微有点痛经但精神雀跃',
+      位置:'梧桐街口 · 晴昼花房',
+      身份锚点:'晴昼花房学徒，合租在梧桐街尾唐楼三层',
+      近期关键事件:'第一次独立包完客人订的香槟玫瑰花束；收留街口三花猫避雨',
+      生活状态:'吃饭(2026-08-15 19:00); 洗漱(2026-08-15 07:30); 睡眠(2026-08-15 07:15起床)',
+      接下来想做:'把门口花架搬进屋檐下，练韩式扇形花束包装。',
+      当前目标:'月底通过店长考核转成正式花艺师',
+      心里惦记:'怕周末台风擦边路过时把店门口木花架掀翻。',
+      秘密想法:'偷偷在冷藏柜留了一支品相最好的蓝绣球想送你。',
+      隐藏目标:'攒够钱买一台二手微单拍自己的花艺作品集',
+      生理周期:'月经期 · 第 3 天（周期 30 天）', 生理周期日期:'2026-08-13', 受孕日期:'', 是否怀孕:'否', 怀孕知晓:'', 孕程周数:'', 哺乳期月数:'',
+      周期影响:'小腹微坠怕凉，抱了热水袋在围裙里', 当前防护:'无', 近期性行为:'无',
+      恋爱对象:'', 情感倾向:'外放', 好感值:'58', 情欲值:'12', 好感阶段:'朋友', 情欲阶段:'无感', 名分:'无',
+      恋爱标签:'单恋', 恋爱态度:'总把最好的那支花偷偷留住，却从没敢说是给谁的。', 恋爱动向:'', 恋爱开局:'朋友 / 无感 / 无'
+    },
+    ledger:[]
+  }
+];
+
+const LOG_PAYLOADS = {
+  send: `[system · 内置系统规则]\n你是「彼方 · NPC幕后生命状态系统」的状态记录器。请根据最近聊天楼层与现有档案，客观推演未出场或已离场角色此刻的生活状态、未完成事项进展、生理与恋爱结算，只输出合法 JSON 对象。\n\n[user · 任务正文]\n剧情时间：2026年8月15日 周六 21:40\n追踪名单：苏禾、陆沉舟、温知夏、顾行简、林小满\n最近剧情（第 37–42 楼）：玩家冒雨离开青石巷书店，临走前苏禾答应周五前修好《南山志》；城北码头仓库失火案进入第三天……`,
+  recv: `\`\`\`json\n{\n  "剧情时间": "2026年8月15日 周六 21:40",\n  "更新人物": {\n    "苏禾": {\n      "位置": "青石巷 · 书店里屋",\n      "当前在做": "关了店门，在里屋翻那箱从旧宅收来的信，想找出寄信人的地址。",\n      "当前状态": "灰色开衫袖口沾了点旧纸灰，有些疲惫但神色温和",\n      "恋爱动向": "好感+3(雨夜交心) / 情欲+2(擦头发靠近) · 2026-08-15"\n    },\n    "陆沉舟": {\n      "位置": "城北分局 · 二楼值班室",\n      "当前在做": "对着白板重新核对码头仓库失火夜的监控时间线，烟灰缸已经满了。"\n    }\n  }\n}\n\`\`\``,
+  wb: `[写入聊天世界书 · 常驻条目「幕后状态条目」 | 记录于 15:18:22 · 已记录 18 次]\n【剧情时间】2026年8月15日 周六 21:40\n- 苏禾（青石巷·书店里屋）：关了店门在里屋翻旧信找寄信人地址；[T1]修《南山志》封面（已过期1天）、[T2]周六傍晚旧货市场之约（今天到期）。\n- 陆沉舟（城北分局·二楼值班室）：核对码头失火监控时间线；[T1]套牌货车待查（已过期2天）、[T2]笔录复印件待交（还剩1天）。`,
+  err: `SyntaxError: Unexpected token '\`' at position 0\n  at parseResponse (更新流程.ts:148:19)\n提示：模型返回了 \`\`\`json 代码围栏。若接口不支持 assistant prefill 或忽略了纯 JSON 约束，可在「设置 → 幕后更新」中调整「预填充（prefill）」或检查代理节点。`
+};
+
+const CONSOLE_LINES = [
+  { t:'15:31:07', lv:'error', msg:'[彼方] 第 42 楼响应含 Markdown 代码围栏，初次 JSON.parse 失败，已提示检查 prefill 设置' },
+  { t:'15:31:06', lv:'info',  msg:'[彼方] 收到 deepseek-chat 流式完成，共 1,936 字符（耗时 8.2s）' },
+  { t:'15:30:59', lv:'warn',  msg:'[彼方] 世界书常驻条目「主要人际关系网」未匹配到启用条目，已静默跳过' },
+  { t:'15:30:58', lv:'info',  msg:'[彼方] 开始第 42 楼自动更新：读取最近 6 条 AI 回复，已排除 <thinking>/<aftertalk> 标签' },
+  { t:'15:18:22', lv:'info',  msg:'[彼方] 第 39 楼同步完成：更新苏禾、温知夏，写入「聊天世界书」成功' }
+];
+
+let curTab = 'dashboard', curNpc = 0, editingNpc = false, editDraft = {}, editLedgerId = null, addLedgerOpen = false;
+let ledFilter = 'all', ledSort = 'urgency', conLv = 'all', scaleWarn = false;
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+
+function switchTab(tab) {
+  curTab = tab;
+  document.getElementById('crumb').textContent = TAB_NAMES[tab];
+  document.querySelectorAll('.bf-nav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.bf-page').forEach(p => p.classList.toggle('on', p.dataset.page === tab));
+}
+
+function renderDashboard() {
+  const ul = document.getElementById('people');
+  document.getElementById('sumTotal').textContent = NPCS.length;
+  document.getElementById('dirCount').textContent = NPCS.length;
+  ul.innerHTML = NPCS.map((c, i) => {
+    const ongoing = c.ledger.filter(x => x.state === '进行中').length;
+    const late = c.ledger.filter(x => x.state === '进行中' && x.urg === 'late').length;
+    const isRom = c.card.恋爱对象 === '是';
+    const romChip = isRom ? (c.card.好感阶段 || c.card.名分 || '恋爱对象') : '';
+    const pregChip = c.card.是否怀孕 === '是' ? '孕期' : '';
+    return `<li class="bf-person ${c.changed ? 'is-changed' : ''}" data-open-npc="${i}">
+      <span class="bf-avatar ${c.tone}">${esc(c.ch)}</span>
+      <div>
+        <div class="bf-person-top">
+          <span class="bf-person-name">${esc(c.name)}</span>
+          <span class="bf-person-place">${esc(c.card.位置 || '位置未详')}</span>
+          <span class="bf-person-tags">
+            ${c.changed ? '<span class="bf-chip bf-chip-changed">本轮有变化</span>' : ''}
+            ${late ? `<span class="bf-chip bf-chip-late">过期 ${late}</span>` : ''}
+            ${ongoing ? `<span class="bf-chip">待续 ${ongoing}</span>` : ''}
+            ${romChip ? `<span class="bf-chip bf-chip-love">♥ ${esc(romChip)}</span>` : ''}
+            ${pregChip ? `<span class="bf-chip bf-chip-love">${pregChip}</span>` : ''}
+          </span>
+        </div>
+        <div class="bf-person-doing">${esc(c.card.当前在做 || '还没有记录此刻的动向。')}</div>
+      </div>
+      <button class="bf-person-del" type="button" data-del-npc="${i}" title="从追踪名单移除">×</button>
+    </li>`;
+  }).join('');
+}
+
+function renderScaleSteps(stages, curStage) {
+  const now = stages.indexOf(curStage);
+  return stages.map((st, i) => {
+    const cls = i === now ? ' is-now' : (now >= 0 && i < now ? ' is-past' : '');
+    return `<span class="bf-scale-step${cls}"><i></i><b>${st}</b></span>`;
+  }).join('');
+}
+
+/* 身体迹象：与 身体迹象.ts 同表（孕期按孕程等比换算到 40 周） */
+function 孕期迹象(孕周, 孕程周数) {
+  const 程 = Number(孕程周数) > 0 ? Number(孕程周数) : 40;
+  const 等效 = (孕周 / 程) * 40;
+  if (等效 >= 37) return '临近预产期, 肚子沉, 睡不安稳';
+  if (等效 >= 28) return '肚子明显隆起, 行动变慢, 容易腰酸';
+  if (等效 >= 16) return '小腹开始隆起';
+  if (等效 >= 13) return '孕吐减轻, 胃口回来了';
+  if (等效 >= 6) return '恶心反胃, 嗜睡, 胸口胀痛';
+  if (等效 >= 4) return '月经推迟了';
+  return '';
+}
+function 周期迹象(日, 长) {
+  if (日 >= 1 && 日 <= 2) return '经期第一二天, 腹痛乏力';
+  if (日 >= 3 && 日 <= 5) return '经期中';
+  if (长 > 0 && 日 >= 长 - 2 && 日 <= 长) return '经前几天, 容易烦躁、胸胀';
+  return '';
+}
+function cycleStageOf(day, len) {
+  const ovu = len - 14;
+  if (day <= 5) return 'men';
+  if (day < ovu - 1) return 'fol';
+  if (day <= ovu + 1) return 'ovu';
+  return 'lut';
+}
+function renderCycleStrip(cycle) {
+  if (!cycle) return '';
+  const len = cycle.长, day = cycle.日;
+  const bars = [];
+  for (let d = 1; d <= len; d++) {
+    bars.push(`<i class="bf-cycle-${cycleStageOf(d, len)}${d === day ? ' is-today' : ''}" title="Day ${d}"></i>`);
+  }
+  return `<div class="bf-cycle" role="img" aria-label="周期第 ${day} 天 / 共 ${len} 天">${bars.join('')}</div>
+    <p class="bf-cycle-legend"><span class="bf-lg-men">月经</span><span class="bf-lg-fol">卵泡</span><span class="bf-lg-ovu">排卵</span><span class="bf-lg-lut">黄体</span></p>`;
+}
+/* 从 生理周期 文本解析出 {日, 长} 或孕期 {周, 日} */
+function parseCycle(c) {
+  const txt = String(c.card.生理周期 || '');
+  const m = txt.match(/Day\s*(\d+)\s*\/\s*(\d+)/i);
+  if (m) return { 日: +m[1], 长: Math.max(1, +m[2]) };
+  if (c.cycle) return { 日: c.cycle.day, 长: c.cycle.len };
+  return null;
+}
+function parsePreg(c) {
+  const txt = String(c.card.生理周期 || '');
+  const m = txt.match(/孕\s*(\d+)\s*周(?:\s*\+?\s*(\d+)\s*天)?/);
+  if (m) return { 周: +m[1], 日: +(m[2] || 0) };
+  if (c.preg) {
+    const p = c.preg.text.match(/孕\s*(\d+)\s*周(?:\s*\+\s*(\d+)\s*天)?/);
+    if (p) return { 周: +p[1], 日: +(p[2] || 0) };
+  }
+  return null;
+}
+
+function renderNpc() {
+  const dir = document.getElementById('dir');
+  dir.innerHTML = NPCS.map((c, i) => {
+    const hasLate = c.ledger.some(x => x.state === '进行中' && x.urg === 'late');
+    const mark = hasLate ? '<span class="bf-dir-mark late" title="有逾期事务"></span>'
+      : c.changed ? '<span class="bf-dir-mark" title="本轮有变化"></span>' : '';
+    return `<button class="bf-dir-item ${i === curNpc ? 'active' : ''}" type="button" data-npc="${i}">
+      <span class="bf-avatar sm ${c.tone}">${esc(c.ch)}</span>
+      <span style="min-width:0"><span class="bf-dir-name">${esc(c.name)}</span><span class="bf-dir-place">${esc(c.card.位置 || '位置未详')}</span></span>
+      ${mark}
+    </button>`;
+  }).join('');
+
+  const c = NPCS[curNpc];
+  const card = editingNpc ? editDraft : c.card;
+  const isRom = c.card.恋爱对象 === '是';
+  const hasPausedRom = !isRom && Boolean(c.card.好感值 || c.card.好感阶段 || c.card.恋爱态度);
+  const hasBody = Boolean(c.preg || c.cycle || c.card.生理周期 || c.card.周期影响);
+  const ongoingCnt = c.ledger.filter(x => x.state === '进行中').length;
+  const doingTxt = card.当前在做 || '';
+  const stateTxt = card.当前状态 || '';
+  const doingLong = doingTxt.length > 44, stateLong = stateTxt.length > 26;
+  const 孕期 = parsePreg(c), 周期 = parseCycle(c);
+  const 迹象 = 孕期 ? 孕期迹象(孕期.周, c.card.孕程周数) : (周期 ? 周期迹象(周期.日, 周期.长) : '');
+  const 孕程比例 = 孕期 ? Math.min(100, Math.max(0, Math.round(((孕期.周 * 7 + 孕期.日) / ((Number(c.card.孕程周数) || 40) * 7)) * 100))) : 0;
+  const tags = (c.card.恋爱标签 || '').split(/[、,，\s]+/).filter(Boolean);
+  const groups = editingNpc ? NOTE_GROUPS_EDIT : NOTE_GROUPS_VIEW;
+
+  document.getElementById('npcProfile').innerHTML = `
+    <header class="bf-profile-head">
+      <span class="bf-avatar lg ${c.tone}">${esc(c.ch)}</span>
+      <div>
+        <h2 class="bf-profile-name">${esc(c.name)}</h2>
+        <div class="bf-profile-meta">${esc(c.card.身份锚点 || c.card.位置 || '暂无锚点')}　·　上次更新 ${esc(c.updatedAt)}</div>
+      </div>
+      <div class="bf-profile-actions">
+        ${hasPausedRom ? '<span class="bf-love-Paused" title="数值与名分保留，重新标记后接着算">恋爱已暂停</span>' : ''}
+        ${!editingNpc ? `<button class="bf-btn bf-btn-sm ${isRom ? 'bf-btn-primary' : ''}" type="button" data-toggle-rom>${isRom ? '♥ 恋爱对象' : '标记恋爱'}</button>
+          <button class="bf-btn bf-btn-sm" type="button" data-start-edit>编辑</button>`
+        : `<button class="bf-btn bf-btn-sm bf-btn-primary" type="button" data-save-edit>保存</button>
+          <button class="bf-btn bf-btn-sm" type="button" data-cancel-edit>取消</button>`}
+      </div>
+    </header>
+
+    <section class="bf-now">
+      <span class="bf-label">当前在做</span>
+      ${editingNpc ? `<textarea class="bf-textarea" rows="${doingLong ? 4 : 2}" data-edit-field="当前在做">${esc(card.当前在做)}</textarea>`
+        : `<p class="bf-now-doing${doingLong ? ' is-long' : ''}">${esc(card.当前在做 || '还没有记录此刻的动向。')}</p>`}
+      <dl class="bf-now-side">
+        <div class="bf-now-cell"><dt>位置</dt><dd>${editingNpc ? `<input class="bf-input" data-edit-field="位置" value="${esc(card.位置)}">` : esc(card.位置 || '未记录')}</dd></div>
+        <div class="bf-now-cell is-state${stateLong ? ' is-long' : ''}"><dt>当前状态</dt><dd>${editingNpc ? `<textarea class="bf-textarea" rows="${stateLong ? 3 : 1}" data-edit-field="当前状态">${esc(card.当前状态)}</textarea>` : esc(card.当前状态 || '未记录')}</dd></div>
+      </dl>
+      ${!editingNpc && c.lifeItems?.length ? `<div class="bf-now-life">${c.lifeItems.map(([k,v]) => `<span><b>${esc(k)}</b>${esc(v)}</span>`).join('')}</div>` : ''}
+    </section>
+
+    <section class="bf-block">
+      <div class="bf-section-head"><h3>未了之事</h3><span class="bf-aside">进行中 ${ongoingCnt} / 上限 8 · 条目正文创建后不可改</span></div>
+      ${c.ledger.length ? `<ul class="bf-ledger-list">${c.ledger.map(it => {
+        const isOpen = editLedgerId === it.id;
+        const done = it.state !== '进行中';
+        const cls = [it.urg === 'late' && !done ? 'is-late' : it.urg === 'soon' && !done ? 'is-soon' : '', done ? 'is-done' : '', isOpen ? 'open' : ''].filter(Boolean).join(' ');
+        const dueCls = !done && it.urg === 'late' ? 'late' : !done && it.urg === 'soon' ? 'soon' : '';
+        return `<li class="bf-ledger-item ${cls}">
+          <button class="bf-check ${done ? 'checked' : ''}" type="button" data-quick-led="${it.id}" title="${done ? '重开为进行中' : '标记为已完成'}">${it.state === '已完成' ? '✓' : it.state === '已作废' ? '—' : ''}</button>
+          <div>
+            <div class="bf-ledger-text"><span style="color:var(--bf-muted);font-family:var(--mono);font-size:12px;margin-right:6px">[${it.id}]</span>${esc(it.text)}</div>
+            <div class="bf-ledger-sub"><span>${esc(it.date)}</span> · <span class="${dueCls}">${esc(it.due)}</span>${it.mark ? ` · <span style="color:var(--bf-accent-text)">${esc(it.mark)}</span>` : ''}${it.res ? ` · 结果：${esc(it.res)}${it.bg ? '（幕后）' : ''}` : ''}</div>
+          </div>
+          <button class="bf-text-btn" type="button" data-edit-led="${it.id}">${isOpen ? '收起' : '修改'}</button>
+          <div class="bf-ledger-editor">
+            <input class="bf-input bf-led-res" data-res-input="${it.id}" placeholder="结果 / 作废原因（原条目正文冻结不改）" value="${esc(it.res)}">
+            <div class="bf-seg">
+              ${['进行中','已完成','已作废'].map(st => `<button type="button" class="${it.state===st?'on':''}" data-set-led="${it.id}" data-st="${st}">${st}</button>`).join('')}
+            </div>
+          </div>
+        </li>`;
+      }).join('')}</ul>` : '<p class="bf-hint">没有待办或约定。剧情里答应的事、计划去做的事会记在这里。</p>'}
+      <div class="bf-ledger-add">
+        ${!addLedgerOpen ? `<button class="bf-text-btn" type="button" data-open-add-led>+ 新增事务</button>`
+          : `<input class="bf-input bf-led-new" id="newLedInput" placeholder="要做什么（内容写下即冻结）">
+             <button class="bf-btn bf-btn-sm bf-btn-primary" type="button" data-submit-add-led>添加</button>
+             <button class="bf-text-btn" type="button" data-cancel-add-led>取消</button>`}
+      </div>
+    </section>
+
+    ${!editingNpc && (isRom || hasPausedRom) ? `<section class="bf-block bf-block-love">
+      <div class="bf-section-head"><h3>关系</h3><span class="bf-block-aside">名分 <b>${esc(c.card.名分 || '未定')}</b>${c.card.情感倾向 ? `　倾向 <b>${esc(c.card.情感倾向)}</b>` : ''}</span></div>
+        <div class="bf-love-row"><span class="bf-love-axis">好感</span><div class="bf-scale bf-scale-affection">${renderScaleSteps(FAV_STAGES, c.card.好感阶段)}</div><span class="bf-love-num">${esc(c.card.好感值 || '—')}</span></div>
+        <div class="bf-love-row"><span class="bf-love-axis">情欲</span><div class="bf-scale bf-scale-desire">${renderScaleSteps(DES_STAGES, c.card.情欲阶段)}</div><span class="bf-love-num">${esc(c.card.情欲值 || '—')}</span></div>
+        ${c.card.恋爱态度 ? `<p class="bf-love-attitude">${esc(c.card.恋爱态度)}</p>` : ''}
+        ${tags.length ? `<p class="bf-love-tags">${tags.map(t => `<span class="bf-chip bf-chip-love">${esc(t)}</span>`).join('')}</p>` : ''}
+        ${c.card.恋爱动向 ? `<p class="bf-love-trend"><span>最近一轮</span>${esc(c.card.恋爱动向)}</p>` : ''}
+        ${isRom ? '' : `<p class="bf-body-note">恋爱已暂停 —— 之前的记录（好感 ${esc(c.card.好感值 || '—')} · ${esc(c.card.好感阶段 || '—')} · 名分 ${esc(c.card.名分 || '未定')}）都保留，再点上方「标记恋爱」即可恢复结算。</p>`}
+    </section>` : ''}
+
+    ${!editingNpc && (孕期 || 周期) ? `<section class="bf-block bf-block-body">
+      <div class="bf-section-head"><h3>身体</h3><span class="bf-block-aside">${孕期 ? `本人知晓：<b>${esc(c.card.怀孕知晓 || '未知')}</b>` : `周期 ${周期.长} 天`}</span></div>
+      ${孕期 ? `
+        <p class="bf-body-stage">孕期　孕 ${孕期.周} 周${孕期.日 ? ` + ${孕期.日} 天` : ''}</p>
+        <div class="bf-preg-bar" role="img" aria-label="孕程 ${孕程比例}%"><i style="width:${孕程比例}%"></i></div>
+        <p class="bf-body-note">${esc(迹象)}</p>` : `
+        <p class="bf-body-stage">${esc(c.card.生理周期)}</p>
+        ${renderCycleStrip(周期)}
+        <p class="bf-body-note">${esc([c.card.周期影响, 迹象, c.card.当前防护 && `防护：${c.card.当前防护}`].filter(Boolean).join('　'))}</p>`}
+    </section>` : ''}
+
+    <section class="bf-block">
+      <div class="bf-section-head"><h3>人物侧记</h3><span class="bf-aside">${editingNpc ? '编辑模式：展示卡字段.ts 全部 4 组字段（枚举项用下拉）' : '日常与内心档案'}</span></div>
+      ${groups.map(([gTitle, fields]) => `
+        <h4 class="bf-notes-group">${gTitle}</h4>
+        <dl class="bf-notes-grid">${fields.map(f => {
+          const ctrl = editingNpc ? editControl(f, card) : esc(card[f] || '—');
+          return `<dt>${f}</dt><dd>${ctrl}</dd>`;
+        }).join('')}</dl>`).join('')}
+    </section>`;
+}
+
+function renderConsistency() {
+  const rows = [];
+  const peopleSet = new Set();
+  NPCS.forEach((c, npcIdx) => c.ledger.forEach(it => {
+    peopleSet.add(c.name);
+    const grp = it.state !== '进行中' ? 'done' : (it.urg === 'late' ? 'late' : 'ongoing');
+    rows.push({ ...it, who:c.name, ch:c.ch, tone:c.tone, npcIdx, grp });
+  }));
+  document.getElementById('cntAll').textContent = rows.length;
+  document.getElementById('cntLate').textContent = rows.filter(r => r.grp === 'late').length;
+  document.getElementById('cntOngoing').textContent = rows.filter(r => r.grp === 'ongoing').length;
+  document.getElementById('cntDone').textContent = rows.filter(r => r.grp === 'done').length;
+  document.getElementById('ledPeopleAside').textContent = `涉及 ${peopleSet.size} 人 · 过期门限：约定日期已过或挂满 7 天 · 最近了结保留 6 条`;
+
+  const filtered = rows.filter(r => ledFilter === 'all' ? true : r.grp === ledFilter);
+  const body = document.getElementById('ledBody');
+
+  const rowHtml = r => {
+    const cls = r.grp === 'done' ? 'is-done' : (r.urg === 'late' ? 'is-late' : r.urg === 'soon' ? 'is-soon' : '');
+    const stamp = r.grp === 'done' ? `<span class="bf-stamp ${r.state === '已作废' ? 'void' : ''}">${r.state}</span>` : '';
+    const markBadge = r.mark ? `<span class="bf-chip bf-chip-changed" style="margin-left:6px">${esc(r.mark)}</span>` : '';
+    return `<button class="bf-led-row ${cls}" type="button" data-jump-npc="${r.npcIdx}" title="点击去 ${esc(r.who)} 的人物页">
+      <span class="bf-avatar sm ${r.tone}">${esc(r.ch)}</span>
+      <span>
+        <span class="bf-led-claim"><span style="font-family:var(--mono);font-size:12px;color:var(--bf-muted);margin-right:6px">${r.id}</span>${esc(r.text)}${stamp}${markBadge}</span>
+        <span class="bf-led-meta"><b>${esc(r.who)}</b> · ${esc(r.date)}${r.res ? ` · → ${esc(r.res)}${r.bg ? '（幕后）' : ''}` : ''}</span>
+      </span>
+      <span class="bf-led-due">${esc(r.due)}</span>
+    </button>`;
+  };
+
+  if (ledSort === 'who') {
+    const byWho = {};
+    filtered.forEach(r => (byWho[r.who] = byWho[r.who] || []).push(r));
+    body.innerHTML = Object.entries(byWho).map(([who, list]) =>
+      `<h3 class="bf-led-group-title">${esc(who)}<span>${list.length} 条</span></h3>${list.map(rowHtml).join('')}`
+    ).join('');
+  } else {
+    const groups = [
+      ['late', '已过期 · 约定日期已过，或挂满 7 天', filtered.filter(r => r.grp === 'late')],
+      ['ongoing', '进行中 · 还来得及', filtered.filter(r => r.grp === 'ongoing')],
+      ['done', '最近了结 · 留在账上可查（上限 6 条）', filtered.filter(r => r.grp === 'done')]
+    ].filter(g => g[2].length);
+    body.innerHTML = groups.map(([, title, list]) =>
+      `<h3 class="bf-led-group-title">${title}<span>${list.length} 条</span></h3>${list.map(rowHtml).join('')}`
+    ).join('');
+  }
+}
+
+function renderConsole() {
+  const list = CONSOLE_LINES.filter(x => conLv === 'all' ? true : x.lv === conLv);
+  document.getElementById('console').innerHTML = list.length ? list.map(x =>
+    `<li class="${x.lv}"><time>${x.t}</time><span class="lv">${x.lv.toUpperCase()}</span><span>${esc(x.msg)}</span></li>`
+  ).join('') : '<li class="info"><span>暂无控制台输出。</span></li>';
+}
+
+// 顶栏与导航事件
+document.getElementById('themeBtn').addEventListener('click', e => {
+  const root = document.getElementById('root');
+  const next = root.dataset.theme === 'light' ? 'dark' : 'light';
+  root.dataset.theme = next;
+  e.currentTarget.textContent = next === 'light' ? '☾' : '☀';
+});
+document.querySelector('.bf-nav').addEventListener('click', e => {
+  const btn = e.target.closest('.bf-nav-item');
+  if (btn) switchTab(btn.dataset.tab);
+});
+
+// 弹窗控制
+const backdrop = document.getElementById('modalBackdrop');
+const addModal = document.getElementById('addNpcModal');
+const romModal = document.getElementById('romanceModal');
+function closeModals() {
+  backdrop.classList.remove('open');
+  addModal.classList.remove('open');
+  romModal.classList.remove('open');
+}
+function openModal(el) {
+  closeModals();
+  backdrop.classList.add('open');
+  el.classList.add('open');
+}
+backdrop.addEventListener('click', closeModals);
+document.querySelectorAll('[data-close-modal]').forEach(b => b.addEventListener('click', closeModals));
+document.getElementById('openAddModalBtn').addEventListener('click', () => {
+  document.getElementById('addModalName').value = document.getElementById('newNpcName').value.trim();
+  openModal(addModal);
+});
+addModal.addEventListener('submit', e => {
+  e.preventDefault();
+  const nm = document.getElementById('addModalName').value.trim();
+  if (!nm) return;
+  NPCS.push({
+    name:nm, ch:nm[0], tone:'t5', changed:true, updatedAt:'刚刚（手动建档）', lifeItems:[], cycle:null,
+    card:{ 当前在做:'刚刚手动加入追踪名单。', 当前状态:'', 位置:'', 身份锚点:'', 近期关键事件:'', 生活状态:'', 接下来想做:'', 当前目标:'', 心里惦记:'', 秘密想法:'', 隐藏目标:'', 生理周期:'', 生理周期日期:'', 受孕日期:'', 是否怀孕:'', 怀孕知晓:'', 孕程周数:'', 哺乳期月数:'', 周期影响:'', 当前防护:'', 近期性行为:'', 恋爱对象:'', 情感倾向:'', 好感值:'', 情欲值:'', 好感阶段:'', 情欲阶段:'', 名分:'', 恋爱标签:'', 恋爱态度:'', 恋爱动向:'', 恋爱开局:'' },
+    ledger:[]
+  });
+  document.getElementById('newNpcName').value = '';
+  addModal.reset();
+  closeModals();
+  renderDashboard(); renderNpc(); renderConsistency();
+});
+romModal.querySelectorAll('input[name="romMode"]').forEach(r => r.addEventListener('change', () => {
+  const manual = romModal.querySelector('input[name="romMode"]:checked').value === '手动';
+  document.getElementById('romManualFields').style.display = manual ? 'block' : 'none';
+}));
+romModal.addEventListener('submit', e => {
+  e.preventDefault();
+  const c = NPCS[curNpc];
+  const manual = romModal.querySelector('input[name="romMode"]:checked').value === '手动';
+  c.card.恋爱对象 = '是';
+  c.card.情感倾向 = document.getElementById('romTend').value;
+  if (manual) {
+    c.card.好感阶段 = document.getElementById('romFav').value;
+    c.card.情欲阶段 = document.getElementById('romDes').value;
+    c.card.名分 = document.getElementById('romRole').value;
+    // R8：`恋爱开局` 值域只有 `是`/空 —— 阶段与名分各归其位，别再拼进 恋爱开局
+    c.card.恋爱对象 = '是';
+    c.card.恋爱开局 = '是';
+    if (!c.card.好感值) c.card.好感值 = '40';
+    if (!c.card.情欲值) c.card.情欲值 = '10';
+  } else {
+    // R8：AI 分支只标记「恋爱对象=是」，`恋爱开局` 留空等下一轮由 AI 判定
+    c.card.恋爱对象 = '是';
+    c.card.恋爱开局 = '';
+  }
+  closeModals();
+  renderDashboard(); renderNpc();
+});
+
+// 仪表盘与人物交互
+document.getElementById('people').addEventListener('click', e => {
+  const del = e.target.closest('[data-del-npc]');
+  if (del) { e.stopPropagation(); if (NPCS.length > 1) { NPCS.splice(+del.dataset.delNpc, 1); curNpc = 0; renderDashboard(); renderNpc(); renderConsistency(); } return; }
+  const open = e.target.closest('[data-open-npc]');
+  if (open) { curNpc = +open.dataset.openNpc; editingNpc = false; renderNpc(); switchTab('npc'); }
+});
+document.querySelector('[data-page="npc"]').addEventListener('input', e => {
+  if (!editingNpc) return;
+  const cw = e.target.closest('[data-compose]');
+  if (cw) { editDraft[cw.dataset.compose] = composeField(cw.dataset.compose, cw); return; }
+  const fld = e.target.dataset?.editField;
+  if (fld) editDraft[fld] = e.target.value;
+});
+document.querySelector('[data-page="npc"]').addEventListener('change', e => {
+  if (!editingNpc) return;
+  const cw = e.target.closest('[data-compose]');
+  if (cw) { editDraft[cw.dataset.compose] = composeField(cw.dataset.compose, cw); return; }
+  const fld = e.target.dataset?.editField;
+  if (fld) editDraft[fld] = e.target.value;
+});
+document.querySelector('[data-page="npc"]').addEventListener('click', e => {
+  const tag = e.target.closest('.bf-tagpick');
+  if (tag) {
+    const wrap = tag.closest('[data-compose]');
+    const on = wrap.querySelectorAll('.bf-tagpick.on');
+    if (!tag.classList.contains('on') && on.length >= 5) return;  // 词表上限 5
+    tag.classList.toggle('on');
+    editDraft[wrap.dataset.compose] = composeField(wrap.dataset.compose, wrap);
+    wrap.querySelectorAll('.bf-tagpick').forEach(b => { b.disabled = !b.classList.contains('on') && wrap.querySelectorAll('.bf-tagpick.on').length >= 5; });
+    return;
+  }
+  const dirBtn = e.target.closest('[data-npc]');
+  if (dirBtn) { curNpc = +dirBtn.dataset.npc; editingNpc = false; editLedgerId = null; addLedgerOpen = false; renderNpc(); return; }
+  if (e.target.closest('[data-start-edit]')) { editingNpc = true; editDraft = { ...NPCS[curNpc].card }; renderNpc(); return; }
+  if (e.target.closest('[data-cancel-edit]')) { editingNpc = false; renderNpc(); return; }
+  if (e.target.closest('[data-save-edit]')) { NPCS[curNpc].card = { ...editDraft }; editingNpc = false; renderDashboard(); renderNpc(); return; }
+  if (e.target.closest('[data-toggle-rom]')) {
+    const c = NPCS[curNpc];
+    if (c.card.恋爱对象 === '是') { c.card.恋爱对象 = ''; renderDashboard(); renderNpc(); }
+    else if (c.card.好感值 || c.card.好感阶段) { c.card.恋爱对象 = '是'; renderDashboard(); renderNpc(); }
+    else { document.getElementById('bf-rom-title').textContent = `设定和${c.name}的关系起点`; openModal(romModal); }
+    return;
+  }
+  const quickBtn = e.target.closest('[data-quick-led]');
+  if (quickBtn) {
+    const it = NPCS[curNpc].ledger.find(x => x.id === quickBtn.dataset.quickLed);
+    if (it) { it.state = it.state === '进行中' ? '已完成' : '进行中'; renderDashboard(); renderNpc(); renderConsistency(); }
+    return;
+  }
+  const editBtn = e.target.closest('[data-edit-led]');
+  if (editBtn) { editLedgerId = editLedgerId === editBtn.dataset.editLed ? null : editBtn.dataset.editLed; renderNpc(); return; }
+  const setLedBtn = e.target.closest('[data-set-led]');
+  if (setLedBtn) {
+    const id = setLedBtn.dataset.setLed;
+    const it = NPCS[curNpc].ledger.find(x => x.id === id);
+    const inp = document.querySelector(`[data-res-input="${id}"]`);
+    if (it) { it.state = setLedBtn.dataset.st; if (inp) it.res = inp.value.trim(); editLedgerId = null; renderDashboard(); renderNpc(); renderConsistency(); }
+    return;
+  }
+  if (e.target.closest('[data-open-add-led]')) { addLedgerOpen = true; renderNpc(); return; }
+  if (e.target.closest('[data-cancel-add-led]')) { addLedgerOpen = false; renderNpc(); return; }
+  if (e.target.closest('[data-submit-add-led]')) {
+    const val = document.getElementById('newLedInput')?.value.trim();
+    if (val) {
+      const nextIdx = NPCS[curNpc].ledger.length + 1;
+      NPCS[curNpc].ledger.push({ id:`T${nextIdx}`, text:val, state:'进行中', urg:'', due:'已挂 0 天', date:'存于 2026-08-15', mark:'本轮新增', res:'', bg:false });
+      addLedgerOpen = false; renderDashboard(); renderNpc(); renderConsistency();
+    }
+  }
+});
+
+// 事实档案交互
+document.getElementById('ledFilter').addEventListener('click', e => {
+  const b = e.target.closest('button[data-f]');
+  if (!b) return;
+  ledFilter = b.dataset.f;
+  document.querySelectorAll('#ledFilter button').forEach(x => x.classList.toggle('on', x === b));
+  renderConsistency();
+});
+document.getElementById('ledSort').addEventListener('click', e => {
+  const b = e.target.closest('button[data-s]');
+  if (!b) return;
+  ledSort = b.dataset.s;
+  document.querySelectorAll('#ledSort button').forEach(x => x.classList.toggle('on', x === b));
+  renderConsistency();
+});
+document.getElementById('ledBody').addEventListener('click', e => {
+  const row = e.target.closest('[data-jump-npc]');
+  if (row) { curNpc = +row.dataset.jumpNpc; renderNpc(); switchTab('npc'); }
+});
+
+// 日志交互（含规模警示属性 data-bf-scale-warn 切换、复制反馈）
+document.getElementById('logCode').textContent = LOG_PAYLOADS.send;
+document.getElementById('logTabs').addEventListener('click', e => {
+  const b = e.target.closest('button[data-k]');
+  if (!b) return;
+  document.querySelectorAll('#logTabs button').forEach(x => x.classList.toggle('on', x === b));
+  document.getElementById('logCode').textContent = LOG_PAYLOADS[b.dataset.k];
+});
+document.getElementById('toggleScaleWarnBtn').addEventListener('click', () => {
+  scaleWarn = !scaleWarn;
+  const line = document.getElementById('scaleLine');
+  const main = document.getElementById('scaleMain');
+  if (scaleWarn) {
+    line.setAttribute('data-bf-scale-warn', '1');
+    main.textContent = '⚠ 当前 24 人 · 状态卡约 64,200 字（已超建议上限 ≤ 20 人 / 60,000 字，可在「此刻的彼方」精简名单） · 本次请求约 48,150 tokens';
+  } else {
+    line.removeAttribute('data-bf-scale-warn');
+    main.textContent = '当前 5 人 · 状态卡约 4,820 字（建议 ≤ 20 人 / 60,000 字） · 本次请求约 3,640 tokens';
+  }
+});
+['copyCodeBtn','copyErrHeadBtn','copyErrAssistBtn'].forEach(id => {
+  document.getElementById(id).addEventListener('click', e => {
+    const btn = e.currentTarget, old = btn.textContent;
+    btn.textContent = '已复制 ✓';
+    setTimeout(() => { btn.textContent = old; }, 900);
+  });
+});
+document.getElementById('clearConsoleBtn').addEventListener('click', () => { CONSOLE_LINES.length = 0; renderConsole(); });
+document.getElementById('conFilter').addEventListener('click', e => {
+  const b = e.target.closest('button[data-l]');
+  if (!b) return;
+  conLv = b.dataset.l;
+  document.querySelectorAll('#conFilter button').forEach(x => x.classList.toggle('on', x === b));
+  renderConsole();
+});
+
+// 标签过滤模式联动提示语
+document.getElementById('tagModeSeg').addEventListener('click', e => {
+  const b = e.target.closest('button[data-tagmode]');
+  if (!b) return;
+  const mode = b.dataset.tagmode;
+  document.getElementById('tagModeAside').textContent = mode;
+  document.getElementById('tagModeHint').textContent = mode === '排除'
+    ? '排除这些标签里的内容，一行一条，直接写标签名（如 thinking，不用尖括号）；残留的孤立 </标签> 只删标签本身，不会连正文一起删。'
+    : '只读取这些标签内的内容，一行一条；没有这些标签的楼层保留原文。';
+});
+
+// 设置交互：左侧分组定位、从属开关置灰、手填+展开全部模型候选、分段按钮
+document.querySelector('.bf-set-nav').addEventListener('click', e => {
+  const link = e.target.closest('.bf-set-link');
+  if (!link) return;
+  document.querySelectorAll('.bf-set-link').forEach(x => x.classList.toggle('active', x === link));
+  const sec = document.getElementById(link.dataset.target);
+  if (sec) {
+    if (sec.tagName === 'DETAILS') sec.open = true;
+    sec.scrollIntoView({ behavior:'smooth', block:'start' });
+  }
+});
+document.getElementById('setBody').addEventListener('scroll', () => {
+  const body = document.getElementById('setBody');
+  const top = body.scrollTop + 80;
+  let activeId = 'bf-set-api';
+  body.querySelectorAll('.bf-setting-group').forEach(sec => {
+    if (sec.offsetTop - body.offsetTop <= top) activeId = sec.id;
+  });
+  document.querySelectorAll('.bf-set-link').forEach(x => x.classList.toggle('active', x.dataset.target === activeId));
+});
+document.querySelectorAll('.bf-switch[data-sub]').forEach(sw => {
+  sw.addEventListener('change', () => document.getElementById(sw.dataset.sub).classList.toggle('is-off', !sw.checked));
+});
+document.querySelectorAll('[data-seg]').forEach(seg => {
+  seg.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (b) seg.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+  });
+});
+
+// 自绘模型下拉：点箭头展开全部候选，不按当前已填词过滤；也可直接手敲任意模型名
+const modelInput = document.getElementById('modelInput');
+const modelCand = document.getElementById('modelCand');
+function syncModelSummary(val) {
+  document.getElementById('navSumApi').textContent = val || '未填模型';
+  document.getElementById('headSumApi').textContent = val || '未填模型';
+  modelCand.querySelectorAll('li').forEach(li => li.classList.toggle('active', li.dataset.m === val));
+}
+document.getElementById('modelToggle').addEventListener('click', e => {
+  e.stopPropagation();
+  modelCand.classList.toggle('open');
+});
+modelCand.addEventListener('click', e => {
+  const li = e.target.closest('li[data-m]');
+  if (!li) return;
+  modelInput.value = li.dataset.m;
+  syncModelSummary(li.dataset.m);
+  modelCand.classList.remove('open');
+});
+modelInput.addEventListener('input', () => syncModelSummary(modelInput.value.trim()));
+document.addEventListener('click', e => { if (!e.target.closest('#modelWrap')) modelCand.classList.remove('open'); });
+
+document.getElementById('toggleKeyBtn').addEventListener('click', e => {
+  const inp = document.getElementById('apiKeyInput');
+  const show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  e.currentTarget.textContent = show ? '隐藏' : '显示';
+});
+document.getElementById('testApiBtn').addEventListener('click', () => {
+  const res = document.getElementById('testApiRes');
+  res.textContent = '正在连接…';
+  setTimeout(() => { res.textContent = `✓ 连通 · 386ms (${modelInput.value || 'deepseek-chat'})`; }, 320);
+});
+
+// 仪表盘两步确认清空（更新入口只在顶栏，避免同屏两个「更新」）
+let wipeArmed = false;
+document.getElementById('wipeBtn').addEventListener('click', e => {
+  const btn = e.currentTarget;
+  wipeArmed = !wipeArmed;
+  btn.textContent = wipeArmed ? '再点一次确认清空' : '清空数据';
+  if (wipeArmed) setTimeout(() => { wipeArmed = false; btn.textContent = '清空数据'; }, 3500);
+});
+// ===== 更新状态：面板边缘动效 + 底栏一行字（不弹任何浮层） =====
+const topBtn = document.getElementById('topUpdateBtn');
+const runDot = document.getElementById('runDot');
+const runText = document.getElementById('runText');
+const bfPanel = document.querySelector('.bf-panel');
+let runState = 'idle', runStart = 0, runTick = null, runHide = null;
+const runElapsed = () => ((Date.now() - runStart) / 1000).toFixed(1);
+
+function setPanelState(state) {
+  bfPanel.classList.toggle('is-running', state === 'running');
+  bfPanel.classList.toggle('is-ok', state === 'ok');
+  bfPanel.classList.toggle('is-err', state === 'err');
+}
+function setRun(state, info = {}) {
+  runState = state;
+  clearInterval(runTick); clearTimeout(runHide);
+  setPanelState(state);
+  topBtn.classList.remove('is-running', 'is-ok', 'is-err');
+  runDot.className = 'bf-dot';
+  runText.className = '';
+  runText.classList.remove('clickable');
+  if (state === 'running') {
+    topBtn.classList.add('is-running'); topBtn.textContent = '更新中';
+    runDot.classList.add('warn', 'is-running');
+    runText.classList.add('is-running');
+    runStart = Date.now();
+    const tick = () => { runText.textContent = `正在更新 · 读取第 ${info.floor || 43} 楼 · 已用 ${runElapsed()}s`; };
+    tick(); runTick = setInterval(tick, 200);
+  } else if (state === 'ok') {
+    topBtn.textContent = '已更新'; topBtn.classList.add('is-ok');
+    runText.classList.add('is-ok');
+    runText.textContent = `更新成功 · 第 ${info.floor || 43} 楼 · ${info.people || 3} 人已更新 · 用时 ${info.secs || '2.2'}s`;
+    runHide = setTimeout(() => setRun('idle'), 4500);
+  } else if (state === 'err') {
+    topBtn.textContent = '重试'; topBtn.classList.add('is-err');
+    runDot.classList.add('bad');
+    runText.classList.add('is-err');
+    runText.textContent = `更新失败 · ${info.detail || 'JSON 解析失败'} · 点这里看日志`;
+    runText.classList.add('clickable');
+  } else {
+    topBtn.textContent = '更新';
+    runText.textContent = '接口已就绪 · deepseek-chat';
+  }
+}
+
+function syncRunEcho(failed, floor) {
+  const alert = document.getElementById('logAlert');
+  if (alert) alert.style.display = failed ? '' : 'none';
+  document.getElementById('crumbLast').textContent = failed
+    ? `上次更新 15:31（失败 · 第 ${floor || 42} 楼）`
+    : `上次更新 15:48（第 ${floor || 43} 楼）`;
+}
+
+function startRun(mode = 'ok') {
+  if (runState === 'running') return;
+  setRun('running', { floor: 43 });
+  const secs = (2 + Math.random() * 0.6).toFixed(1);
+  setTimeout(() => {
+    if (mode === 'err') { setRun('err', { detail: 'JSON 解析失败（含代码围栏）' }); syncRunEcho(true, 43); }
+    else { setRun('ok', { secs, people: 3, floor: 43 }); syncRunEcho(false, 43); }
+  }, 2100);
+}
+
+topBtn.addEventListener('click', () => startRun('ok'));
+runText.addEventListener('click', () => { if (runState === 'err') switchTab('logs'); });
+document.getElementById('demoRunBtn').addEventListener('click', () => startRun('ok'));
+document.getElementById('demoFailBtn').addEventListener('click', () => startRun('err'));
+// 初始演示：与日志页一致，上次更新是失败的 → 打开面板就能看到状态，不必去日志页
+setRun('err', { detail: 'JSON 解析失败（含代码围栏）' });
+let wipeBodyArmed = false;
+document.getElementById('wipeBodyBtn').addEventListener('click', e => {
+  const btn = e.currentTarget;
+  wipeBodyArmed = !wipeBodyArmed;
+  btn.textContent = wipeBodyArmed ? '再点一次清空生理数据' : '清空生理数据';
+  if (wipeBodyArmed) setTimeout(() => { wipeBodyArmed = false; btn.textContent = '清空生理数据'; }, 3500);
+});
+
+renderDashboard();
+renderNpc();
+renderConsistency();
+renderConsole();
+</script>
+</body>
+</html>

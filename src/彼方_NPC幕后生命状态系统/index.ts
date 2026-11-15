@@ -2,7 +2,7 @@
 import { pinia } from './pinia';
 import { getSettings } from './settings';
 import { useStateStore } from './数据仓';
-import { captureConsole, useDebugStore } from './日志仓';
+import { captureConsole, restoreConsole, useDebugStore } from './日志仓';
 import { updateNpcStates } from './update';
 import { 全部AI楼层, 正文过滤 } from './聊天取料';
 import { resetWorldbookCaches } from './worldbook';
@@ -133,6 +133,12 @@ $(function () {
         console.warn('[彼方] 注册脚本按钮失败(悬浮球不受影响):', error);
     }
     console.info(`[彼方] NPC幕后生命状态系统已加载 (构建 ${构建标识})`);
+});
+
+// B34: console 接管必须在卸载时还原 —— 与 captureConsole() 成对。
+// 挂在本脚本自己的 window 上(与 mountFloatingOrb 里的 pagehide 同源), 脚本停用/热重载时都会走到。
+$(window).on('pagehide', () => {
+    restoreConsole();
 });
 
 // 界面挂载器也是边界: 把同一个宿主交给悬浮球界面

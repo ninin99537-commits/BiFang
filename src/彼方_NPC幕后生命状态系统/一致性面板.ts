@@ -10,8 +10,7 @@
 
 import { computed, inject } from 'vue';
 import type { ComputedRef, InjectionKey, Ref } from 'vue';
-import { 承诺紧迫度, 老化天数, 变动标记, 显示台账, 状态类, 台账字段 } from './事务台账';
-import type { 幕后事务, 事务状态 } from './事务台账';
+import { 承诺紧迫度, 老化天数, 变动标记, 显示台账, 状态类, 台账字段 } from './事务台账';import type { 幕后事务, 事务状态 } from './事务台账';
 
 /** 一条承诺一行 */
 export type 事实行 = {
@@ -31,6 +30,12 @@ export type 事实行 = {
   类: string;
   剩余: number | null;
   已挂: number | null;
+  /** 已结印章文案(已完成 / 已作废); 进行中的行是空串 */
+  已结: string;
+  /** 已作废(印章用灰章) */
+  已作废: boolean;
+  /** 结果由幕后自动推演完成(正文里追加「（幕后）」) */
+  幕后: boolean;
 };
 
 export type 事实分组 = { key: string; 标题: string; 说明: string; 行: 事实行[] };
@@ -99,6 +104,9 @@ export function 事实档案(数据: { NPC?: Record<string, any>, 剧情时间?:
         类: `is-${状态类(事务.状态)}`,
         剩余: 度.剩余,
         已挂: 度.已挂,
+        已结: 事务.状态 === '进行中' ? '' : 事务.状态,
+        已作废: 事务.状态 === '已作废',
+        幕后: 事务.完成方式 === '幕后',
       });
     }
   }

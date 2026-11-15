@@ -122,8 +122,15 @@ const useConsoleStore = defineStore('bifang-console', () => {
     return { lines, record, clear };
 });
 
-/** 给彼方脚本的 console 方法挂上记录（不改变原始输出） */
+/** 给彼方脚本的 console 方法挂上记录（不改变原始输出）。
+ *  B34: 必须能还原 —— 原来在 index.ts 模块顶层无条件改写 console.log/warn/error/info,
+ *  没有卸载路径, pagehide 也不还原, 于是宿主的 console 被**永久接管**(脚本停用后还在记,
+ *  记录器指向已销毁的 store)。现在记住每个方法的原始实现, 由 restoreConsole() 原样放回。 */
+let 已接管: Array<{ type: 'log' | 'warn' | 'error' | 'info'; original: (...args: unknown[]) => void; wrapper: (...args: unknown[]) => void }> = [];
+
 function captureConsole() {
+    if (已接管.length > 0)
+        return; // 幂等: 重复调用不叠加包装
     try {
         const store = useConsoleStore();
         // as const: 不这样写 types 会被推成 string[], 于是 console[type] 是"用 string 索引 Console"
@@ -131,7 +138,7 @@ function captureConsole() {
         const types = ['log', 'warn', 'error', 'info'] as const;
         for (const type of types) {
             const original = console[type];
-            console[type] = (...args: unknown[]) => {
+            const wrapper = (...args: unknown[]) => {
                 try {
                     store.record(type, ...args);
                 }
@@ -140,6 +147,8 @@ function captureConsole() {
                 }
                 return original.apply(console, args);
             };
+            console[type] = wrapper;
+            已接管.push({ type, original, wrapper });
         }
     }
     catch {
@@ -147,5 +156,27 @@ function captureConsole() {
     }
 }
 
-export { captureConsole, useConsoleStore, useDebugStore, useMainPromptStore };
+/** 还原 console(与 captureConsole 成对): pagehide 时调用, 不留永久接管。
+ *  只还原**自己换上去的那一个** —— 判据是 `console[type] === 我们的 wrapper`。
+ *  若期间别人又包了一层, 当前值就不是我们的, 这时直接覆盖会把别人的丢掉,
+ *  所以跳过并 console.warn 一条, 不硬抢。 */
+function restoreConsole() {
+    for (const { type, original, wrapper } of 已接管) {
+        try {
+            if (console[type] === wrapper) {
+                console[type] = original;
+            }
+            else {
+                // 别人在外层包过: 保持现状, 但要留下"我们没还原成功"的记录
+                original.call(console, `[彼方] console.${type} 已被他人接管, 本脚本未能还原`);
+            }
+        }
+        catch {
+            // 忽略
+        }
+    }
+    已接管 = [];
+}
+
+export { captureConsole, restoreConsole, useConsoleStore, useDebugStore, useMainPromptStore };
 export type { 更新日志, 控制台行 };
