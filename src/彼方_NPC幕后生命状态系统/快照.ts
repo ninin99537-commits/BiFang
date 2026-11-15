@@ -15,6 +15,7 @@ import { toastError } from './toast';
 import type { Host } from './host';
 import type { 幕后事务 } from './事务台账';
 import { 清空日志 } from './日志落盘';
+import { 迁移旧字段名 } from './卡合并';
 
 /** 本层真正需要的平台能力: 只读/写变量表与楼层。用 Pick 写在签名上, 依赖一目了然。 */
 type 快照宿主 = Pick<Host, 'vars' | 'chat'>;
@@ -239,16 +240,25 @@ function loadData(host: 快照宿主): 彼方数据 {
         const missingFloors: number[] = [];
         /** 编号对不上的快照(楼层被大段剪过 → 之后所有楼层号重排), 留作认领候选 */
         const 编号对不上: Array<{ floorId: number, snapshot: Record<string, any> }> = [];
-        const 成数据 = (snapshot: Record<string, any>, floorId: number): 彼方数据 => ({
-            ...emptyData(),
-            名单: Array.isArray(snapshot.名单) ? [...snapshot.名单] : [],
-            NPC: snapshot.NPC && typeof snapshot.NPC === 'object' ? { ...snapshot.NPC } : {},
-            统计: { 更新次数: 0, 最后更新: 0, ...(snapshot.统计 && typeof snapshot.统计 === 'object' ? snapshot.统计 : {}) },
-            剧情时间: typeof snapshot.剧情时间 === 'string' ? snapshot.剧情时间 : '',
-            清空层: 0, // 调用方用 meta.清空层 覆盖
-            锚点楼层: floorId,
-            处理到楼层: typeof snapshot.处理到楼层 === 'number' ? snapshot.处理到楼层 : 0,
-        });
+        const 成数据 = (snapshot: Record<string, any>, floorId: number): 彼方数据 => {
+            // 旧字段名迁移(批2·B1 的 V15): 存量卡与历史快照里的旧键必须在这里就搬走 ——
+            // "读出来就要能看见", 不能等下一次更新(那期间玩家看自己的旧内容是一片空白)。
+            // 与 卡合并.迁移旧字段名 是同一个函数: 读路径与写路径共用一份映射, 分开写两份一定会漂。
+            const 原NPC = snapshot.NPC && typeof snapshot.NPC === 'object' ? snapshot.NPC : {};
+            const 迁移后NPC: Record<string, any> = {};
+            for (const [名, 卡] of Object.entries(原NPC))
+                迁移后NPC[名] = 迁移旧字段名(卡 as Record<string, any>) ?? 卡;
+            return {
+                ...emptyData(),
+                名单: Array.isArray(snapshot.名单) ? [...snapshot.名单] : [],
+                NPC: 迁移后NPC,
+                统计: { 更新次数: 0, 最后更新: 0, ...(snapshot.统计 && typeof snapshot.统计 === 'object' ? snapshot.统计 : {}) },
+                剧情时间: typeof snapshot.剧情时间 === 'string' ? snapshot.剧情时间 : '',
+                清空层: 0, // 调用方用 meta.清空层 覆盖
+                锚点楼层: floorId,
+                处理到楼层: typeof snapshot.处理到楼层 === 'number' ? snapshot.处理到楼层 : 0,
+            };
+        };
         for (let i = floors.length - 1; i >= 0; i--) {
             const floorId = floors[i];
             let message = null;
@@ -355,6 +365,8 @@ function buildSnapshotPayload(host: 快照宿主, data: 彼方数据, anchorFloo
     // - 最后更新: 现实时间戳, 每次更新都变, 对恢复状态无意义
     // - 人设参考: 每轮更新动态注入的世界书人设(由 update.ts 按 NPC 名字激活), 不该入库
     // - 恋爱事件: 临时的结构化事件载荷(合并时已被消费删除), 防御性清理, 绝不入库
+    // ⚠️ **「最后剧情时刻」必须保留**(批2·B2): 它是逐 NPC 跨度的唯一基准, 删了就永远算不出
+    //   "这个 NPC 多久没被更新过"。它体积很小(一个 YYYY-MM-DD HH:mm 串), 不进上面的清理名单。
     const cleanedNpc: Record<string, Record<string, any>> = {};
     for (const [name, card] of Object.entries(data.NPC ?? {})) {
         if (!card || typeof card !== 'object')

@@ -20,7 +20,8 @@
     </div>
     <p v-if="card['恋爱态度']" class="bf-love-attitude">{{ card['恋爱态度'] }}</p>
     <p v-if="标签.length" class="bf-love-tags"><span v-for="标签名 in 标签" :key="标签名" class="bf-chip bf-chip-love">{{ 标签名 }}</span></p>
-    <p v-if="card['恋爱动向']" class="bf-love-trend"><span>最近一轮</span>{{ card['恋爱动向'] }}</p>
+    <!-- 批2·B5: 「恋爱动向」已并入「近期关键事件」, 这里不再单独渲染「最近一轮」——
+         数值变动在详情页的 近期关键事件 里就能看到, 两处都写等于同一件事记两遍。 -->
   </section>
 
   <section v-if="周期 || 孕期" class="bf-block bf-block-body" aria-labelledby="bf-body-title">

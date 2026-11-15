@@ -123,12 +123,22 @@ export async function 收集本轮输入(参数: 取料参数) {
     const spanResult = 剧情跨度(data.剧情时间, storyTimeHint);
     const storySpan = spanResult ? spanResult.文本 : '跳过（无时间）';
     const currentCards: Record<string, any> = {};
-    // 无论是否重填都发送现有状态卡: 重填时它们作为"旧卡参考"传给 AI, 保证角色设定连续, 但要求 AI 忽略具体状态从零重填
+    // 批2·B2: 逐 NPC 的「最后剧情时刻」—— 与批1 的**全局**跨度是两回事, 别混用。
+    // 全局跨度回答"这次更新离上次更新过了多久"; 这里回答"这个 NPC 自己多久没被更新过"。
+    // 卡上没这个键(存量卡)就**用本轮时刻补写** —— 照 `确保周期长度` 的范式:
+    // 改的是发给模型/写回数据的**副本**, 但同步回写 data, 让后续合并直接沿用, 不每轮重算。
+    const 本轮剧情时刻 = storyTimeHint;
     for (const name of tracked) {
         const oldCard = data.NPC[name];
         if (!oldCard)
             continue;
         const card = { ...oldCard };
+        // B2: 新建卡/存量卡补写。只在本轮拿到了剧情时刻时才写 —— 拿不到就留空,
+        // 下一轮有基准了再补(写个错误时刻比没有更糟: 它会算出一个假的"多久没更新")。
+        if (本轮剧情时刻 && !String(card['最后剧情时刻'] ?? '').trim()) {
+            card['最后剧情时刻'] = 本轮剧情时刻;
+            oldCard['最后剧情时刻'] = 本轮剧情时刻;
+        }
         // 关键: 周期长度只在合并后才生成, 而发给 AI 的是合并前的旧卡——
         // 若缺周期长度, AI 看不到锁定值就只能写死 28。这里先补上(与 一致化生理 共用同一条规则),
         // 并回写 data, 让后续合并直接沿用, 不重复随机。
