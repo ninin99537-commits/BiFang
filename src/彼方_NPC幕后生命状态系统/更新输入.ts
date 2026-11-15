@@ -6,6 +6,7 @@
 // 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
 import { buildUpdateMessages } from './prompts';
 import { 名字出现, 上下文, 最近回复, 正文过滤, 时间提示, 时间跳跃, 追踪NPC } from './聊天取料';
+import { 剧情跨度 } from './剧情时间';
 import { getPersonaTextForNpc, 读取世界书段 } from './worldbook';
 import { 压缩记忆回溯 } from './记忆回溯';
 import { 生活状态待更新 } from './生活状态';
@@ -113,6 +114,14 @@ export async function 收集本轮输入(参数: 取料参数) {
         : { 文本: '', 条数: 0 };
     timing.世界书 = Date.now() - worldbookStart;
     const storyTimeHint = 时间提示(worldbook, reply, context);
+    // 批1·A2: 跨度由**代码算**, 不让模型自己回忆 —— 模型只看得到最近 N 条回复,
+    // 它没有"上次更新是什么时候"的可靠记忆, 让它自己判断"过了三天还是一小时"只能靠猜。
+    // 唯一可算的口径: 本轮从正文提取的时刻(storyTimeHint) − 上轮快照里的 `剧情时间` 结束端。
+    // 算不出来时**显式标注跳过**, 绝不当成 0 —— 当成 0 会让模型以为"刚刚才过", 比不算更糟。
+    // 空值分支也保留同一个前缀句式("距上次更新已过"), 只是内容写"跳过（无时间）"——
+    // 三个分支句式一致, 验收在注入里一眼能看出"这一步走了, 只是没算出时间", 而不是"这行没了"。
+    const spanResult = 剧情跨度(data.剧情时间, storyTimeHint);
+    const storySpan = spanResult ? spanResult.文本 : '跳过（无时间）';
     const currentCards: Record<string, any> = {};
     // 无论是否重填都发送现有状态卡: 重填时它们作为"旧卡参考"传给 AI, 保证角色设定连续, 但要求 AI 忽略具体状态从零重填
     for (const name of tracked) {
@@ -193,6 +202,7 @@ export async function 收集本轮输入(参数: 取料参数) {
         worldbook,
         currentStoryTime: data.剧情时间,
         storyTimeHint,
+        storySpan,
         playerName,
         playerDescription,
         // 宏展开由调用方注入: prompts.ts 因此不依赖宿主(与 模型请求.ts 的 发请求/记日志 同一路子)

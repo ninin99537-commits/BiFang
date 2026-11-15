@@ -86,8 +86,10 @@ function applyUpdate(data: 彼方数据, parsed: Record<string, any> | null, pla
     const storyRange = parseStoryTimeRange(parsed['剧情时间']);
     const storyTimeText = storyRange.text;
     if (!storyTimeText) {
-        // AI 完全省略"剧情时间"时静默通过会导致生理推进失去基准, 至少留一条警告
-        console.warn('[彼方] AI 输出缺少"剧情时间", 生理周期推进将使用旧基准');
+        // AI 完全省略"剧情时间"时不能静默通过: 生理推进失去基准, 下一轮的**跨度补写**也会失去基准。
+        // 这里要明确说出"跳过", 而不是只说"用旧基准" —— 旧基准会让跨度算成 0,
+        // 模型就会以为"刚刚才过", 比不算更糟(批1·A2 的负判据)。
+        console.warn('[彼方] AI 输出缺少"剧情时间": 本轮跳过跨度补写(无时间基准), 生理周期推进沿用旧基准');
     }
     if (storyTimeText)
         newData.剧情时间 = storyTimeText;
