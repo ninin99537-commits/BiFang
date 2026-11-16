@@ -548,5 +548,60 @@ function clearAllData(host: 快照宿主): 清空结果 {
     return { 成功: true, 清空层: 当前楼层 };
 }
 
-export { DATA_VERSION, SNAPSHOT_LIMIT, STORAGE_KEY, clearAllData, discardSnapshotAt, emptyData, loadData, saveData, updateClearLayer, writeStateSnapshot, 锚点之后的快照楼层 };
+/**
+ * 读取**最近 K 份**快照的载荷(按楼层升序返回: 旧 → 新), 供批1.5 的「近期轨迹」做 diff。
+ *
+ * 与 `loadData` 的分工: `loadData` 只取**最新一份有效快照**(当前状态), 这里要的是**一串历史**。
+ * 两者共用同一套"哪份算有效"的判断(楼层存在 + 快照键编号对得上), 但这里**不认领**编号错位的快照 ——
+ * 认领是"把旧编号改成本楼"的一次性修复, 对 diff 来说, 一份编号错位的快照只会让相邻配对失真,
+ * 直接跳过更安全(它会在下一轮被 `loadData` 修好)。
+ *
+ * **为什么必须在这里读**: 楼层快照的物理位置(`{type:'message', message_id}`)只有这个模块知道;
+ * 让 `轨迹.ts` 自己遍历楼层变量, 等于把存储细节复制一份, 早晚漂。
+ *
+ * @param K 最多取几份(轨迹侧还有自己的上限, 这里只是"别把整条聊天读一遍")
+ */
+function 读取快照序列(host: 快照宿主, K: number): Array<{ 楼层: number, NPC: Record<string, Record<string, any>> }> {
+    const 结果: Array<{ 楼层: number, NPC: Record<string, Record<string, any>> }> = [];
+    try {
+        const meta = loadMeta(host);
+        const floors = [...meta.快照楼层].sort((a, b) => a - b);
+        for (let i = floors.length - 1; i >= 0 && 结果.length < K; i--) {
+            const floorId = floors[i];
+            let message = null;
+            try {
+                message = host.chat.messages(floorId)[0] ?? null;
+            }
+            catch {
+                message = null;
+            }
+            // 楼层被删了: 快照随之消亡, 跳过(不清理索引 —— 那是 loadData 的活, 读路径不该有副作用)
+            if (!message)
+                continue;
+            let snapshot: Record<string, any> | null = null;
+            try {
+                snapshot = host.vars.get({ type: 'message', message_id: floorId })?.[STORAGE_KEY] ?? null;
+            }
+            catch {
+                snapshot = null;
+            }
+            if (!snapshot || typeof snapshot !== 'object')
+                continue;
+            // 编号对不上 → 跳过(理由见函数注释: 认领是 loadData 的事)
+            if (snapshot.楼层 !== floorId)
+                continue;
+            const npc = snapshot.NPC && typeof snapshot.NPC === 'object' ? snapshot.NPC : {};
+            结果.push({ 楼层: floorId, NPC: npc as Record<string, Record<string, any>> });
+        }
+    }
+    catch (error) {
+        // 读快照序列失败不该让整轮更新崩掉: 轨迹是"锦上添花", 没有它照常更新
+        console.warn('[彼方] 读取快照序列失败(本轮不生成近期轨迹):', error);
+        return [];
+    }
+    // 上面是从新往旧扫的, 反转成"旧 → 新"(diff 需要这个方向)
+    return 结果.reverse();
+}
+
+export { DATA_VERSION, SNAPSHOT_LIMIT, STORAGE_KEY, clearAllData, discardSnapshotAt, emptyData, loadData, saveData, updateClearLayer, writeStateSnapshot, 读取快照序列, 锚点之后的快照楼层 };
 export type { 快照宿主 };
