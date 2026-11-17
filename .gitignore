@@ -41,3 +41,16 @@ tools/*.log
 /*.py
 /_validate_report.txt
 /slash_command.txt
+
+# ── 只保留项目本身 ──────────────────────────────────────────────
+# 下面这些都是编辑器 / 协作 / 模板脚手架的残留, 与项目无关, 一律不进仓库
+# (`.cursor/mcp.json` 曾把 Figma 令牌带进公开仓库, 这条规则就是从那次事故来的)
+.cursor/
+.agents/
+.vscode/
+.mcp.json
+reviews/
+reports/
+tavern_sync.mjs
+tavern_sync.yaml
+dump_schema.ts

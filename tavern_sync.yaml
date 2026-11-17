@@ -1,7 +1,0 @@
-# yaml-language-server: $schema=https://testingcf.jsdelivr.net/gh/StageDog/tavern_sync/dist/schema/settings.zh.json
-
-# 不绑定任何角色卡/世界书/预设：build 时不做同步，避免误改酒馆数据。
-# 需要时在这里加「配置」，或手动 pnpm sync。
-user名称: 青空黎
-
-配置: {}
