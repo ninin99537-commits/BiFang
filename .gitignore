@@ -41,3 +41,6 @@ tools/*.log
 /*.py
 /_validate_report.txt
 /slash_command.txt
+
+# Figma MCP 本地配置(含密钥,禁止提交)
+.cursor/mcp.json
