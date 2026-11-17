@@ -54,3 +54,10 @@ reports/
 tavern_sync.mjs
 tavern_sync.yaml
 dump_schema.ts
+
+# 工具/临时残留
+.agentxt-on
+.agentxt-off
+tmp/
+_backup/
+.kilo/
