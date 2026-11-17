@@ -140,7 +140,13 @@ function watch_tavern_helper(compiler: webpack.Compiler) {
 }
 
 let watcher: FSWatcher;
+/** 本仓库只保留彼方一个脚本: 模板脚手架(tavern_sync / dump_schema)已移除。
+ *  这里按"文件在不在"决定跳不跳, 免得每次构建都 exec 一个不存在的脚本、打一堆红字。 */
+const 有脚手架 = (文件名: string) => fs.existsSync(path.join(import.meta.dirname, 文件名));
+
 const dump = () => {
+  if (!有脚手架('dump_schema.ts'))
+    return;
   exec('pnpm dump', { cwd: import.meta.dirname });
   console.info('\x1b[36m[schema_dump]\x1b[0m 已将所有 schema.ts 转换为 schema.json');
 };
@@ -163,11 +169,15 @@ function schema_dump(compiler: webpack.Compiler) {
 
 let child_process: ChildProcess;
 const bundle = () => {
+  if (!有脚手架('tavern_sync.mjs'))
+    return;
   exec('pnpm sync bundle all', { cwd: import.meta.dirname });
   console.info('\x1b[36m[tavern_sync]\x1b[0m 已打包所有配置了的角色卡/世界书/预设');
 };
 const bundle_debounced = _.debounce(bundle, 500, { leading: true, trailing: false });
 function tavern_sync(compiler: webpack.Compiler) {
+  if (!有脚手架('tavern_sync.mjs'))
+    return;
   if (!compiler.options.watch) {
     bundle_debounced();
     return;
