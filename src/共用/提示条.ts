@@ -181,11 +181,32 @@ export function 建提示条(配置: 提示条配置): 提示条出口 {
         `z-index:${堆栈层序};pointer-events:none;max-width:min(380px,70vw);`;
       doc.body.appendChild(stack);
     }
-    if (!stack.dataset.resizeBound) {
-      stack.dataset.resizeBound = '1';
-      doc.defaultView?.addEventListener('resize', () => 重定位(doc));
-    }
+    绑父窗口resize(doc);
+    // 这个 dataset 标记**只是镜像**(给现有断言与人工排查看), 去重判据是上面的 已绑窗口。
+    // 它挂在 stack 元素上, 而 stack 会被卸载方整块删掉 —— 所以绝不能拿它当去重依据(那正是 B33)。
+    if (已绑窗口) stack.dataset.resizeBound = '1';
     return stack;
+  }
+
+  /** B33: 父窗口 resize 只绑一次, 且**绑在记住的那个窗口上**。
+   *  原来靠 `stack.dataset.resizeBound` 去重 —— 但 stack 元素会被卸载方整块删掉
+   *  (悬浮球界面.ts 的 pagehide 删 `<前缀>-toast-stack`), 标记随之消失, 下次再弹就**又绑一条**,
+   *  于是每重载一次多一个匿名监听(旧的还活着, 指向已删的 stack)。
+   *  现在用闭包变量记住"绑过哪个窗口 + 哪个函数", 同一窗口不重复绑, 换窗口先摘旧的。
+   *  行为不变: 仍然只做 重定位(doc), 仍在父窗口上, 仍然不碰任何提示条语义。 */
+  let 已绑窗口: Window | null = null;
+  const 已绑处理函数 = () => {
+    const 窗口 = 已绑窗口;
+    const 文档 = 窗口?.document;
+    if (文档) 重定位(文档);
+  };
+  function 绑父窗口resize(doc: Document) {
+    const win = doc.defaultView;
+    if (!win) return;
+    if (已绑窗口 === win) return; // 同一窗口只绑一次
+    if (已绑窗口) 已绑窗口.removeEventListener('resize', 已绑处理函数);
+    已绑窗口 = win;
+    win.addEventListener('resize', 已绑处理函数);
   }
 
   /** 读取球心(由悬浮球界面写入锚点元素); 缺省回退到兜底位置 */

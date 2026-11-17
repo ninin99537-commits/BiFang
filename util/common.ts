@@ -2,6 +2,8 @@ import { compare } from 'compare-versions';
 import JSON5 from 'json5';
 import { jsonrepair } from 'jsonrepair';
 import { toDotPath } from 'zod/v4/core';
+// ZodError 是 zod 的**类型**, 不是全局值 —— 这里必须从模块导入, 不能写 z.ZodError
+import type { ZodError } from 'zod';
 
 export function assignInplace<T>(destination: T[], new_array: T[]): T[] {
   destination.length = 0;
@@ -73,9 +75,9 @@ export async function checkMinimumVersion(expected: string, title: string) {
   }
 }
 
-export function prettifyErrorWithInput(error: z.ZodError) {
+export function prettifyErrorWithInput(error: ZodError) {
   return _([...error.issues])
-    .sortBy(issue => issue.path?.length ?? 0)
+    .sortBy((issue: ZodError['issues'][number]) => issue.path?.length ?? 0)
     .flatMap(issue => {
       const lines = [`✖ ${issue.message}`];
       if (issue.path?.length) {

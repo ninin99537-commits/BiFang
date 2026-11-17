@@ -586,7 +586,7 @@ function 一致化生理(参数: {
         const dayOnly = finalPhy.match(/Day\s*(\d+)/i);
         if (dayOnly && 卡['周期长度']) {
             const stage = cycleStageName(+dayOnly[1], 卡['周期长度']);
-            const stageRe = /^(月经期|卵泡期|排卵期|黄体期|经前期|孕期|哺乳期)\s*/;
+            const stageRe = CYCLE_STAGE_PREFIX_RE;
             const oldStageMatch = finalPhy.match(stageRe);
             const oldStage = oldStageMatch ? oldStageMatch[1] : '';
             卡['生理周期'] = oldStage
@@ -622,10 +622,21 @@ function 一致化生理(参数: {
     return 卡;
 }
 
+/** 生理周期的 7 个阶段名(UI 派生「阶段 <select>」用, 不在 .vue 里手抄第二份)。
+ *  与 `cycleStageName()` 的返回值一致; `经前期 / 孕期 / 哺乳期` 不由 Day 推导, 只作为可选值出现。 */
+const CYCLE_STAGE_VALUES = ['月经期', '卵泡期', '排卵期', '黄体期', '经前期', '孕期', '哺乳期'] as const;
+
+/** 阶段名出现在「生理周期」文本开头时, 用它把旧阶段名换掉(第 11 步重算) */
+const CYCLE_STAGE_PREFIX_RE = new RegExp(`^(${CYCLE_STAGE_VALUES.join('|')})\\s*`);
+
 export {
     PHYSIO_FIELDS,
     PHYSIO_CYCLE_MIN,
     PHYSIO_CYCLE_MAX,
+    GESTATION_WEEKS_RANGE,
+    LACTATION_MONTHS_RANGE,
+    CYCLE_STAGE_VALUES,
+    CYCLE_STAGE_PREFIX_RE,
     确保周期长度,
     一致化生理,
     extractCycleDay,

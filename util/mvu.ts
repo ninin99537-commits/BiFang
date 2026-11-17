@@ -1,6 +1,8 @@
 import { StoreDefinition } from 'pinia';
+// ZodObject 是 zod 的**类型**, 不是全局值 —— 从模块导入, 不能写 z.ZodObject
+import type { ZodObject } from 'zod';
 
-export function defineMvuDataStore<T extends z.ZodObject>(
+export function defineMvuDataStore<T extends ZodObject>(
   schema: T,
   variable_option: VariableOption,
   additional_setup?: (data: Ref<z.infer<T>>) => void,

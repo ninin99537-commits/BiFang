@@ -6,10 +6,12 @@
 // 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
 import { buildUpdateMessages } from './prompts';
 import { 名字出现, 上下文, 最近回复, 正文过滤, 时间提示, 时间跳跃, 追踪NPC } from './聊天取料';
+import { 剧情跨度 } from './剧情时间';
 import { getPersonaTextForNpc, 读取世界书段 } from './worldbook';
 import { 压缩记忆回溯 } from './记忆回溯';
 import { 生活状态待更新 } from './生活状态';
-import { loadData, updateClearLayer } from './快照';
+import { loadData, updateClearLayer, 读取快照序列 } from './快照';
+import { 生成近期轨迹, 轨迹上限 } from './轨迹';
 import { toastWarning } from './toast';
 import { 确保周期长度 } from './生理规则';
 import { 读取台账 } from './事务台账';
@@ -113,13 +115,39 @@ export async function 收集本轮输入(参数: 取料参数) {
         : { 文本: '', 条数: 0 };
     timing.世界书 = Date.now() - worldbookStart;
     const storyTimeHint = 时间提示(worldbook, reply, context);
+    // 批1·A2: 跨度由**代码算**, 不让模型自己回忆 —— 模型只看得到最近 N 条回复,
+    // 它没有"上次更新是什么时候"的可靠记忆, 让它自己判断"过了三天还是一小时"只能靠猜。
+    // 唯一可算的口径: 本轮从正文提取的时刻(storyTimeHint) − 上轮快照里的 `剧情时间` 结束端。
+    // 算不出来时**显式标注跳过**, 绝不当成 0 —— 当成 0 会让模型以为"刚刚才过", 比不算更糟。
+    // 空值分支也保留同一个前缀句式("距上次更新已过"), 只是内容写"跳过（无时间）"——
+    // 三个分支句式一致, 验收在注入里一眼能看出"这一步走了, 只是没算出时间", 而不是"这行没了"。
+    const spanResult = 剧情跨度(data.剧情时间, storyTimeHint);
+    const storySpan = spanResult ? spanResult.文本 : '跳过（无时间）';
+    // 批1.5·方案0: 从最近几份楼层快照 diff 出"近期轨迹"。
+    // 轨迹是**独立注入段**(不是注入表的一列), 用来告诉模型"过去几层谁变了什么方向" ——
+    // 旧卡只说"现在是什么样", 没有这层信息模型就容易写回原地或前后矛盾。
+    // 四个口子(无更早快照/中间缺/跨清空层/形状不一致)全部由 轨迹.ts 内部挡, 这里只负责取料。
+    const 轨迹结果 = 生成近期轨迹(读取快照序列(host, 轨迹上限.K层), data.清空层 ?? 0);
+    const recentTrace = 轨迹结果.文本;
+    if (recentTrace)
+        console.info(`[彼方] 近期轨迹: 用 ${轨迹结果.用了快照数} 份快照, 写出 ${轨迹结果.写出条数} 条变化${轨迹结果.跳过形状不一致 ? `, 跳过 ${轨迹结果.跳过形状不一致} 个形状不一致字段` : ''}${轨迹结果.截掉清空层前 ? `, 清空层截掉 ${轨迹结果.截掉清空层前} 份` : ''}`);
     const currentCards: Record<string, any> = {};
-    // 无论是否重填都发送现有状态卡: 重填时它们作为"旧卡参考"传给 AI, 保证角色设定连续, 但要求 AI 忽略具体状态从零重填
+    // 批2·B2: 逐 NPC 的「最后剧情时刻」—— 与批1 的**全局**跨度是两回事, 别混用。
+    // 全局跨度回答"这次更新离上次更新过了多久"; 这里回答"这个 NPC 自己多久没被更新过"。
+    // 卡上没这个键(存量卡)就**用本轮时刻补写** —— 照 `确保周期长度` 的范式:
+    // 改的是发给模型/写回数据的**副本**, 但同步回写 data, 让后续合并直接沿用, 不每轮重算。
+    const 本轮剧情时刻 = storyTimeHint;
     for (const name of tracked) {
         const oldCard = data.NPC[name];
         if (!oldCard)
             continue;
         const card = { ...oldCard };
+        // B2: 新建卡/存量卡补写。只在本轮拿到了剧情时刻时才写 —— 拿不到就留空,
+        // 下一轮有基准了再补(写个错误时刻比没有更糟: 它会算出一个假的"多久没更新")。
+        if (本轮剧情时刻 && !String(card['最后剧情时刻'] ?? '').trim()) {
+            card['最后剧情时刻'] = 本轮剧情时刻;
+            oldCard['最后剧情时刻'] = 本轮剧情时刻;
+        }
         // 关键: 周期长度只在合并后才生成, 而发给 AI 的是合并前的旧卡——
         // 若缺周期长度, AI 看不到锁定值就只能写死 28。这里先补上(与 一致化生理 共用同一条规则),
         // 并回写 data, 让后续合并直接沿用, 不重复随机。
@@ -193,6 +221,8 @@ export async function 收集本轮输入(参数: 取料参数) {
         worldbook,
         currentStoryTime: data.剧情时间,
         storyTimeHint,
+        storySpan,
+        recentTrace,
         playerName,
         playerDescription,
         // 宏展开由调用方注入: prompts.ts 因此不依赖宿主(与 模型请求.ts 的 发请求/记日志 同一路子)

@@ -97,6 +97,21 @@ const Settings = z
         列表: z.array(z.string()).default(['aftertalk']),
     })
         .prefault({}),
+    /** 调试开关: 默认全关。目前只有一个用途 —— 把状态仓暴露到 iframe window 上供验收/排障注入假数据。
+     *  为什么必须是开关而不是裸挂: 裸挂等于给任何同源脚本一条改状态的通道, 且没人知道它开着。 */
+    调试: z
+        .object({
+        /** 把 pinia 状态仓挂到 `window.__bfStateStore`(只读引用, 不改任何写盘路径)。
+         *  关(默认) = 不挂; 开 = 挂上, 供验收在 Console 里往内存塞假数据看版式。
+         *
+         *  **刻意不做 UI 开关**: 这是排障/验收后门, 摆在普通玩家的设置界面里既是噪音也是诱导误用
+         *  (任何人打开它就能拿到一条改状态的通道)。开启方式只有两条:
+         *    ① 脚本变量里手写 `彼方_settings.调试.暴露状态 = true`;
+         *    ② 浏览器 Console 改 `settingsStore.settings.value.调试.暴露状态 = true`(立即生效, 有 watch 跟随)。
+         *  改完刷新页面即恢复默认(不落盘到"开着"的状态之外)。 */
+        暴露状态: z.boolean().default(false),
+    })
+        .prefault({}),
 })
     .prefault({});
 const SETTINGS_KEY = '彼方_settings';

@@ -23,7 +23,7 @@
          **故意不用 <Transition>**: Vue 的进入过渡靠 requestAnimationFrame 收尾, 而真机上
          (2026-10-26, Firefox)那个回调没跑 —— 日志没打、`bf-pop-enter-from` 的 opacity:0
          也永远不撤, 于是"面板在 DOM 里但永远透明"。入场动画改由纯 CSS 关键帧完成。 -->
-    <div v-if="panelOpen" ref="panelEl" class="bf-panel" @click.stop>
+    <div v-if="panelOpen" ref="panelEl" class="bf-panel" :class="面板态类" @click.stop>
       <header class="bf-topbar">
         <div class="bf-brand">
           <span class="bf-brand-mark" aria-hidden="true"></span>
@@ -36,11 +36,17 @@
           <span v-if="data.剧情时间">剧情时间 {{ data.剧情时间 }}</span>
           <span v-if="stats.最后更新">上次更新 {{ fmtTime(stats.最后更新) }}</span>
         </div>
-        <div class="bf-top-actions">
-          <button class="bf-btn bf-btn-primary bf-update-btn" :disabled="updating" :aria-busy="updating" @click="manualUpdate">
+        <div class="bf-topbar-actions">
+          <button
+            class="bf-btn bf-btn-primary bf-update-btn"
+            :class="更新按钮态类"
+            :disabled="updating"
+            :aria-busy="updating"
+            @click="manualUpdate"
+          >
             <span v-if="updating" class="bf-spinner" aria-hidden="true"></span>
             <PhArrowsClockwise v-else :size="15" weight="bold" aria-hidden="true" />
-            <span>{{ updating ? '更新中' : '更新' }}</span>
+            <span>{{ 更新按钮文案 }}</span>
           </button>
           <button class="bf-icon-btn" :title="theme === 'light' ? '切换到夜间模式' : '切换到日间模式'" :aria-label="theme === 'light' ? '切换到夜间模式' : '切换到日间模式'" @click="toggleTheme">
             <PhSun v-if="theme === 'light'" :size="17" weight="regular" aria-hidden="true" />
@@ -53,7 +59,16 @@
       </header>
 
       <nav class="bf-nav" aria-label="主要导航">
-        <button v-for="item in tabs" :key="item.key" class="bf-nav-item" :class="{ active: tab === item.key }" :aria-current="tab === item.key ? 'page' : undefined" @click="tab = item.key">
+        <button
+          v-for="item in tabs"
+          :key="item.key"
+          class="bf-nav-item"
+          :class="{ active: tab === item.key }"
+          :aria-current="tab === item.key ? 'page' : undefined"
+          @click="tab = item.key"
+        >
+          <span v-if="页签角标(item.key)" class="bf-nav-badge">{{ 页签角标(item.key) }}</span>
+          <span v-else-if="页签圆点(item.key)" class="bf-nav-dot" :class="页签圆点色(item.key)" aria-hidden="true"></span>
           <span class="bf-nav-label">{{ item.label }}</span>
         </button>
       </nav>
@@ -68,8 +83,13 @@
 
       <footer class="bf-rail-foot">
         <div class="bf-sync" :class="{ ok: ready }" :title="statusTitle">
-          <span class="bf-dot" aria-hidden="true"></span>
-          <span>{{ ready ? '接口已就绪' : '接口未配置' }}</span>
+          <span class="bf-dot" :class="运行指示灯类" aria-hidden="true"></span>
+          <span
+            class="bf-run-text"
+            :class="运行文字类"
+            :title="运行文字"
+            @click="运行状态 === 'err' && (tab = 'logs')"
+          >{{ 运行文字 }}</span>
         </div>
         <span class="bf-rail-meta">{{ 当前页名 }}</span>
       </footer>
@@ -148,26 +168,26 @@
       <template v-if="开局草稿.方式 === '手动'">
         <label class="bf-form-row">
           <span class="bf-form-label">好感</span>
-          <select v-model="开局草稿.好感" class="bf-input">
+          <select v-model="开局草稿.好感" class="bf-select">
             <option v-for="名 in 开局好感选项" :key="名" :value="名">{{ 名 }}</option>
           </select>
         </label>
         <label class="bf-form-row">
           <span class="bf-form-label">情欲</span>
-          <select v-model="开局草稿.情欲" class="bf-input">
+          <select v-model="开局草稿.情欲" class="bf-select">
             <option v-for="名 in 开局情欲选项" :key="名" :value="名">{{ 名 }}</option>
           </select>
         </label>
         <label class="bf-form-row">
           <span class="bf-form-label">名分</span>
-          <select v-model="开局草稿.名分" class="bf-input">
+          <select v-model="开局草稿.名分" class="bf-select">
             <option v-for="名 in 名分词表" :key="名" :value="名">{{ 名 }}</option>
           </select>
         </label>
       </template>
       <label class="bf-form-row">
         <span class="bf-form-label">情感倾向</span>
-        <select v-model="开局草稿.倾向" class="bf-input">
+        <select v-model="开局草稿.倾向" class="bf-select">
           <option value="">让 AI 按人设判断</option>
           <option v-for="名 in 情感倾向选项" :key="名" :value="名">{{ 名 }}</option>
         </select>
@@ -197,7 +217,7 @@ import { useUpdatingStore } from './任务中断';
 import { 加NPC, 移除NPC, 更新状态卡, 改事务状态, 新增事务, 清空彼方数据, 清空生理数据, 建变更环境, 导出数据, 导入数据 } from './数据变更';
 import { 建档字段 } from './卡字段';
 import type { NpcStateCard } from './卡字段';
-import { 一致性面板键, 建一致性面板 } from './一致性面板';
+import { 一致性面板键, 建一致性面板, 事实档案 } from './一致性面板';
 import { NPC面板键, 建NPC面板 } from './NPC面板';
 import { 情感倾向表, 名分词表, 开局好感值表, 开局情欲值表, 推算阶段 } from './恋爱规则';
 import { updateNpcStates } from './update';
@@ -308,6 +328,11 @@ function 量球(): boolean {
 let 量球定时器: number | null = null;
 let 量球观察器: MutationObserver | null = null;
 
+/** 挂了 resize 监听的那个窗口(B32): 必须记住**挂载时那个引用** ——
+ *  onUnmounted 里重新求 parentWin.value 可能已变成 null 或另一个窗口,
+ *  那样摘的就是另一个对象, 原监听永久残留(每重挂一次多一条)。 */
+let 挂了resize的窗口: Window | null = null;
+
 /** 贴球定位的取点: 收纳坞入口 → 球 iframe 真实矩形 → 逻辑锚点 */
 function 球锚点(): { x: number; y: number; r: number } {
   // 面板打开时 iframe 被撑成整屏(见 applyFrame 的 panelOpen 分支), 球矩形 = 整个视口 ——
@@ -409,6 +434,150 @@ const tabs = [
 
 /** 顶栏面包屑的当前页名 */
 const 当前页名 = computed(() => tabs.find(item => item.key === tab.value)?.label ?? '此刻的彼方');
+
+// ---------- 更新状态: 三态做进面板本身(顶栏分割线光效 + 底栏状态行 + 按钮), 不弹任何浮层 ----------
+/** idle = 待机; running = 正在跑; ok = 刚成功(4.5s 后回落待机); err = 上次失败(常驻, 点状态行跳日志) */
+const 运行状态 = ref<'idle' | 'running' | 'ok' | 'err'>('idle');
+/** 本次运行已用秒数(200ms 刷新一次; 面板收起也继续跑, 重新展开直接读当前值) */
+const 已用秒 = ref(0);
+let 运行起点 = 0;
+let 秒表定时器: number | null = null;
+let 回落定时器: number | null = null;
+/** 最近一次成功更新的摘要(底栏"更新成功 · 第 N 楼 · X 人已更新 · 用时 Ys"要用) */
+const 上次摘要 = ref({ 楼层: '', 人数: 0, 用时: 0 });
+/** 本轮是否真的出过错。为什么不直接读 debugLog.error: record() 是补丁式合并,
+ *  上一轮的 error 会一直留在日志里 —— 失败之后紧接着一次成功, 直接读它会误判成"又失败了"。 */
+let 本轮出错 = false;
+
+function 停秒表() {
+  if (秒表定时器 !== null) window.clearInterval(秒表定时器);
+  秒表定时器 = null;
+}
+function 停回落() {
+  if (回落定时器 !== null) window.clearTimeout(回落定时器);
+  回落定时器 = null;
+}
+
+// 只认"本轮新写进来的"错误: record() 每次都换一个新对象, 所以对象一变就说明有人写了日志;
+// 那时带上 error 才算本轮出错(上一轮残留的那份不会触发这个 watch)。
+watch(() => debugLog.value, 日志 => {
+  if (运行状态.value !== 'running') return;
+  if (日志?.error) 本轮出错 = true;
+});
+
+watch(updatingActive, active => {
+  停回落();
+  if (active) {
+    运行状态.value = 'running';
+    运行起点 = Date.now();
+    已用秒.value = 0;
+    本轮出错 = false;
+    停秒表();
+    秒表定时器 = window.setInterval(() => {
+      已用秒.value = Math.round((Date.now() - 运行起点) / 100) / 10;
+    }, 200);
+    return;
+  }
+  停秒表();
+  if (运行状态.value !== 'running') return;
+  const 日志 = debugLog.value;
+  // 用户主动中断不是失败: 回落待机, 不挂红灯(否则"我点了中断"看起来像出错)
+  if (本轮出错 && /已中断/.test(日志?.error ?? '')) {
+    运行状态.value = 'idle';
+    return;
+  }
+  if (本轮出错) {
+    运行状态.value = 'err';
+    return;
+  }
+  const 用时 = Math.round((Date.now() - 运行起点) / 100) / 10;
+  上次摘要.value = {
+    楼层: 日志?.replyIds?.length ? `第 ${日志.replyIds[日志.replyIds.length - 1]} 楼` : '',
+    人数: 日志?.updatedNpcs?.length ?? 0,
+    用时,
+  };
+  运行状态.value = 'ok';
+  回落定时器 = window.setTimeout(() => {
+    运行状态.value = 'idle';
+    回落定时器 = null;
+  }, 4500);
+}, { immediate: true });
+
+onUnmounted(() => {
+  停秒表();
+  停回落();
+});
+
+/** 面板根节点类名: 顶栏分割线光效由它驱动 */
+const 面板态类 = computed(() => (运行状态.value === 'idle' ? '' : `is-${运行状态.value}`));
+
+/** 顶栏按钮三态: 更新 → 更新中(转圈) → 已更新 / 重试; 成功后短暂转绿、失败转红 */
+const 更新按钮文案 = computed(() => {
+  if (updating.value) return '更新中';
+  if (运行状态.value === 'ok') return '已更新';
+  return 运行状态.value === 'err' ? '重试' : '更新';
+});
+const 更新按钮态类 = computed(() => {
+  if (updating.value) return '';
+  return 运行状态.value === 'ok' ? 'is-ok' : 运行状态.value === 'err' ? 'is-err' : '';
+});
+
+/** 底栏状态行: 待机显示接口就绪; 运行时带楼层与秒数; 成功 4.5s 后回落; 失败常驻并可点 */
+const 运行文字 = computed(() => {
+  if (运行状态.value === 'running') {
+    const 阶段 = updatingMessage.value || '读取楼层';
+    return `正在更新 · ${阶段} · 已用 ${已用秒.value.toFixed(1)}s`;
+  }
+  if (运行状态.value === 'ok') {
+    const { 楼层, 人数, 用时 } = 上次摘要.value;
+    return ['更新成功', 楼层, 人数 > 0 ? `${人数} 人已更新` : '无人物变化', `用时 ${用时.toFixed(1)}s`]
+      .filter(Boolean)
+      .join(' · ');
+  }
+  if (运行状态.value === 'err') {
+    const 原因 = (debugLog.value?.error ?? '').split('\n')[0].slice(0, 40) || '见日志';
+    return `更新失败 · ${原因} · 点这里看日志`;
+  }
+  return ready.value ? `接口已就绪 · ${settings.value.接口.模型}` : '未配置模型 · 点设置填写';
+});
+const 运行文字类 = computed(() => {
+  if (运行状态.value === 'running') return 'is-running';
+  if (运行状态.value === 'ok') return 'is-ok';
+  if (运行状态.value === 'err') return 'is-err clickable';
+  return '';
+});
+/** 底栏圆点: 待机看接口是否就绪; 运行时琥珀呼吸; 成功绿; 失败红 */
+const 运行指示灯类 = computed(() => {
+  if (运行状态.value === 'running') return 'is-running warn';
+  if (运行状态.value === 'ok') return 'good';
+  if (运行状态.value === 'err') return 'bad';
+  return '';
+});
+
+/** 本轮有变化的人: 卡的「最后更新」等于全局「最后更新」时刻 */
+const 本轮有变化人数 = computed(() => {
+  const 时刻 = Number(stats.value.最后更新 ?? 0);
+  if (!时刻) return 0;
+  return Object.values(data.value.NPC ?? {}).filter(卡 => Number((卡 as any)?.['最后更新'] ?? 0) === 时刻).length;
+});
+/** 事实档案的过期事务数: 页签红色胶囊角标(为 0 时隐藏) */
+const 过期事务数 = computed(() => 事实档案(data.value).过期数);
+
+/** 页签角标(数字): 事实档案 = 已过期事务数, 0 时不给 */
+function 页签角标(key: string): string {
+  if (key === 'consistency' && 过期事务数.value > 0) return String(过期事务数.value);
+  return '';
+}
+/** 页签圆点(布尔): 此刻的彼方/人物 = 本轮有人变化; 日志 = 最近一次更新出错 */
+function 页签圆点(key: string): boolean {
+  if (key === 'dashboard' || key === 'npc') return 本轮有变化人数.value > 0;
+  if (key === 'logs') return 运行状态.value === 'err';
+  return false;
+}
+/** 圆点配色: 有变化用暖色、出错用红色 —— 两种含义不共用一个颜色 */
+function 页签圆点色(key: string): string {
+  return key === 'logs' ? '' : 'warm';
+}
 
 const newNpcName = ref('');
 /** 自动建档开启时给空状态的正确引导; 关闭时提示手动加名单 */
@@ -519,13 +688,28 @@ watch(
 
 
 /** 标记/取消恋爱对象: 只写「恋爱对象」一个字段(其余恋爱字段由首轮更新惰性补齐),
- *  取消标记写空值 = 删掉该字段(空值即删除), 于是提示词与合并逻辑都回到"未标记"路径。 */
+ *  取消标记写空值 = 删掉该字段(空值即删除), 于是提示词与合并逻辑都回到"未标记"路径。
+ *
+ *  R8: **已有历史恋爱记录时不再弹窗**, 直接恢复 `恋爱对象 = '是'` ——
+ *  那些数值/阶段/名分本来就是这段关系的证据, 再问一次"关系从哪儿开始"等于让人重填已经发生的事。 */
 function 切换恋爱对象() {
   if (!selectedNpc.value || !selectedNpcCard.value) return;
   const 名字 = selectedNpc.value;
   const 标记 = String(selectedNpcCard.value['恋爱对象'] ?? '').trim() === '是';
   if (!标记) {
-    // 标记前先问关系起点(人设里已是夫妻/恋人的角色不该从陌生起步)
+    // 有历史记录(数值/阶段/名分/标签/态度任一非空) → 直接恢复标记, 不弹窗
+    const 有历史 = ['好感值', '情欲值', '好感阶段', '情欲阶段', '名分', '恋爱标签', '恋爱态度']
+      .some(键 => String(selectedNpcCard.value?.[键] ?? '').trim() !== '');
+    if (有历史) {
+      const 恢复 = 更新状态卡(data.value, 名字, { 恋爱对象: '是' }, 建变更环境(host));
+      if (恢复.失败) {
+        toastWarning(恢复.说明);
+        return;
+      }
+      toastSuccess(`已恢复 ${名字} 的恋爱对象标记（沿用原有数值与名分）`);
+      return;
+    }
+    // 首次标记(无任何历史)才问关系起点: 人设里已是夫妻/恋人的角色不该从陌生起步
     开局草稿.value = { 方式: 'AI', 好感: '陌生', 情欲: '无感', 名分: '无', 倾向: '' };
     开局弹窗开.value = true;
     return;
@@ -744,12 +928,29 @@ onMounted(() => {
   }
   if (量球定时器 === null) 量球定时器 = window.setInterval(() => 同步贴球锚点(), 2000);
   applyToastTheme();
-  parentWin.value?.addEventListener('resize', onViewportResize);
+  // B32: 记住挂载时那个窗口 —— 摘除要用同一个引用(见 onUnmounted)。
+  挂了resize的窗口 = parentWin.value;
+  挂了resize的窗口?.addEventListener('resize', onViewportResize);
+  // R8: Esc 关闭 —— 本 iframe 与酒馆页面(父窗口)都挂, 谁收到都能关(焦点可能在任一边)
+  frameWin.value?.addEventListener('keydown', onEscape);
+  parentWin.value?.addEventListener('keydown', onEscape);
   // 脚本按钮入口: 必须挂到 **frameWin**(组件所在嵌套 iframe 的 window)。
   // 组件代码跑在脚本 iframe 的 JS 上下文里, 裸 window 与 contentWindow 不是同一个对象 ——
   // 挂错了就永远收不到按钮的调用(2026-10-23 真机踩过)。
   const win = frameWin.value as any;
   if (win) win.__bfOpenPanel = 打开面板入口;
+  // 【验收/排障用】把 stateStore 暴露到 iframe window 上, 供在浏览器里往**内存**塞假数据
+  // (看版式/主题/抽屉), 不写任何酒馆变量、不触发快照写盘。
+  // **默认不挂**(TD-1): 裸挂等于给任何同源脚本一条改状态的通道, 且没人知道它开着。
+  // 只有脚本变量 `调试.暴露状态 === true` 时才挂 —— 验收要注入数据时自己去设置里打开。
+  if (win && settings.value.调试?.暴露状态 === true) win.__bfStateStore = stateStore;
+  // 开关改了要立刻跟上(否则"打开开关还得刷新页面"这种要求会让人以为开关坏了)
+  watch(() => settings.value.调试?.暴露状态, 开 => {
+    const w = frameWin.value as any;
+    if (!w) return;
+    if (开) w.__bfStateStore = stateStore;
+    else delete w.__bfStateStore;
+  });
 });
 
 onUnmounted(() => {
@@ -764,8 +965,16 @@ onUnmounted(() => {
   if (orbSaveTimer !== null) window.clearTimeout(orbSaveTimer);
   关闭看门狗();
   移除遮罩();
+  // B32: 摘的是挂载时记住的那个窗口, 不是重新求值的 parentWin
+  挂了resize的窗口?.removeEventListener('resize', onViewportResize);
+  挂了resize的窗口 = null;
+  frameWin.value?.removeEventListener('keydown', onEscape);
+  parentWin.value?.removeEventListener('keydown', onEscape);
   const win = frameWin.value as any;
-  if (win) delete win.__bfOpenPanel;
+  if (win) {
+    delete win.__bfOpenPanel;
+    delete win.__bfStateStore;
+  }
 });
 
 function onViewportResize() {
@@ -978,6 +1187,25 @@ function onOrbClick() {
 
 function closePanel() {
   panelOpen.value = false;
+}
+
+/**
+ * R8: `Esc` 关闭 —— 有内层弹窗时先关弹窗, 没有弹窗时才收面板。
+ * 为什么挂到 **父窗口**(酒馆页面)而不是组件所在 iframe: 面板打开时 iframe 铺满整屏但焦点可能
+ * 停在酒馆页面(玩家刚点过外面), 只在本 iframe 上监听会收不到 Esc。
+ * 两个窗口都挂, 用同一个处理函数, 谁收到都能关。
+ */
+function onEscape(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return;
+  if (addDialogOpen.value) {
+    addDialogOpen.value = false;
+    return;
+  }
+  if (开局弹窗开.value) {
+    开局弹窗开.value = false;
+    return;
+  }
+  if (panelOpen.value) closePanel();
 }
 
 // ---------------------------------------------------------------------------

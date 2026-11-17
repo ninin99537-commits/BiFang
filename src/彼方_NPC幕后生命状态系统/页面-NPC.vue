@@ -228,30 +228,124 @@
         <header class="bf-section-head">
           <h3 id="bf-notes-title">人物侧记</h3>
         </header>
-        <p v-if="detailFields.length === 0" class="bf-empty-hint">还没有可展示的侧记。</p>
+        <p v-if="detailFields.length === 0" class="bf-hint">还没有可展示的侧记。</p>
         <template v-for="组 in detailFields" :key="组.key">
           <h4 class="bf-notes-group">{{ 组.标题 }}</h4>
           <dl class="bf-notes-grid">
             <div v-for="field in 组.字段" :key="field" class="bf-note">
               <dt :title="字段说明表[field] || field">{{ field }}</dt>
               <dd>
-                <!-- 枚举字段用下拉(词表来自 恋爱规则.ts), 免得手打错字被代码丢弃 -->
-                <select
-                  v-if="editingNpc && (field === '情感倾向' || field === '名分')"
-                  v-model="editDraft[field]"
-                  class="bf-input bf-input-sm"
-                  :aria-label="field"
-                >
-                  <option v-if="field === '情感倾向'" value="" disabled>（未设置）</option>
-                  <option v-else value="">（无 / 清空）</option>
-                  <option
-                    v-for="选项 in field === '情感倾向' ? 情感倾向选项 : 名分词表"
-                    :key="选项"
-                    :value="选项"
+                <!-- 受控字段按 字段控件表 的 type 渲染(附表 B / R9): 词表与区间都来自数据源, 不在这里手抄 -->
+                <template v-if="editingNpc && 字段控件表[field]">
+                  <!-- 下拉 -->
+                  <select
+                    v-if="字段控件表[field].type === 'select'"
+                    v-model="editDraft[field]"
+                    class="bf-select bf-select-sm"
+                    :aria-label="field"
                   >
-                    {{ 选项 }}
-                  </option>
-                </select>
+                    <option value="">{{ 字段控件表[field].空值文案 }}</option>
+                    <option v-for="选项 in 字段控件表[field].选项" :key="选项" :value="选项">{{ 选项 }}</option>
+                  </select>
+                  <!-- 数字框: 空 = 未结算, 不写 0 -->
+                  <input
+                    v-else-if="字段控件表[field].type === 'number'"
+                    v-model="editDraft[field]"
+                    class="bf-input bf-input-sm"
+                    type="number"
+                    :min="字段控件表[field].min"
+                    :max="字段控件表[field].max"
+                    :step="字段控件表[field].step"
+                    :aria-label="field"
+                  />
+                  <!-- 胶囊多选(恋爱标签): 满上限后未选中的置灰 -->
+                  <div
+                    v-else-if="字段控件表[field].type === 'tags'"
+                    class="bf-tag-picker"
+                    role="group"
+                    :aria-label="field"
+                  >
+                    <button
+                      v-for="词 in 字段控件表[field].词表"
+                      :key="词"
+                      type="button"
+                      class="bf-chip bf-chip-pick"
+                      :class="{ 'is-on': 草稿标签.includes(词) }"
+                      :disabled="!草稿标签.includes(词) && 草稿标签.length >= 字段控件表[field].上限"
+                      :aria-pressed="草稿标签.includes(词)"
+                      @click="切换标签(词)"
+                    >
+                      {{ 词 }}
+                    </button>
+                  </div>
+                  <!-- 日期: 保持文本(R3), 保留时刻 -->
+                  <input
+                    v-else-if="字段控件表[field].type === 'date'"
+                    v-model="editDraft[field]"
+                    class="bf-input bf-input-sm"
+                    placeholder="YYYY-MM-DD HH:mm"
+                    :aria-label="field"
+                  />
+                  <!-- 生理周期(R5): 阶段下拉 + 明细输入, `/NN` 只读 -->
+                  <div v-else-if="字段控件表[field].type === 'cycle'" class="bf-split-row">
+                    <select
+                      class="bf-select bf-select-sm"
+                      :value="生理阶段"
+                      aria-label="生理阶段"
+                      @change="设生理阶段(($event.target as HTMLSelectElement).value)"
+                    >
+                      <option value="">（未记录阶段）</option>
+                      <option v-for="阶段名 in 生理阶段选项" :key="阶段名" :value="阶段名">{{ 阶段名 }}</option>
+                    </select>
+                    <input
+                      class="bf-input bf-input-sm"
+                      :value="生理明细"
+                      placeholder="Day 12/28 或 孕 16周+3天"
+                      aria-label="生理明细"
+                      @input="设生理明细(($event.target as HTMLInputElement).value)"
+                    />
+                    <span v-if="周期长度" class="bf-readonly" title="周期长度是彼方锁定值，不可手改">
+                      /{{ 周期长度 }}
+                    </span>
+                  </div>
+                  <textarea
+                    v-else
+                    v-model="editDraft[field]"
+                    class="bf-textarea bf-textarea-sm"
+                    rows="2"
+                    :aria-label="field"
+                  ></textarea>
+                  <!-- 规范提示(A14): 11.5px 灰字, 让玩家知道为什么不能随便填 -->
+                  <p class="bf-field-hint">{{ 字段控件表[field].提示 }}</p>
+                </template>
+                <!-- 生活状态(R4): 三项拆开展示 + 整份回写(不承诺按类目合并) -->
+                <div v-else-if="editingNpc && field === '生活状态'" class="bf-split-col">
+                  <label v-for="类目 in 生活状态类目" :key="类目" class="bf-split-row">
+                    <span class="bf-split-label">{{ 类目 }}</span>
+                    <input
+                      class="bf-input bf-input-sm"
+                      :value="生活状态项[类目]"
+                      :placeholder="`${类目}的时间与事件`"
+                      :aria-label="`生活状态 - ${类目}`"
+                      @input="设生活状态项(类目, ($event.target as HTMLInputElement).value)"
+                    />
+                  </label>
+                  <p class="bf-field-hint">三项拼成「吃饭(…); 洗漱(…); 睡眠(…)」整份写回；空项不写进串。</p>
+                </div>
+                <!-- 近期关键事件(R4): 三条拆开 + 按「；」拼回 -->
+                <div v-else-if="editingNpc && field === '近期关键事件'" class="bf-split-col">
+                  <label v-for="序号 in 近期事件上限" :key="序号" class="bf-split-row">
+                    <span class="bf-split-label">{{ 序号 }}</span>
+                    <input
+                      class="bf-input bf-input-sm"
+                      :value="近期事件项[序号 - 1]"
+                      :placeholder="`第 ${序号} 条（留空 = 该条不存在）`"
+                      :aria-label="`近期关键事件 第 ${序号} 条`"
+                      @input="设近期事件项(序号 - 1, ($event.target as HTMLInputElement).value)"
+                    />
+                  </label>
+                  <p class="bf-field-hint">最多 3 条，按「；」拼回；清空某条即删该条。</p>
+                </div>
                 <textarea
                   v-else-if="editingNpc"
                   v-model="editDraft[field]"
@@ -286,6 +380,9 @@ const {
   editingNpc, 是恋爱对象, 有恋爱数据, 切换恋爱对象, startEditNpc, saveEditNpc, cancelEditNpc, updating,
   cleanText, editDraft, 台账条目, 状态类, 结果草稿, 台账状态表, 改事务,
   新增事务草稿, 新增一条事务, detailFields, 字段说明表, 情感倾向选项, 名分词表,
+  字段控件表, 切换标签, 草稿标签,
+  生活状态项, 设生活状态项, 生活状态类目, 近期事件项, 设近期事件项, 近期事件上限,
+  生理阶段, 生理明细, 周期长度, 设生理阶段, 设生理明细, 生理阶段选项,
 } = useNPC面板();
 
 const 进行中数 = computed(() => 台账条目.value.filter(事务 => 事务.状态 === '进行中').length);

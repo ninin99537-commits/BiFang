@@ -15,15 +15,29 @@
       ⑥ 04–06 默认收起(改得少的三组先站成一行目录): 收起态也留着编号、标题与状态摘要,
          点标题展开; 用的原生 <details>, 与壳里报错详情是同一套。
   -->
-  <section class="bf-page bf-page-settings">
-    <header class="bf-page-head">
-      <div>
-        <h2 class="bf-page-title">设置</h2>
-        <p class="bf-page-sub">接口、更新、世界书、提示词、标签与备份。改动后自动保存（停止输入约 0.3 秒落盘；「写入世界书」立即生效）。</p>
-      </div>
-    </header>
+  <section ref="根节点" class="bf-page bf-page-settings">
+    <aside class="bf-set-nav" aria-label="设置分节">
+      <div class="bf-set-nav-head">设置分节</div>
+      <button
+        v-for="节 in 章节表"
+        :key="节.key"
+        class="bf-set-link"
+        :class="{ active: 当前章节 === 节.key }"
+        :aria-current="当前章节 === 节.key ? 'true' : undefined"
+        :data-节="节.key"
+      >
+        <b>{{ 节.编号 }} {{ 节.标题 }}</b>
+        <span>{{ 节.摘要() }}</span>
+      </button>
+    </aside>
 
     <div class="bf-settings">
+      <header class="bf-page-head">
+        <div>
+          <h2 class="bf-page-title">设置</h2>
+          <p class="bf-page-sub">接口、更新、世界书、提示词、标签与备份。改动后自动保存（停止输入约 0.3 秒落盘；「写入世界书」立即生效）。</p>
+        </div>
+      </header>
       <!-- 01 接口 -->
       <section class="bf-setting-group" aria-labelledby="bf-set-api">
         <header class="bf-set-head">
@@ -165,7 +179,7 @@
         </div>
         <div v-if="presetNames.length > 0" class="bf-set-row bf-set-row-inline">
           <label class="bf-form-label" for="bf-preset-select">已保存</label>
-          <select id="bf-preset-select" v-model="selectedPreset" class="bf-input">
+          <select id="bf-preset-select" v-model="selectedPreset" class="bf-select">
             <option value="">（选择预设加载）</option>
             <option v-for="name in presetNames" :key="name" :value="name">{{ name }}</option>
           </select>
@@ -199,6 +213,9 @@
           <input v-model="settings.更新.自动更新" type="checkbox" class="bf-switch" />
         </label>
 
+        <!-- 从属组(A31): 自动更新关掉时置灰半透明, 但保留可见 —— 让玩家看得见"关掉后还有什么" -->
+        <div class="bf-setting-sub" :class="{ 'is-off': !settings.更新.自动更新 }">
+
         <label class="bf-switch-row">
           <span class="bf-switch-copy">
             <b>慢一步（不分析最新一层）</b>
@@ -226,6 +243,7 @@
           </div>
         </div>
         <p class="bf-hint">每 N 条回复更新一次；更新时读取最近 N 条 AI 回复。</p>
+        </div>
 
         <label class="bf-switch-row">
           <span class="bf-switch-copy">
@@ -351,13 +369,13 @@
           <div class="bf-form-grid bf-set-seg-grid">
             <label class="bf-field">
               <span class="bf-form-label">插入位置</span>
-              <select v-model="seg.锚点" class="bf-input">
+              <select v-model="seg.锚点" class="bf-select">
                 <option v-for="锚点 in 锚点选项" :key="锚点" :value="锚点">{{ 锚点 }}</option>
               </select>
             </label>
             <label class="bf-field">
               <span class="bf-form-label">身份（role）</span>
-              <select v-model="seg.role" class="bf-input">
+              <select v-model="seg.role" class="bf-select">
                 <option value="system">system</option>
                 <option value="user">user</option>
                 <option value="assistant">assistant</option>
@@ -485,6 +503,153 @@ const {
   worldbookAlwaysDraft, worldbookExcludeDraft, tagDraft, 世界书写入目标表,
   导出数据, 导入数据, 导入文本, 清空生理数据,
 } = use设置面板();
+
+// ---- 左侧章节目录(§4.5): 6 节 + 实时摘要; 点击平滑滚动, 滚动时反查高亮 ----
+// 分节按 **设计稿 HTML 的 6 节**(接口/幕后更新/世界书/提示词/标签过滤/数据备份),
+// 不是 MD §4.5 表格里那版(恋爱追踪/生理状态)—— R1–R15 总原则: 冲突以 HTML + 源码为准,
+// 而 settings.ts 里根本没有「启用恋爱追踪」这个字段(恋爱是按人物标记的, 不是全局开关)。
+const 章节表 = computed(() => [
+  { key: 'bf-set-api', 编号: '01', 标题: '接口与模型', 摘要: () => settings.value.接口?.模型 || '未填模型' },
+  {
+    key: 'bf-set-update',
+    编号: '02',
+    标题: '幕后更新',
+    摘要: () =>
+      `${settings.value.更新?.自动更新 ? '自动' : '手动'} · 每 ${settings.value.更新?.更新频率 ?? 1} 层 · 读 ${settings.value.更新?.读取最近回复数 ?? 3} 条`,
+  },
+  { key: 'bf-set-worldbook', 编号: '03', 标题: '世界书', 摘要: () => settings.value.更新?.世界书写入 || '关闭' },
+  { key: 'bf-set-prompt', 编号: '04', 标题: '提示词', 摘要: () => `${settings.value.提示词?.自定义段?.length ?? 0} 段自定义` },
+  { key: 'bf-set-tags', 编号: '05', 标题: '标签过滤', 摘要: () => settings.value.标签?.模式 || '排除' },
+  { key: 'bf-set-backup', 编号: '06', 标题: '数据备份', 摘要: () => 'JSON' },
+]);
+
+const 根节点 = ref<HTMLElement | null>(null);
+const 当前章节 = ref('bf-set-api');
+
+/** 本页真正所在的那个 document。
+ *  **跨文档是结构性前提**: 面板 UI 渲染在「球 iframe」的文档里, 而本模块的代码跑在
+ *  「脚本 iframe」的 JS 上下文里 —— 两者是不同的 document。任何 DOM 级操作(监听/查询/
+ *  创建节点)只要用裸 `document`, 拿到的都是脚本 iframe 那份, 而 UI 节点根本不在那里,
+ *  于是**静默失效、不报错**。取节点一律走这里。 */
+function 界面文档(): Document | null {
+  return 根节点.value?.ownerDocument ?? null;
+}
+
+/** 点目录: 展开折叠组(04–06 是 details) + 平滑滚到该节 */
+function 跳到章节(id: string) {
+  const 文档 = 界面文档();
+  if (!文档) {
+    诊断('跳到章节', { 结果: '没有 UI 文档' });
+    return;
+  }
+  const 目标 = 文档.getElementById(id);
+  if (!目标) {
+    诊断('跳到章节', { 结果: '找不到节点', id });
+    return;
+  }
+  const 折叠 = 目标.closest('details');
+  if (折叠) 折叠.open = true;
+  当前章节.value = id;
+  目标.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  诊断('跳到章节', { id, 文档: 文档 === (window as any).document ? '脚本 iframe 文档' : 'UI 文档' });
+}
+
+/** 滚动时反查: 取「已越过顶部 80px」的最后一节作为当前章节(与设计稿同一口径) */
+function 同步当前章节() {
+  const 文档 = 界面文档();
+  if (!文档) return;
+  // 不依赖 ref: 容器可能已重建, 直接按选择器取当前真实节点
+  const 容器 = 文档.querySelector('.bf-page-settings .bf-settings') as HTMLElement | null;
+  if (!容器) return;
+  const 基准 = 容器.getBoundingClientRect().top + 80;
+  let 命中 = 章节表.value[0].key;
+  for (const 节 of 章节表.value) {
+    const 元素 = 文档.getElementById(节.key);
+    if (元素 && 元素.getBoundingClientRect().top <= 基准) 命中 = 节.key;
+  }
+  当前章节.value = 命中;
+  诊断('同步当前章节', { 命中, scrollTop: Math.round(容器.scrollTop), 基准: Math.round(基准) });
+}
+
+// ---- 目录交互: 挂到「本页所在的那个 document」上（容器重建免疫）, 不走模板绑定 ----
+// TD-3: 本页两处模板绑定静默失效（`@click="跳到章节(节.key)"` / `@scroll="同步当前章节"`）——
+// 编译产物正常、handler 从未执行、同页其它 @click 全正常，根因未定位。
+//
+// 三轮踩出来的挂载纪律（每一轮都因上一条错法而失败, 别再退回去）:
+//   ① **挂 UI 文档, 不挂 `document`**: 面板 UI 在「球 iframe」的文档里, 本模块代码在
+//      「脚本 iframe」的上下文里 —— 两个 document。v3 用裸 `document` 挂, 监听确实挂上了
+//      (诊断写在脚本 iframe 的 window 上), 但 UI 的点击/滚动永远到不了它(验收实证)。
+//      目标文档一律由 `根节点.ownerDocument` 求, 与 `悬浮球界面.vue` 的 `frameWin` 同源。
+//   ② **不等 ref 填充就提前 return**: v1/v2 挂在 onMounted→nextTick 里取模板 ref, 真包上
+//      取到 null 就在 `if (!导航 || !滚动容器) return;` 返回, 两行 addEventListener 从未执行。
+//      这里改成 `watch(根节点, …, { immediate: true })` + 非空才挂, 并保持幂等(先摘后挂)。
+//   ③ click / scroll 都必须 **capture: true**: `.bf-panel` 上有 `@click.stop`, 冒泡阶段的
+//      document 委托收不到面板内的 click; scroll 本身不冒泡。
+let 目录监听: (() => void) | null = null;
+
+/** 诊断: 只在 `调试.暴露状态 === true` 时记录（复用 TD-1 那个后门开关，不新增裸挂）。 */
+function 诊断(阶段: string, 附加?: Record<string, unknown>) {
+  if (settings.value.调试?.暴露状态 !== true) return;
+  const 文档 = 界面文档();
+  const w = (文档?.defaultView ?? null) as any;
+  if (!w) return;
+  w.__bfNavDiag = { ...(w.__bfNavDiag || {}), [阶段]: { at: Date.now(), ...附加 } };
+}
+
+function 摘目录监听() {
+  目录监听?.();
+  目录监听 = null;
+}
+
+function 挂目录监听() {
+  摘目录监听();
+  const 文档 = 界面文档();
+  if (!文档) return;
+  const onClick = (事件: Event) => {
+    const 目标 = 事件.target as HTMLElement | null;
+    // 只认设置页内的点击, 不干扰其它页
+    if (!目标 || typeof 目标.closest !== 'function' || !目标.closest('.bf-page-settings')) return;
+    const 按钮 = 目标.closest('.bf-set-link') as HTMLElement | null;
+    const id = 按钮?.dataset.节;
+    if (id) 跳到章节(id);
+  };
+  // scroll 不冒泡, 必须在捕获阶段接; 只认设置页那个滚动容器
+  const onScroll = (事件: Event) => {
+    const 目标 = 事件.target as HTMLElement | null;
+    if (目标 && typeof 目标.classList?.contains === 'function'
+      && 目标.classList.contains('bf-settings') && 目标.closest('.bf-page-settings'))
+      同步当前章节();
+  };
+  文档.addEventListener('click', onClick, true);
+  文档.addEventListener('scroll', onScroll, true);
+  目录监听 = () => {
+    文档.removeEventListener('click', onClick, true);
+    文档.removeEventListener('scroll', onScroll, true);
+  };
+  诊断('已挂载', {
+    文档: 文档 === (window as any).document ? '脚本 iframe 文档' : 'UI 文档',
+    根节点: !!根节点.value,
+  });
+}
+
+// 根节点一就位就挂(immediate: 若 setup 时已有则当场挂), 之后组件重建也重挂。
+// 摘挂用的是同一个 `目录监听` 闭包 —— 里面捕获的就是挂载时那个 document, 不会摘到另一个。
+watch(根节点, 元素 => {
+  if (元素) 挂目录监听();
+  else 摘目录监听();
+}, { immediate: true });
+onUnmounted(() => {
+  摘目录监听();
+  const w = (界面文档()?.defaultView ?? null) as any;
+  if (w) delete w.__bfNavDiag;
+});
+
+// 开关关掉时把诊断也撤掉: **默认零全局变量** —— `__bfNavDiag` 只在开关为 true 期间存在。
+watch(() => settings.value.调试?.暴露状态, 开 => {
+  if (开) return;
+  const w = (界面文档()?.defaultView ?? null) as any;
+  if (w) delete w.__bfNavDiag;
+});
 
 /** 插入位置: 消息级锚点, 与 prompts.ts 的 锚点表 同序。插不进某条消息的正文内部。 */
 const 锚点选项 = ['最前', '主提示词之后', '任务之前', '任务之后', '最后'];
