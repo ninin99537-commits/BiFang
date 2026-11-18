@@ -229,6 +229,9 @@ export async function 收集本轮输入(参数: 取料参数) {
         恋爱对象名单: tracked.filter((name: string) => String(currentCards[name]?.['恋爱对象'] ?? '').trim() === '是'),
         自定义段: settings.提示词?.自定义段 ?? [], // 用户自定义段: 只插锚点, 不改内置提示词
         预填充: !!settings.更新.预填充,
+        // 消息伪装(§28/§29): 与「上下文进工具」同开时伪装不生效 ——
+        // 那时 messages 会被整段替换成一句指令, 没有东西可拆(警告在 api.ts 里打, 那里才知道最终走哪条路)
+        消息伪装: !!settings.接口.消息伪装 && !settings.接口.上下文进工具,
         worldbook,
         currentStoryTime: data.剧情时间,
         storyTimeHint,

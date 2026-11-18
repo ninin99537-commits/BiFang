@@ -178,6 +178,10 @@ async function chatCompletionInner(host: 接口宿主, messages: any[], options?
                 + '要让它起作用, 请同时打开「工具通道」。');
         }
         else {
+            // 与「消息伪装」同开时, 伪装没有东西可拆(上下文已全搬进工具说明) —— 明确提示, 不静默。
+            if (options?.接口?.消息伪装 ?? baseCfg.消息伪装)
+                console.warn('[彼方] 「消息伪装」与「上下文进工具」同时开着: 这次以「上下文进工具」为准, 消息伪装不生效。'
+                    + '想让伪装起作用, 请先关掉「上下文进工具」。');
             工具上下文 = messages
                 .map((message: any) => `【${message.role === 'system' ? '系统指令' : message.role === 'user' ? '用户' : '助手'}】\n${String(message.content ?? '')}`)
                 .join('\n\n────────\n\n');

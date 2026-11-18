@@ -1,0 +1,305 @@
+// 彼方 · 消息伪装(第四个开关) —— 批次: 第四轮(方案 §28/§29)。
+//
+// 动机: 另一套公开预设的请求读起来像一段真实协作会话, 而不是一份投喂文档。
+//
+// 铁律(方案 §29 ①): **只改结构与承载位置, 规则文字一个字不改**。
+// 证明方式不是"三段拼回去相等"(§29 ② 改了输出要求的位置, 顺序变了), 而是:
+//   **每段内容逐字 === 原文对应片段**, 且 `输出要求` 段落在末条 user 的尾部。
+//
+// 覆盖:
+//   [A] 金标准: 每段逐字取自原文(用 hash 锁死)
+//   [B] 结构: 8 条消息 / 角色交替 / 末条是 user
+//   [C] 输出要求贴在末条 user 尾部(§29 ②)
+//   [D] 确认句: 三条不同 / ≤6 字 / 零新信息
+//   [E] 五个锚点位置语义
+//   [F] 与预填充的交互(末条仍是 user)
+//   [G] 与「上下文进工具」的优先级(伪装不生效 + 明确提示)
+//   [H] 16 种开关组合都不崩
+import { createHash } from 'node:crypto';
+import { createPinia, setActivePinia } from 'pinia';
+import lodash from 'lodash';
+import { buildUpdateMessages } from '../src/彼方_NPC幕后生命状态系统/prompts';
+import { chatCompletion } from '../src/彼方_NPC幕后生命状态系统/api';
+import { 彼方假宿主 } from './helpers/彼方假宿主';
+
+(globalThis as any)._ = lodash;
+
+let pass = 0;
+let fail = 0;
+function ok(名: string, 条件: boolean, 备注?: string) {
+  if (条件) {
+    pass++;
+  }
+  else {
+    fail++;
+    console.log(`  FAIL ${名}${备注 ? `  (${备注})` : ''}`);
+  }
+}
+function eq(名: string, 实际: any, 期望: any) {
+  const a = JSON.stringify(实际);
+  const b = JSON.stringify(期望);
+  if (a === b) {
+    pass++;
+  }
+  else {
+    fail++;
+    console.log(`  FAIL ${名}\n      期望 ${b}\n      实际 ${a}`);
+  }
+}
+const sha = (s: string) => createHash('sha1').update(s, 'utf8').digest('hex').slice(0, 12);
+
+/** 造一份最小输入 */
+function 造输入(额外: Record<string, any> = {}) {
+  return {
+    reply: '这是一段剧情正文。',
+    replyCount: 1,
+    context: '',
+    timeJump: '',
+    tracked: ['甲'],
+    inSceneHint: [],
+    currentCards: { 甲: { 当前在做: '做饭', 当前状态: '平静', 位置: '家', 身份锚点: '面包师' } },
+    autoTrackEnabled: true,
+    physioEnabled: false,
+    恋爱对象名单: [],
+    自定义段: [],
+    预填充: false,
+    worldbook: '',
+    currentStoryTime: '2026-01-01 20:00',
+    storyTimeHint: '2026-01-02 12:30',
+    storySpan: '约 0.7 天',
+    recentTrace: '',
+    playerName: '主角',
+    playerDescription: '',
+    展开宏: (t: string) => t,
+    ...额外,
+  };
+}
+
+/** 关掉伪装时的 messages(现状), 用来提取"原文片段"作金标准 */
+function 现状() {
+  return buildUpdateMessages(造输入({ 消息伪装: false }) as any).messages;
+}
+function 伪装(额外: Record<string, any> = {}) {
+  return buildUpdateMessages(造输入({ 消息伪装: true, ...额外 }) as any).messages;
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[A] 金标准: 每段内容逐字取自原文(不是重新拼的)');
+{
+  const 原 = 现状();
+  const 伪 = 伪装({ context: '主角走进广场。' });
+  // 现状: [0] system = HEAD+BODY, [1] user = userContent
+  const 原系统 = String(原[0].content);
+  const 原用户 = String(原[1].content);
+
+  // 伪装(带场景判断): [0] system=HEAD, [1] 规则段1, [3] 规则段2, [7] 末条 user
+  const 伪身份 = String(伪[0].content);
+  const 段1 = String(伪[1].content);
+  const 段2 = String(伪[3].content);
+  const 末用户 = String(伪[伪.length - 1].content);
+
+  // ① 身份句: 原文系统提示词以它开头, 伪装后它就是整条 system
+  ok('[A] 身份句逐字 === 原文系统提示词的开头', 原系统.startsWith(伪身份), 伪身份.slice(0, 40));
+  ok('[A] 身份句是原文的前缀', 原系统.slice(0, 伪身份.length) === 伪身份);
+
+  // ② 规则段1 / 规则段2: 必须是原文的子串, 且首尾相接
+  const 原文剩余 = 原系统.slice(伪身份.length);
+  ok('[A] 规则段1 是原文的子串', 原文剩余.includes(段1), 段1.slice(0, 40));
+  ok('[A] 规则段1 从原文剩余部分的开头开始', 原文剩余.startsWith(段1));
+  ok('[A] 规则段2 紧接在规则段1 之后', 原文剩余.startsWith(段1 + 段2), `段1末 ${段1.slice(-20)} / 段2首 ${段2.slice(0, 20)}`);
+  // ③ 输出要求段: 必须在原文里, 且在末条 user 的尾部
+  const 输出要求起点 = 末用户.indexOf('\n输出要求:');
+  ok('[A] 输出要求段在末条 user 里', 输出要求起点 >= 0, 末用户.slice(-200));
+  const 输出要求段 = 末用户.slice(输出要求起点);
+  ok('[A] 输出要求段是原文的子串', 原文剩余.includes(输出要求段), 输出要求段.slice(0, 40));
+  ok('[A] 输出要求段在原文末尾结束', 原文剩余.endsWith(输出要求段));
+
+  // ④ 四段重组 = 原文的全部内容(一个字符都不丢)
+  const 重组 = 伪身份 + 段1 + 段2 + 输出要求段;
+  eq('[A] 身份句+规则段1+规则段2+输出要求段 === 原文系统提示词', sha(重组), sha(原系统));
+
+  // ⑤ 剧情正文逐字未改
+  ok('[A] 剧情正文是原文 user 的开头', 末用户.startsWith(原用户), 末用户.slice(0, 40));
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[B] 结构: 角色交替 / 末条是 user / 无连续 assistant');
+{
+  // 无场景判断 → 6 条(第三条确认句只在场景判断存在时才加)
+  const 无场景 = 伪装();
+  eq('[B] 无场景判断时 6 条', 无场景.length, 6);
+  eq('[B] 无场景时角色序列', 无场景.map(m => m.role), ['system', 'user', 'assistant', 'user', 'assistant', 'user']);
+  eq('[B] 无场景时末条是 user', 无场景[无场景.length - 1].role, 'user');
+
+  // 带场景判断 → 8 条
+  const 伪 = 伪装({ context: '主角走进广场。' });
+  eq('[B] 带场景判断时 8 条', 伪.length, 8);
+  eq('[B] 角色序列', 伪.map(m => m.role), ['system', 'user', 'assistant', 'user', 'assistant', 'user', 'assistant', 'user']);
+  eq('[B] 末条是 user', 伪[伪.length - 1].role, 'user');
+  // 除首条 system 外没有别的 system(伪装的意义就在这)
+  eq('[B] 只有第一条是 system', 伪.filter(m => m.role === 'system').length, 1);
+  eq('[B] 无场景时也只有第一条是 system', 无场景.filter(m => m.role === 'system').length, 1);
+
+  // 两种情形都不许有连续 assistant(实测踩到过: 无 context 时第三条确认句紧跟第二条)
+  for (const [标签, 组] of [['带场景', 伪], ['无场景', 无场景]] as Array<[string, any[]]>) {
+    let 连续 = 0;
+    for (let i = 1; i < 组.length; i++)
+      if (组[i].role === 'assistant' && 组[i - 1].role === 'assistant')
+        连续++;
+    eq(`[B] ${标签}: 没有连续 assistant`, 连续, 0);
+  }
+
+  ok('[B] 场景判断在 user 里(不是 system)', 伪.some(m => m.role === 'user' && String(m.content).includes('仅供场景判断')));
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[C] 输出要求贴在末条 user 尾部(§29 ② 的裁定)');
+{
+  const 伪 = 伪装({ context: '主角走进广场。' });
+  const 末 = String(伪[伪.length - 1].content);
+  ok('[C] 末条 user 以输出要求段结尾', /\n输出要求:[\s\S]*$/.test(末), 末.slice(-120));
+  ok('[C] 末条 user 含"只输出一个 JSON 对象"', 末.includes('只输出一个 JSON 对象'), 末.slice(-300));
+  // 关键: 输出要求**不在**中间那两条 user 里
+  ok('[C] 规则段1 里没有输出要求', !String(伪[1].content).includes('\n输出要求:'));
+  ok('[C] 规则段2 里没有输出要求', !String(伪[3].content).includes('\n输出要求:'));
+  // 承重指令与生成之间不隔任何 assistant —— 末条就是它
+  eq('[C] 输出要求所在的 message 就是最后一条', 伪[伪.length - 1].role, 'user');
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[D] 确认句: 三条不同 / ≤6 字 / 零新信息');
+{
+  const 伪 = 伪装({ context: '主角走进广场。' });
+  const 三条 = 伪.filter(m => m.role === 'assistant').map(m => String(m.content));
+  eq('[D] 恰好三条确认句(带场景判断时)', 三条.length, 3);
+  eq('[D] 三条互不相同', new Set(三条).size, 3);
+  for (const 句 of 三条) {
+    ok(`[D] 「${句}」≤6 字`, 句.length <= 6, `长度 ${句.length}`);
+    // 零新信息: 不许出现任何指令性词汇
+    const 禁词 = ['JSON', 'json', '输出', '格式', '规则', '字段', 'NPC', '请', '必须', '应'];
+    const 命中 = 禁词.filter(w => 句.includes(w));
+    eq(`[D] 「${句}」不含指令性词汇`, 命中, []);
+  }
+  // 无场景判断时只有两条确认句(第三条会与第二条相邻)
+  const 无场景 = 伪装();
+  eq('[D] 无场景时只有两条确认句', 无场景.filter(m => m.role === 'assistant').length, 2);
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[E] 五个锚点位置语义');
+{
+  const 段 = (锚点: string, content: string) => ({ 锚点, role: 'system', content, 启用: true });
+  const 伪 = 伪装({
+    自定义段: [
+      段('最前', 'ANCHOR_FIRST'),
+      段('主提示词之后', 'ANCHOR_AFTER_MAIN'),
+      段('任务之前', 'ANCHOR_BEFORE_TASK'),
+      段('任务之后', 'ANCHOR_AFTER_TASK'),
+      段('最后', 'ANCHOR_LAST'),
+    ],
+  });
+  const 位置 = (标记: string) => 伪.findIndex(m => String(m.content).includes(标记));
+  const 首 = 位置('ANCHOR_FIRST');
+  const 主后 = 位置('ANCHOR_AFTER_MAIN');
+  const 任前 = 位置('ANCHOR_BEFORE_TASK');
+  const 任后 = 位置('ANCHOR_AFTER_TASK');
+  const 最后 = 位置('ANCHOR_LAST');
+  ok('[E] 五个锚点都出现了', [首, 主后, 任前, 任后, 最后].every(i => i >= 0), JSON.stringify([首, 主后, 任前, 任后, 最后]));
+  ok('[E] 最前 在身份句之前', 首 === 0, `位置 ${首}`);
+  ok('[E] 主提示词之后 在任务正文之前', 主后 < 任前, `${主后} < ${任前}`);
+  ok('[E] 任务之前 在任务正文之前', 任前 < 任后, `${任前} < ${任后}`);
+  ok('[E] 顺序: 最前 < 主后 < 任前 < 任后 < 最后', 首 < 主后 && 主后 < 任前 && 任前 < 任后 && 任后 < 最后, JSON.stringify([首, 主后, 任前, 任后, 最后]));
+  // 末条仍是 user(锚点段是 system, 但 TAIL_KICKOFF 会补 user)
+  eq('[E] 用户段全是 system 时, 末条被补成 user', 伪[伪.length - 1].role, 'user');
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[F] 与预填充的交互: 末条仍是 user');
+{
+  const 伪 = 伪装({ 预填充: true });
+  eq('[F] 开预填充后末条仍是 user', 伪[伪.length - 1].role, 'user');
+  // 预填充由共用层在末条 user 之后追加 assistant '{', 与现状同一条路径
+  ok('[F] 末条是 user 才轮得到预填充', 伪[伪.length - 1].role === 'user');
+
+  // 用户在「最后」插 assistant 段 → 末条变 assistant → TAIL_KICKOFF 补 user
+  const 末assistant = 伪装({ 自定义段: [{ 锚点: '最后', role: 'assistant', content: '尾注' }] });
+  eq('[F] 末条是 assistant 时补了 TAIL_KICKOFF', 末assistant[末assistant.length - 1].content, '现在, 按上述全部规则开始执行任务。');
+  eq('[F] 补的是 user', 末assistant[末assistant.length - 1].role, 'user');
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[G] 与「上下文进工具」的优先级: 伪装不生效 + 明确提示');
+{
+  // 更新输入.ts 传参时已经互斥, 这里直接验 api.ts 的警告与最终结构
+  setActivePinia(createPinia());
+  const { host, 记 } = 彼方假宿主({ 模型回复: ['{"NPC":{}}'] });
+  Object.assign((host as any).vars.get({ type: 'global' })['彼方_settings'].接口, { 工具通道: true, 上下文进工具: true, 消息伪装: true });
+  const 原文 = console.warn;
+  const 警告: string[] = [];
+  console.warn = (...args: any[]) => { 警告.push(args.map(String).join(' ')); };
+  try {
+    await chatCompletion(host as any, [
+      { role: 'system', content: '系统指令' },
+      { role: 'user', content: '剧情正文' },
+    ]);
+  }
+  finally {
+    console.warn = 原文;
+  }
+  const 有提示 = 警告.some(w => w.includes('消息伪装') && w.includes('不生效'));
+  ok('[G] 明确提示"消息伪装不生效"(不许静默)', 有提示, 警告.join(' | ').slice(0, 300));
+  // 上下文进工具生效: messages 只剩一句指令
+  const 全文 = `${JSON.stringify(记.rawCalls[0].ordered_prompts)}${String(记.rawCalls[0].user_input ?? '')}`;
+  ok('[G] 上下文进工具生效(messages 只剩一句)', 全文.includes('请按工具说明'), 全文.slice(0, 200));
+  ok('[G] 上下文搬进了工具说明', JSON.stringify(记.rawCalls[0].tools).includes('系统指令'), JSON.stringify(记.rawCalls[0].tools).slice(0, 200));
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[H] 16 种开关组合都不崩');
+{
+  for (const 工具 of [false, true]) {
+    for (const 上下文 of [false, true]) {
+      for (const 打散 of [false, true]) {
+        for (const 伪装 of [false, true]) {
+          const 标签 = `工具=${+工具} 上下文=${+上下文} 打散=${+打散} 伪装=${+伪装}`;
+          setActivePinia(createPinia());
+          const { host } = 彼方假宿主({ 模型回复: ['{"NPC":{}}'] });
+          Object.assign((host as any).vars.get({ type: 'global' })['彼方_settings'].接口, {
+            工具通道: 工具, 上下文进工具: 上下文, 请求打散: 打散, 消息伪装: 伪装,
+          });
+          let 错误: unknown = null;
+          const 原文warn = console.warn;
+          console.warn = () => {};
+          try {
+            await chatCompletion(host as any, [
+              { role: 'system', content: '系统指令' },
+              { role: 'user', content: '剧情正文' },
+            ]);
+          }
+          catch (e) {
+            错误 = e;
+          }
+          finally {
+            console.warn = 原文warn;
+          }
+          ok(`[H] ${标签}: 不崩`, 错误 === null, 错误 instanceof Error ? 错误.message.slice(0, 100) : '');
+        }
+      }
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[I] 伪装关 = 逐字节与现状一致(不能因为加了开关就动老路径)');
+{
+  const 关 = buildUpdateMessages(造输入({ 消息伪装: false }) as any).messages;
+  const 没传 = buildUpdateMessages(造输入() as any).messages;
+  eq('[I] 显式关 与 不传 逐字节相同', sha(JSON.stringify(关)), sha(JSON.stringify(没传)));
+  eq('[I] 关时仍是 2 条', 关.length, 2);
+  eq('[I] 关时第 0 条是 system', 关[0].role, 'system');
+  eq('[I] 关时第 1 条是 user', 关[1].role, 'user');
+  // 关时第 0 条仍含全部规则(没有拆)
+  ok('[I] 关时 system 里仍有"输出要求"', String(关[0].content).includes('\n输出要求:'));
+}
+
+console.log(`\n结果: ${pass} 通过, ${fail} 失败`);

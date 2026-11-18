@@ -209,6 +209,21 @@
           <br />标记只加在系统提示词开头，不影响剧情内容。可以和上面两个开关随便组合。
         </p>
 
+        <label class="bf-switch-row">
+          <span class="bf-switch-copy">
+            <b>消息伪装</b>
+            <span>把"一长份说明"改成"你一句我一句"的对话（实验性）</span>
+          </span>
+          <input v-model="settings.接口.消息伪装" type="checkbox" class="bf-switch" />
+        </label>
+        <p class="bf-hint">
+          默认关。打开后，发给 AI 的内容不再是"一整份文档"，而是拆成几轮来回：
+          先说一段要求、它应一声、再说一段、再应一声，最后才把剧情和输出格式交给它。
+          用来排除"服务端发现这是一份投喂文档就降级"。
+          <br /><b>和「上下文也放进表里」同时打开时，这个开关不起作用</b>（那时内容已经全搬进表里了，没东西可拆），控制台会提醒你。
+          <br />代价：AI 可能把中间那几声"明白"当成已经答完了，反而更容易跑偏。先小范围试。
+        </p>
+
         <h4 class="bf-subgroup-title">配置预设</h4>
         <div class="bf-set-row bf-set-row-inline">
           <label class="bf-form-label" for="bf-preset-name">预设名</label>
