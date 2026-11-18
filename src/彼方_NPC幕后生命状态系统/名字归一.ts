@@ -85,28 +85,27 @@ function 编辑距离(甲: string, 乙: string): number {
     return 1;
 }
 
-/** 去掉姓氏: 「林淑仪」→「淑仪」、「乔尔·米勒」→「乔尔」(取第一个分隔符之前)、「艾莉」→「艾莉」(两字不去) */
+/** 去姓: **只对带分隔符的名字生效**(「乔尔·米勒」→「乔尔」、「乔尔 米勒」→「乔尔」)。
+ *
+ *  2026-11-18 复查 P1-13 改: 原来对中文三字名也砍首字(「林淑仪」→「淑仪」), 那只是猜 ——
+ *  「张三丰」会变成「三丰」, 若真有个叫「三丰」的, 跨轮次就被自动合并掉。
+ *  带分隔符的西式名不一样: "·"后面那段就是姓, 去掉是**确定操作**。
+ *  猜只配换提示, 不配换一张卡消失。 */
 function 去姓(名字: string): string {
     const 归一后 = 归一(名字);
-    const 分隔 = 归一后.split(/[·•.\s]+/).filter(Boolean);
+    const 分隔 = 归一后.split(/[·•・.\s]+/).filter(Boolean);
     if (分隔.length > 1)
         return 分隔[0];
-    const 字们 = [...归一后];
-    if (字们.length >= 3)
-        return 字们.slice(1).join('');
     return 归一后;
 }
 
-/** 前缀包含关系(证据级): 一方是另一方的去姓形式, 且被包含方 ≥2 字。
- *  为什么这条算"证据"而不是"相似": 「乔尔·米勒」与「乔尔」不是"长得像", 是**同一个名字的完整版与简写版**。
- *  注意: **不做**"互相包含"的模糊判定(那会让「艾莉」被「艾莉丝」吞掉) —— 只认"等于"。
- */
+/** 去姓前缀关系(证据级): 一方是另一方的去姓形式, 且被包含方 ≥2 字。
+ *  **只认"去姓后等于"**, 不认模糊包含 —— 后者会让「艾莉」被「艾莉丝」吞掉。 */
 function 是去姓前缀(甲: string, 乙: string): boolean {
     const a = 归一(甲);
     const b = 归一(乙);
     if (!a || !b || a === b)
         return false;
-    // 一方的去姓形式恰好等于另一方
     const a去姓 = 去姓(a);
     const b去姓 = 去姓(b);
     if (a去姓.length >= 2 && a去姓 === b)
@@ -116,22 +115,38 @@ function 是去姓前缀(甲: string, 乙: string): boolean {
     return false;
 }
 
-/** 两张卡的内容重合度: 只看**两边都有的字段**里值相同的比例。
- *  同一回复内名字近似 + 这个值高 → 是同一个人被写了两遍(这是**证据**, 不是相似)。 */
+/** 两张卡的内容重合度。
+ *
+ *  **分母是"两边字段数的较大值", 不是交集**(2026-11-18 复查 P1-12 改):
+ *  用交集时, 模型给新人写 2 个字段、恰好和旧人这两个字段相同 → 2/2 = 1.0 → 旧人被并掉、卡消失。
+ *  那是**静默合并**, 比"多一张卡"危险得多。
+ *  改成较大值后: 张三 10 字段 vs 张四 2 字段 → 2/10 = 0.2, 不会合并。 */
 export function 内容重合度(甲: Record<string, any>, 乙: Record<string, any>): number {
-    const 键 = Object.keys(甲).filter(k => k in 乙 && 甲[k] !== undefined && 乙[k] !== undefined);
-    if (键.length === 0)
+    const 甲键 = Object.keys(甲).filter(k => 甲[k] !== undefined);
+    const 乙键 = Object.keys(乙).filter(k => 乙[k] !== undefined);
+    const 分母 = Math.max(甲键.length, 乙键.length);
+    if (分母 === 0)
         return 0;
     let 同 = 0;
-    for (const k of 键) {
+    for (const k of 甲键) {
+        if (!(k in 乙) || 乙[k] === undefined)
+            continue;
         if (JSON.stringify(甲[k]) === JSON.stringify(乙[k]))
             同++;
     }
-    return 同 / 键.length;
+    return 同 / 分母;
+}
+
+/** 共有字段数 —— 内容判据的另一个下限(复查 P1-12)。
+ *  只有 2 个字段恰好相同时, 即便分母改大了, 2/2 这种小样本也不该被当成"一字不差"。 */
+export function 共有字段数(甲: Record<string, any>, 乙: Record<string, any>): number {
+    return Object.keys(甲).filter(k => k in 乙 && 甲[k] !== undefined && 乙[k] !== undefined).length;
 }
 
 /** 内容重合度达到这个值才算"一字不差"级的证据。用户实测的那个 case 是 100%。 */
 const 内容证据线 = 0.8;
+/** 共有字段至少这么多个才允许用内容做判据(复查 P1-12: 不足 3 个直接不合并) */
+const 内容最少共有字段 = 3;
 
 /** 归一结果: 名字 → 最终采用的名字 */
 export type 归一结果 = {
@@ -187,6 +202,9 @@ export function 归一名(
                 continue;
             const 对方卡 = 已有卡[名];
             if (!对方卡)
+                continue;
+            // 共有字段太少时不做内容判定(复查 P1-12): 2 个字段恰好相同不叫"一字不差"
+            if (共有字段数(新卡, 对方卡) < 内容最少共有字段)
                 continue;
             const 重合 = 内容重合度(新卡, 对方卡);
             if (重合 >= 内容证据线) {
