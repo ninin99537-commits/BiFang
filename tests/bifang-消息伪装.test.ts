@@ -302,4 +302,45 @@ console.log('\n[I] 伪装关 = 逐字节与现状一致(不能因为加了开关
   ok('[I] 关时 system 里仍有"输出要求"', String(关[0].content).includes('\n输出要求:'));
 }
 
+// ─────────────────────────────────────────────────────────────
+console.log('\n[J] 既有路径修复: 末条是 system 时也要补 TAIL_KICKOFF(伪装关)');
+{
+  // 这是**既有缺陷**, 不是伪装带来的: 用户在「最后」锚点插自定义段时,
+  // 锚点段 的默认 role 就是 system, 末条变成 system, 旧判据(只判 assistant)不成立 → 不补。
+  // 症状: 部分供应商把尾部非 user 当"已回答", 不输出 JSON。
+  const 关 = buildUpdateMessages(造输入({
+    消息伪装: false,
+    自定义段: [{ 锚点: '最后', role: 'system', content: '尾部系统提示' }],
+  }) as any).messages;
+  eq('[J] 伪装关 + 末条是 system → 补了 TAIL_KICKOFF', 关[关.length - 1].content, '现在, 按上述全部规则开始执行任务。');
+  eq('[J] 补的是 user', 关[关.length - 1].role, 'user');
+  eq('[J] 补之前末条确实是 system', 关[关.length - 2].role, 'system');
+  eq('[J] 补之前末条内容正确', 关[关.length - 2].content, '尾部系统提示');
+
+  // 末条是 assistant 时照旧补(原有行为不变)
+  const 关assistant = buildUpdateMessages(造输入({
+    消息伪装: false,
+    自定义段: [{ 锚点: '最后', role: 'assistant', content: '尾部助手提示' }],
+  }) as any).messages;
+  eq('[J] 伪装关 + 末条是 assistant → 仍补', 关assistant[关assistant.length - 1].role, 'user');
+
+  // 末条是 user 时不补(不能多加一条)
+  const 关user = buildUpdateMessages(造输入({
+    消息伪装: false,
+    自定义段: [{ 锚点: '最后', role: 'user', content: '尾部用户提示' }],
+  }) as any).messages;
+  eq('[J] 伪装关 + 末条是 user → 不补', 关user[关user.length - 1].content, '尾部用户提示');
+  eq('[J] 条数没多', 关user.length, 3);
+
+  // 伪装开时行为**必须与关时一致**(同一条判据, 不许开关两边分叉)
+  const 开 = buildUpdateMessages(造输入({
+    消息伪装: true,
+    自定义段: [{ 锚点: '最后', role: 'system', content: '尾部系统提示' }],
+  }) as any).messages;
+  eq('[J] 伪装开 + 末条是 system → 也补', 开[开.length - 1].role, 'user');
+  eq('[J] 两边补的是同一句话', 开[开.length - 1].content, 关[关.length - 1].content);
+  // 两种情形末条都是 user(这就是那条判据的意图)
+  eq('[J] 开关两边末条都是 user', [关[关.length - 1].role, 开[开.length - 1].role], ['user', 'user']);
+}
+
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);

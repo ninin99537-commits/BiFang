@@ -445,12 +445,9 @@ ${JSON.stringify(input.currentCards, null, 2)}${台账账况(input.currentCards,
         // 「任务之后」「最后」锚点: 与现状同位置(任务正文之后)
         伪装段.push(...锚点段(用户段们, '任务之后', 展开宏));
         伪装段.push(...锚点段(用户段们, '最后', 展开宏));
-        // 末条是 assistant 时必须补收尾 user(与现状同一套逻辑, 复用 TAIL_KICKOFF)。
-        // **也覆盖"末条是 system"** —— 用户可能在「最后」锚点插 system 段, 那样末条既不是 user
-        // 也不是 assistant: 预填充只会认 user/assistant, 而部分供应商会把尾部非 user 当"已回答"。
-        // 现状那条路径只判 assistant(它的锚点段默认是 system, 但也是同一个洞), 这里一并补上。
-        const 末条角色 = 伪装段.length > 0 ? 伪装段[伪装段.length - 1].role : '';
-        if (末条角色 === 'assistant' || 末条角色 === 'system')
+        // 末条不是 user 时必须补收尾 user —— 与下面现状路径**同一条判据**(复用 TAIL_KICKOFF)。
+        // 两处必须一致: 不一致就是"开关两边行为分叉", 以后出问题第一个要问的就是"开没开伪装"。
+        if (伪装段.length > 0 && 伪装段[伪装段.length - 1].role !== 'user')
             伪装段.push({ role: 'user', content: TAIL_KICKOFF });
         return { messages: 伪装段 };
     }
@@ -471,9 +468,18 @@ ${JSON.stringify(input.currentCards, null, 2)}${台账账况(input.currentCards,
         // 「最后」锚点: 所有内置段之后
         ...锚点段(用户段们, '最后', 展开宏),
     ];
-    // 末条是 assistant 时必须补一条收尾 user: 部分供应商会把尾部 assistant 当"已回答", 不输出 JSON。
+    // 末条不是 user 时必须补一条收尾 user: 部分供应商会把尾部非 user 当"已回答", 不输出 JSON。
     // 预填充也是在这之后追加它自己的 assistant, 所以这里补了不影响预填充。
-    if (messages.length > 0 && messages[messages.length - 1].role === 'assistant')
+    //
+    // 2026-11-18 修既有缺陷(不只是为消息伪装服务): 原来只判 assistant。
+    // 但用户在「最后」锚点插自定义段时, `锚点段()` 的默认 role 就是 **system** ——
+    // 末条变成 system, 这条判据不成立, 于是不补。用户自己就在末尾插自定义段,
+    // 症状是"有时不输出"。
+    // 判定改成"末条不是 user 就补": assistant 与 system 都会触发, user 不触发(本来就不用补)。
+    // 为什么用 `!== 'user'` 而不是 `=== 'assistant' || === 'system'`:
+    // 提示词段的 role 类型只有这三种, 两者等价; 但写成"不是 user"表达的是**意图**
+    // (末条必须是 user), 将来若加了新角色类型也不会漏。
+    if (messages.length > 0 && messages[messages.length - 1].role !== 'user')
         messages.push({ role: 'user', content: TAIL_KICKOFF });
     return { messages };
 }
