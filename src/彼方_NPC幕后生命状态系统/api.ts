@@ -193,9 +193,17 @@ async function chatCompletionInner(host: 接口宿主, messages: any[], options?
     // 一次更新的多次重试共用一个请求态(由调用方创建并传下来): 请求序号要连续,
     // 否则"第几次请求"这条归属信息在重试时全是 1。
     const 请求态: 请求态 = options?.请求态 ?? 新建请求态();
-    请求态.请求序号 += 1;
     const 功能: 功能状态 = { 工具通道, 请求打散 };
     const 路径 = 直连 ? '直连' : '转发';
+    const base = normalizeBaseUrl(地址);
+    if (!base)
+        throw Error('请先填写接口地址');
+    if (!模型)
+        throw Error('请先选择模型');
+    // 请求序号只在**校验通过、真的要去发**时才 +1(复查 §22.1 的 P2):
+    // 以前它在地址/模型校验之前就加, 于是地址为空时日志会打一条"第 1 次请求"而实际一个请求都没发 ——
+    // 归因信息自相矛盾(日志说发了、报错说没配置)。现在两者不会分叉。
+    请求态.请求序号 += 1;
     // 每次**实际请求**一条日志(不是每次更新一条): 重试时才定位得到是哪一发出了问题。
     // 酒馆会在模型名匹配 o1/o3/o4 / gpt-5-chat-latest 时静默删掉 tools 再发(openai.js:3000-3012),
     // 那条路唯一的可检测痕迹就是这里的 tools 计数。
@@ -206,11 +214,9 @@ async function chatCompletionInner(host: 接口宿主, messages: any[], options?
         console.info(`[彼方] 上下文已搬进工具说明(${工具上下文.length} 字), messages 只剩一句指令`);
     // 归属标记: 两个开关全关时是空串 —— 老报错逐字节不变(验收 G2)。
     const 归属 = 归属标记(功能, 路径, 请求态);
-    const base = normalizeBaseUrl(地址);
-    if (!base)
-        throw Error('请先填写接口地址');
-    if (!模型)
-        throw Error('请先选择模型');
+    // "本轮真的发过请求"这个事实交给调用方(复查 P1-11): 状态机判收尾要靠它,
+    // 不能靠"有没有 error 日志"反推 —— 提前 return 的路径一条 error 都不写。
+    options?.记发过请求?.();
     // 直连: 浏览器直接 POST /chat/completions, 不经过酒馆的生成管线
     if (直连)
         return await 直连请求(host, { base, 密钥, 模型, 温度, 最大token, 流式, messages, options, 工具通道, 工具上下文, 归属 });
