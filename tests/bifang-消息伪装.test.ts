@@ -464,4 +464,54 @@ console.log('\n[L] 全入口扫一遍: 5 个锚点 × assistant × 伪装开/关
   }
 }
 
+// ─────────────────────────────────────────────────────────────
+console.log('\n[M] 全进工具时五个锚点全留在 messages(防静默丢用户段)');
+{
+  const 五段 = [
+    { 锚点: '最前', role: 'system', content: 'ANCHOR_最前', 启用: true },
+    { 锚点: '主提示词之后', role: 'system', content: 'ANCHOR_主提示词之后', 启用: true },
+    { 锚点: '任务之前', role: 'system', content: 'ANCHOR_任务之前', 启用: true },
+    { 锚点: '任务之后', role: 'system', content: 'ANCHOR_任务之后', 启用: true },
+    { 锚点: '最后', role: 'system', content: 'ANCHOR_最后', 启用: true },
+  ];
+  const 位置 = (段: any[], 标记: string) => 段.findIndex((m: any) => String(m.content).includes(标记));
+
+  // 全进工具(工具通道开)
+  const 进 = buildUpdateMessages(造输入({ 消息伪装: true, 规则进工具: true, 自定义段: 五段 }) as any);
+  const 进段 = 进.messages as any[];
+  for (const 段 of 五段) {
+    ok(`[M] 全进工具: 锚点「${段.锚点}」还在 messages`, 位置(进段, 段.content) >= 0, JSON.stringify(进段.map((m: any) => String(m.content).slice(0, 14))));
+  }
+  // 工具说明里不含任何锚点段(指令不进表)
+  for (const 段 of 五段)
+    ok(`[M] 工具说明里没有锚点「${段.锚点}」`, !String(进.工具说明).includes(段.content), String(进.工具说明).slice(0, 120));
+
+  // 不进工具(工具通道关)
+  const 不进 = buildUpdateMessages(造输入({ 消息伪装: true, 规则进工具: false, 自定义段: 五段 }) as any);
+  const 不进段 = 不进.messages as any[];
+
+  // 顺序一致: 五个锚点在两种形态下的相对顺序必须相同
+  const 进序 = 五段.map(段 => 位置(进段, 段.content));
+  const 不进序 = 五段.map(段 => 位置(不进段, 段.content));
+  ok('[M] 全进工具时五个锚点都在', 进序.every(i => i >= 0), JSON.stringify(进序));
+  ok('[M] 不进工具时五个锚点都在', 不进序.every(i => i >= 0), JSON.stringify(不进序));
+  // 比较相对顺序(都递增 = 顺序一致), 而不是绝对下标(条数不同, 下标必然不同)
+  const 递增 = (序: number[]) => 序.every((v, i) => i === 0 || v > 序[i - 1]);
+  ok('[M] 全进工具时锚点顺序递增', 递增(进序), JSON.stringify(进序));
+  ok('[M] 不进工具时锚点顺序递增', 递增(不进序), JSON.stringify(不进序));
+  ok('[M] 两种形态的锚点顺序一致(都是 最前→主后→任前→任后→最后)', 递增(进序) && 递增(不进序));
+
+  // 全进工具时, 内置内容仍是三句寒暄(锚点段与收尾 user 都不算内置内容)
+  // 实测结构(五锚点 + 有 context):
+  //   [0] ANCHOR_最前  [1] system 身份  [2] user  [3] assistant  [4] user
+  //   [5..8] 四个锚点  [9] TAIL_KICKOFF(末条是 system, 所以补了)
+  const 内置 = 进段.filter((m: any) =>
+    !五段.some(段 => String(m.content).includes(段.content))
+    && String(m.content) !== '现在, 按上述全部规则开始执行任务。');
+  eq('[M] 去掉锚点段与收尾 user 后, 内置内容 = 4 条(system + 三句)', 内置.length, 4);
+  eq('[M] 内置内容的角色序列', 内置.map((m: any) => m.role), ['system', 'user', 'assistant', 'user']);
+  // 末条不是 user 时补了收尾(这是既有判据, 与锚点无关)
+  eq('[M] 末条锚点是 system → 补了收尾 user', 进段[进段.length - 1].content, '现在, 按上述全部规则开始执行任务。');
+}
+
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
