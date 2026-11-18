@@ -228,41 +228,53 @@ console.log('\n[F] 与预填充的交互: 末条仍是 user');
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[G] §33: 规则进工具 + 常驻伪装**同时生效**(正交, 不是互斥)');
+console.log('\n[G] §33 定案: 全部内容进工具说明, messages 只剩三句寒暄');
 {
-  // 真实路径: buildUpdateMessages 产出 messages + 工具说明, api.ts 只负责把工具说明交给工具定义。
+  // 真实路径: buildUpdateMessages 产出 messages + 工具说明。
   // 直接调 chatCompletion 会绕过 buildUpdateMessages, 走到"没拿到工具说明"的兜底分支 ——
   // 那样测的是兜底, 不是真实路径(第一版就踩了这个坑)。
   const 出 = buildUpdateMessages(造输入({ 消息伪装: true, 规则进工具: true, context: '主角走进广场。' }) as any);
   const 段 = 出.messages as any[];
 
-  // ① 规则进了工具说明
+  // ① 工具说明里有全部内容: 规则 + 场景判断 + 剧情
   ok('[G] 产出了工具说明', typeof 出.工具说明 === 'string' && 出.工具说明.length > 1000, `长度 ${(出.工具说明 ?? '').length}`);
   ok('[G] 工具说明里有规则正文', String(出.工具说明).includes('核心原则'));
   ok('[G] 工具说明里有输出要求', String(出.工具说明).includes('输出要求'));
-  // ② 规则**不在** messages 里了
-  ok('[G] messages 里没有核心原则', !JSON.stringify(段).includes('核心原则'), JSON.stringify(段).slice(0, 200));
-  // ③ messages 仍是多条短问答
-  ok('[G] messages 仍是多条(不是一句)', 段.length >= 4, `条数 ${段.length}`);
-  ok('[G] messages 里有 assistant 确认', 段.some((m: any) => m.role === 'assistant'), JSON.stringify(段.map((m: any) => m.role)));
+  ok('[G] 工具说明里有场景判断', String(出.工具说明).includes('仅供场景判断'), String(出.工具说明).slice(-300));
+  ok('[G] 工具说明里有剧情正文', String(出.工具说明).includes('这是一段剧情正文'), String(出.工具说明).slice(-300));
+  ok('[G] 工具说明里有状态卡', String(出.工具说明).includes('甲'), String(出.工具说明).slice(-300));
+
+  // ② messages 只剩三句寒暄(4 条: system + user + assistant + user)
+  eq('[G] messages 条数 = 4', 段.length, 4);
+  eq('[G] 角色序列', 段.map((m: any) => m.role), ['system', 'user', 'assistant', 'user']);
+  eq('[G] 有且只有一个 assistant 往来', 段.filter((m: any) => m.role === 'assistant').length, 1);
   eq('[G] 末条是 user', 段[段.length - 1].role, 'user');
-  // ④ 剧情正文留在 messages 里
-  ok('[G] 剧情正文仍在 messages', JSON.stringify(段).includes('这是一段剧情正文'), JSON.stringify(段).slice(0, 200));
-  // ⑤ 输出要求仍贴在末条 user 尾部(承重指令离生成最近)
-  ok('[G] 输出要求仍在末条 user 尾部', String(段[段.length - 1].content).includes('\n输出要求:'));
+
+  // ③ **否定断言**: messages 里不得残留任何数据(剧情/规则/场景判断/状态卡)
+  const 全部消息 = JSON.stringify(段);
+  ok('[G] messages 里没有剧情正文', !全部消息.includes('这是一段剧情正文'), 全部消息.slice(0, 200));
+  ok('[G] messages 里没有规则正文', !全部消息.includes('核心原则'));
+  ok('[G] messages 里没有输出要求', !全部消息.includes('输出要求'));
+  ok('[G] messages 里没有场景判断', !全部消息.includes('仅供场景判断'));
+  ok('[G] messages 里没有状态卡', !全部消息.includes('面包师'));
+  ok('[G] messages 里没有"追踪的重要NPC"', !全部消息.includes('本聊天已追踪'));
+
+  // ④ 对比: 内容不进表时, 剧情与规则都在 messages 里、没有工具说明
+  const 不进 = buildUpdateMessages(造输入({ 消息伪装: true, 规则进工具: false }) as any);
+  eq('[G] 不进表时没有工具说明', 不进.工具说明, undefined);
+  ok('[G] 不进表时规则在 messages 里', JSON.stringify(不进.messages).includes('核心原则'));
+  ok('[G] 不进表时剧情在 messages 里', JSON.stringify(不进.messages).includes('这是一段剧情正文'));
+
+  // ⑤ 工具说明里的规则部分逐字 === 原文(没有重写)
+  const 原文系统 = String(buildUpdateMessages(造输入({ 消息伪装: false }) as any).messages[0].content);
+  ok('[G] 工具说明以原文系统提示词开头', String(出.工具说明).startsWith(原文系统), String(出.工具说明).slice(0, 80));
+
   // ⑥ 无连续 assistant
   let 连续 = 0;
   for (let i = 1; i < 段.length; i++)
     if (段[i].role === 'assistant' && 段[i - 1].role === 'assistant')
       连续++;
   eq('[G] 无连续 assistant', 连续, 0);
-  // ⑦ 对比: 规则不进工具时, 规则在 messages 里、没有工具说明
-  const 不进 = buildUpdateMessages(造输入({ 消息伪装: true, 规则进工具: false }) as any);
-  eq('[G] 规则不进工具时没有工具说明', 不进.工具说明, undefined);
-  ok('[G] 规则不进工具时规则在 messages 里', JSON.stringify(不进.messages).includes('核心原则'));
-  // ⑧ 工具说明的正文必须与原文逐字相同(不是重新拼的)
-  const 原文系统 = String(buildUpdateMessages(造输入({ 消息伪装: false }) as any).messages[0].content);
-  eq('[G] 工具说明逐字 === 原文系统提示词', sha(String(出.工具说明)), sha(原文系统));
 }
 
 // ─────────────────────────────────────────────────────────────
