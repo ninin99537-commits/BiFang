@@ -32,6 +32,15 @@ const ApiConfigSchema = z
     流式: z.boolean().default(false),
     温度: z.coerce.number().default(0.7).transform(value => _.clamp(value, 0, 2)),
     最大token: z.coerce.number().default(60000).transform(value => Math.max(1, Math.min(131072, Math.round(value)))),
+    /** 工具通道(K2): 开=请求带一个强制调用的工具, 状态 JSON 从 arguments 里取; 关=老样子(纯文本补全)。
+     *  两个作用: ① 把请求形态从"聊天补全"换成"工具调用"(怀疑服务端按请求形态降级时的唯一自主杠杆);
+     *  ② tool schema 本身是结构约束, 比"解析失败就原样重发 3 次"更稳。
+     *  **开启期间流式与预填充不生效**(见 api.ts 与 update.ts 的门控): 工具参数在流式下是分片到达的,
+     *  拼接最容易产生偶发空回包; 而预填充那条 assistant '{' 与"必须调工具"语义互斥。
+     *  接口不认 tools/tool_choice 时**本轮直接失败并提示关掉它**, 不降级、不悄悄退回纯文本 ——
+     *  静默降级会让一个没用的功能看起来有用, 而用户的实验只能靠输出质量判断。
+     *  默认关: 老用户不该被动受影响, 而"有没有用"只能用户自己开一天关一天比。 */
+    工具通道: z.boolean().default(false),
     /** 请求打散(K1): 开=每次请求在 system 末尾插一段随机标记, 让同一份提示词不再字节相同。
      *  动机: 用户观察到"官方 key 请求某些模型时输出异常快而质量差", 怀疑服务端按提示词字节
      *  判定是否降级到更低档的模型 —— 逐字节相同的提示词是这类判定最好的素材。

@@ -48,7 +48,10 @@ async function updateNpcStates(host: Host, force = false) {
             // 取模型输出这一段已独立成模块(模型请求.ts): 发请求 → 解析 → 校验, 不合格就原样重试
             请求结果 = await 请求并校验({
                 messages,
-                预填充: settings.更新.预填充,
+                // 预填充与工具通道互斥(方案 §16 方案 5): 预填充会在末位补一条 assistant '{',
+                // 与"必须调工具"语义打架; 而共用层的"拼回"在彼方侧关不掉, 只能让预填充恒为 false。
+                // **不改用户设置** —— 只是本次不生效, 开关在面板上仍是用户设的那个值。
+                预填充: settings.更新.预填充 && !settings.接口.工具通道,
                 现有卡: data.NPC ?? {},
                 名单: data.名单 ?? [],
                 玩家名: playerName,

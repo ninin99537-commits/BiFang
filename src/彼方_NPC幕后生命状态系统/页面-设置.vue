@@ -167,6 +167,19 @@
 
         <label class="bf-switch-row">
           <span class="bf-switch-copy">
+            <b>工具通道</b>
+            <span>把请求改成"一次工具调用"，状态 JSON 从工具参数里取（实验性）</span>
+          </span>
+          <input v-model="settings.接口.工具通道" type="checkbox" class="bf-switch" />
+        </label>
+        <p class="bf-hint">
+          把请求形态从"聊天补全"换成"工具调用"，用来排除服务端按请求形态降级的可能；工具定义本身也让 JSON 更稳。
+          <b>开启期间「流式输出」与「预填充」不生效</b>（工具参数在流式下是分片到达的，拼接容易出偶发空回包；预填充那条 assistant 起手与"必须调工具"语义互斥）。
+          接口不支持 tools/tool_choice 时本轮会失败并提示你关掉它——<b>不会自动退回纯文本</b>，否则你会以为新办法在跑。
+        </p>
+
+        <label class="bf-switch-row">
+          <span class="bf-switch-copy">
             <b>请求打散</b>
             <span>每次请求在系统提示词末尾插一段随机标记（实验性）</span>
           </span>
@@ -175,6 +188,7 @@
         <p class="bf-hint">
           让同一份提示词不再逐字节相同，用来排除"服务端按提示词字节判定是否降级"。
           标记只加在系统提示词末尾（不加在开头，否则整段系统提示词每轮都变，前缀缓存全废）。
+          与「工具通道」互相独立，可以只开一个。
         </p>
 
         <h4 class="bf-subgroup-title">配置预设</h4>
