@@ -55,8 +55,23 @@ export function 建工具定义() {
                         },
                         NPC: {
                             type: 'object',
-                            description: `键=NPC 名字, 值=该 NPC 的状态卡对象。可用字段: ${CARD_FIELDS.join('、')} 等; 本轮没有变化的 NPC 不要出现, 全都无变化时给空对象 {}`,
-                            additionalProperties: { type: 'object', additionalProperties: true },
+                            description: `键=NPC 名字(只写名字本身, 不要写"基准日期"这类元数据键), 值=该 NPC 的状态卡对象。可用字段见 properties; 本轮没有变化的 NPC 不要出现, 全都无变化时给空对象 {}`,
+                            // W2(方案 §23): 卡里逐字段声明, 且 additionalProperties: false。
+                            // 为什么必须收紧: 实测第 3 次工具通道把 "基准日期": "2039-09-17 19:10"
+                            // 当成了 NPC 名字写进来(值还是字符串不是对象), 于是它进了名单、
+                            // 之后每轮提示词都带着它 —— 与 W1 的自激回路叠加。
+                            // 字段类型一律 string: `未完成事项` 是台账数组、`是否怀孕` 实际是
+                            // "true"/"false" 字符串, 声明成 array/boolean 反而会诱导模型输出错形状;
+                            // 真正的形状校验仍由 validateParsedFormat 兜。
+                            // **仍然不写 required** —— 保留"只回变化的字段"这个既有能力。
+                            additionalProperties: {
+                                type: 'object',
+                                description: '一张 NPC 状态卡; 只写本轮有变化的字段',
+                                properties: Object.fromEntries(
+                                    CARD_FIELDS.map(字段 => [字段, { type: 'string' }]),
+                                ),
+                                additionalProperties: false,
+                            },
                         },
                         移除NPC: {
                             type: 'array',

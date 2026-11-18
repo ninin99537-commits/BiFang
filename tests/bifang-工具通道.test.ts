@@ -106,8 +106,10 @@ console.log('\n[B] 工具定义: 不含随机量 / description 一句话 / tool_
   ok('[B] 有移除NPC属性', !!参数.properties?.['移除NPC']);
   // 刻意不写 required: 一轮"什么都没变"的合法输出就是 {"NPC":{}}
   eq('[B] 不写 required(空变化的轮次不能被 schema 拦下)', 参数.required, undefined);
-  // 刻意不写死 NPC 卡的字段类型: 未完成事项是台账数组、是否怀孕是字符串 "true"/"false"
-  eq('[B] NPC 值只声明成开放对象', JSON.stringify(参数.properties?.NPC?.additionalProperties), JSON.stringify({ type: 'object', additionalProperties: true }));
+  // NPC 卡逐字段声明 + additionalProperties:false(W2 收紧, 详见 bifang-名字归一.test.ts 的 [D])
+  const NPC卡 = 参数.properties?.NPC?.additionalProperties;
+  eq('[B] NPC 卡这一层 additionalProperties:false', NPC卡?.additionalProperties, false);
+  ok('[B] NPC 卡逐字段声明(不是自由对象)', Object.keys(NPC卡?.properties ?? {}).length > 0);
 
   // tool_choice 必须是对象形式(老网关支持面更宽 / Gemini 原生源才带 allowedFunctionNames)
   const 选择 = 建工具选择();

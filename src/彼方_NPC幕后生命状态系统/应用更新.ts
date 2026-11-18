@@ -7,6 +7,7 @@
 import { 合并 } from './卡合并';
 import { parseStoryTimeRange } from './剧情时间';
 import { 认出NPC } from './模型请求';
+import { 归一名 } from './名字归一';
 import { 读取台账, 未回票编号, 新建台账诊断, 待核对事务 } from './事务台账';
 import type { 彼方数据 } from './快照';
 // 2026-11-14: lodash 是 webpack externals 注入的全局（webpack.config.ts:4），不在 auto-imports 里 ——
@@ -154,12 +155,28 @@ function applyUpdate(data: 彼方数据, parsed: Record<string, any> | null, pla
             newData.名单 = newData.名单.filter((n: string) => n !== name);
             continue;
         }
+        // 名字归一守卫(方案 §23 W1): 模型会把同一个人写成两个只差一个字的名字
+        // (实测: "埃莉" / "艾莉", 内容一字不差)。而**错名字一旦进名单, 之后每轮提示词都带着它**,
+        // 模型照着输出 —— 自激回路, 自己不会好。所以这里在**建档之前**把它并掉。
+        // 以已有名字为准(先来的赢): 已有名字已经在名单里、已经在提示词里了。
+        const 归一 = 归一名(
+            name,
+            [...newData.名单, ...Object.keys(newData.NPC)],
+            updatedNames,
+            card,
+            newData.NPC,
+        );
+        if (归一.合并到 && 归一.合并到 !== name) {
+            console.info(`[彼方] 名字归一: 「${name}」并入「${归一.合并到}」(判据=${归一.理由}), 不新建卡`);
+        }
+        const 采用名 = 归一.名;
         // 自动建档关闭: 新角色(未在名单且无卡)不建档不追踪, 记录后跳过
-        if (!autoTrack && !isTrackedNpc(name)) {
-            skippedNewNpcs.push(name);
+        // 注意判据用的是**归一后的名字** —— 否则"艾莉"会被当成新角色跳过, 而它其实是"埃莉"的重复
+        if (!autoTrack && !isTrackedNpc(采用名)) {
+            skippedNewNpcs.push(采用名);
             continue;
         }
-        const resolved = resolveRenamedNpc(newData, name, card, playerName);
+        const resolved = resolveRenamedNpc(newData, 采用名, card, playerName);
         newData.NPC[resolved.name] = 合并一张卡(resolved.name, resolved.oldCard, card);
         updatedNames.push(resolved.name);
         if (!newData.名单.includes(resolved.name))
