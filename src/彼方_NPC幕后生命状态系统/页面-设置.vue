@@ -165,6 +165,18 @@
         </label>
         <p class="bf-hint">关：酒馆服务器转发，无跨域问题。开：浏览器直连，预设、世界书与其他扩展都碰不到请求体。</p>
 
+        <label class="bf-switch-row">
+          <span class="bf-switch-copy">
+            <b>请求打散</b>
+            <span>每次请求在系统提示词末尾插一段随机标记（实验性）</span>
+          </span>
+          <input v-model="settings.接口.请求打散" type="checkbox" class="bf-switch" />
+        </label>
+        <p class="bf-hint">
+          让同一份提示词不再逐字节相同，用来排除"服务端按提示词字节判定是否降级"。
+          标记只加在系统提示词末尾（不加在开头，否则整段系统提示词每轮都变，前缀缓存全废）。
+        </p>
+
         <h4 class="bf-subgroup-title">配置预设</h4>
         <div class="bf-set-row bf-set-row-inline">
           <label class="bf-form-label" for="bf-preset-name">预设名</label>
