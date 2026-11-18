@@ -343,4 +343,106 @@ console.log('\n[J] 既有路径修复: 末条是 system 时也要补 TAIL_KICKOF
   eq('[J] 开关两边末条都是 user', [关[关.length - 1].role, 开[开.length - 1].role], ['user', 'user']);
 }
 
+// ─────────────────────────────────────────────────────────────
+console.log('\n[K] P2-16: 锚点插 assistant → 合并(不改角色/不加消息/不丢内容)');
+{
+  const 段 = (锚点: string, role: string, content: string) => ({ 锚点, role, content, 启用: true });
+
+  // ①「主提示词之后」插 assistant —— 紧跟在第二条确认句后面
+  const k1 = 伪装({ context: '主角走进广场。', 自定义段: [段('主提示词之后', 'assistant', '主后助手段')] });
+  let 连续 = 0;
+  for (let i = 1; i < k1.length; i++)
+    if (k1[i].role === 'assistant' && k1[i - 1].role === 'assistant')
+      连续++;
+  eq('[K/①] 主提示词之后 插 assistant → 无连续 assistant', 连续, 0);
+  // 内容没丢, 且被并进了确认句那条
+  const 并后 = k1.find(m => m.role === 'assistant' && String(m.content).includes('主后助手段'));
+  ok('[K/①] 合并后内容仍在', !!并后, JSON.stringify(k1.map(m => m.role)));
+  ok('[K/①] 合并后仍带着原确认句', String(并后?.content).includes('收到。'), String(并后?.content));
+  eq('[K/①] 合并成一条(用空行分隔)', String(并后?.content), '收到。\n\n主后助手段');
+  // 消息条数: 基础 8 条 + 用户段 1 条 - 合并省下 1 条 = 8 条
+  eq('[K/①] 合并后条数 = 8 + 1 - 1 = 8', k1.length, 8);
+  // 用户的 role 选择被尊重(没有把 assistant 改成 user)
+  eq('[K/①] 那条仍是 assistant', 并后?.role, 'assistant');
+
+  // ②「任务之前」插 assistant —— 紧跟第三条确认句后面
+  const k2 = 伪装({ context: '主角走进广场。', 自定义段: [段('任务之前', 'assistant', '任务前助手段')] });
+  连续 = 0;
+  for (let i = 1; i < k2.length; i++)
+    if (k2[i].role === 'assistant' && k2[i - 1].role === 'assistant')
+      连续++;
+  eq('[K/②] 任务之前 插 assistant → 无连续 assistant', 连续, 0);
+  ok('[K/②] 合并后带着原确认句', k2.some(m => m.role === 'assistant' && String(m.content).includes('好，接着说。') && String(m.content).includes('任务前助手段')));
+
+  // ③ 两个锚点各插一条 assistant → 合并后两段文字都在(不丢内容)
+  const k3 = 伪装({
+    context: '主角走进广场。',
+    自定义段: [段('主提示词之后', 'assistant', '第一段助手'), 段('任务之前', 'assistant', '第二段助手')],
+  });
+  连续 = 0;
+  for (let i = 1; i < k3.length; i++)
+    if (k3[i].role === 'assistant' && k3[i - 1].role === 'assistant')
+      连续++;
+  eq('[K/③] 两个锚点各插一条 → 仍无连续 assistant', 连续, 0);
+  const 全文 = JSON.stringify(k3);
+  ok('[K/③] 第一段文字还在', 全文.includes('第一段助手'));
+  ok('[K/③] 第二段文字还在', 全文.includes('第二段助手'));
+  ok('[K/③] 两条确认句都还在', 全文.includes('收到。') && 全文.includes('好，接着说。'));
+
+  // ④ 同一锚点插两条 assistant → 也合并
+  const k4 = 伪装({
+    context: '主角走进广场。',
+    自定义段: [段('任务之后', 'assistant', '甲段'), 段('任务之后', 'assistant', '乙段')],
+  });
+  连续 = 0;
+  for (let i = 1; i < k4.length; i++)
+    if (k4[i].role === 'assistant' && k4[i - 1].role === 'assistant')
+      连续++;
+  eq('[K/④] 同锚点两条 assistant → 无连续', 连续, 0);
+  ok('[K/④] 两段内容都在', JSON.stringify(k4).includes('甲段') && JSON.stringify(k4).includes('乙段'));
+
+  // ⑤ 伪装关时同样合并(两条路径同一条判据)
+  const k5 = buildUpdateMessages(造输入({
+    消息伪装: false,
+    自定义段: [段('任务之后', 'assistant', '关甲'), 段('最后', 'assistant', '关乙')],
+  }) as any).messages;
+  连续 = 0;
+  for (let i = 1; i < k5.length; i++)
+    if (k5[i].role === 'assistant' && k5[i - 1].role === 'assistant')
+      连续++;
+  eq('[K/⑤] 伪装关 + 两个 assistant 段 → 无连续', 连续, 0);
+  ok('[K/⑤] 关时两段内容都在', JSON.stringify(k5).includes('关甲') && JSON.stringify(k5).includes('关乙'));
+  eq('[K/⑤] 关时末条仍是 user', k5[k5.length - 1].role, 'user');
+
+  // ⑥ 合并不许把 user 段也并进去(只并 assistant)
+  const k6 = 伪装({
+    context: '主角走进广场。',
+    自定义段: [段('任务之前', 'assistant', '助手段'), 段('任务之前', 'user', '用户段')],
+  });
+  ok('[K/⑥] user 段没被并进 assistant', k6.some(m => m.role === 'user' && String(m.content).includes('用户段')));
+  eq('[K/⑥] 角色序列里 assistant 与 user 交替', k6.filter(m => m.role === 'assistant').length > 0, true);
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[L] 全入口扫一遍: 5 个锚点 × assistant × 伪装开/关, 都不许有连续 assistant');
+{
+  const 锚点们 = ['最前', '主提示词之后', '任务之前', '任务之后', '最后'];
+  for (const 伪装开 of [false, true]) {
+    for (const 锚点 of 锚点们) {
+      const 组 = buildUpdateMessages(造输入({
+        消息伪装: 伪装开,
+        context: '主角走进广场。',
+        自定义段: [{ 锚点, role: 'assistant', content: `段@${锚点}`, 启用: true }],
+      }) as any).messages;
+      let 连续 = 0;
+      for (let i = 1; i < 组.length; i++)
+        if (组[i].role === 'assistant' && 组[i - 1].role === 'assistant')
+          连续++;
+      eq(`[L] 伪装=${+伪装开} 锚点=${锚点} → 无连续 assistant`, 连续, 0);
+      ok(`[L] 伪装=${+伪装开} 锚点=${锚点} → 内容没丢`, JSON.stringify(组).includes(`段@${锚点}`));
+      eq(`[L] 伪装=${+伪装开} 锚点=${锚点} → 末条是 user`, 组[组.length - 1].role, 'user');
+    }
+  }
+}
+
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);

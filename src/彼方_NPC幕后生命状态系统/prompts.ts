@@ -66,6 +66,40 @@ function 锚点段(段们: 用户段[], 锚点: 锚点名, 展开: (text: string
         .map(段 => ({ role: 归一化身份(段.role), content: 展开(String(段.content ?? '')) }))
         .filter(段 => 段.content.trim().length > 0);
 }
+
+/**
+ * 把相邻的同角色 assistant 消息合并成一条(用空行分隔)。
+ *
+ * 为什么需要它(复查 P2-16): 用户自定义段可以选 `assistant` 角色, 而 5 个锚点都能插 ——
+ * 插在"确认句后面"就会产生**两条连续 assistant**。部分供应商对连续 assistant 的处理不一致
+ * (合并 / 报错 / 忽略后者), 而消息伪装的意义正是"像正常的交替会话"。
+ *
+ * 为什么选"合并"而不是另外两种:
+ *   · 插一条 user 过渡句 = **往用户的提示词里加话**, 违反"只改结构"
+ *   · 强制把锚点段归一成 user = **改用户的意图**(他明确选了 assistant)
+ *   合并是唯一不碰语义的做法: 不改角色、不新增消息、不丢内容。
+ *
+ * 为什么做成**统一后处理**而不是在每个 push 点判断:
+ *   能往结构里塞 assistant 的入口有 5 个锚点 × 2 条路径(伪装开/关) = 10 处。
+ *   逐点判断漏一处就是一个洞 —— 复查这条 P2 本身就是"修了一条路径、漏了另一条"的产物。
+ *   收口成一次遍历, 结构上不可能漏。
+ */
+function 合并相邻assistant(段们: 提示词段[]): 提示词段[] {
+    const 结果: 提示词段[] = [];
+    for (const 段 of 段们) {
+        const 上一条 = 结果[结果.length - 1];
+        if (上一条 && 上一条.role === 'assistant' && 段.role === 'assistant') {
+            // 拼成一条: 空行分隔, 内容一个字不丢
+            结果[结果.length - 1] = {
+                role: 'assistant',
+                content: `${上一条.content}\n\n${段.content}`,
+            };
+            continue;
+        }
+        结果.push(段);
+    }
+    return 结果;
+}
 /** 系统提示词主体(全部更新规则): 生理相关段落受「生理监测」开关控制 */
 const SYSTEM_PROMPT_BODY = (physioEnabled = false) => `
 
@@ -445,11 +479,14 @@ ${JSON.stringify(input.currentCards, null, 2)}${台账账况(input.currentCards,
         // 「任务之后」「最后」锚点: 与现状同位置(任务正文之后)
         伪装段.push(...锚点段(用户段们, '任务之后', 展开宏));
         伪装段.push(...锚点段(用户段们, '最后', 展开宏));
+        // 统一合并相邻 assistant(复查 P2-16): 用户自定义段选了 assistant 就可能插出连续两条。
+        // **必须在补 TAIL_KICKOFF 之前**做 —— 补完之后末条已经是 user, 判据就轮不到它了。
+        const 合并后 = 合并相邻assistant(伪装段);
         // 末条不是 user 时必须补收尾 user —— 与下面现状路径**同一条判据**(复用 TAIL_KICKOFF)。
         // 两处必须一致: 不一致就是"开关两边行为分叉", 以后出问题第一个要问的就是"开没开伪装"。
-        if (伪装段.length > 0 && 伪装段[伪装段.length - 1].role !== 'user')
-            伪装段.push({ role: 'user', content: TAIL_KICKOFF });
-        return { messages: 伪装段 };
+        if (合并后.length > 0 && 合并后[合并后.length - 1].role !== 'user')
+            合并后.push({ role: 'user', content: TAIL_KICKOFF });
+        return { messages: 合并后 };
     }
     const messages: 提示词段[] = [
         // 「最前」锚点: 主 system 之前(以前头部填充占的位置——头部填充已删, 想要垫文本的人自己插一段)
@@ -468,6 +505,9 @@ ${JSON.stringify(input.currentCards, null, 2)}${台账账况(input.currentCards,
         // 「最后」锚点: 所有内置段之后
         ...锚点段(用户段们, '最后', 展开宏),
     ];
+    // 统一合并相邻 assistant(复查 P2-16): 5 个锚点都能插 assistant 段, 逐点判断会漏。
+    // 现状路径同样要合并 —— 用户插「任务之后」+「最后」两条 assistant 时也会连成两条。
+    const 合并后 = 合并相邻assistant(messages);
     // 末条不是 user 时必须补一条收尾 user: 部分供应商会把尾部非 user 当"已回答", 不输出 JSON。
     // 预填充也是在这之后追加它自己的 assistant, 所以这里补了不影响预填充。
     //
@@ -479,9 +519,9 @@ ${JSON.stringify(input.currentCards, null, 2)}${台账账况(input.currentCards,
     // 为什么用 `!== 'user'` 而不是 `=== 'assistant' || === 'system'`:
     // 提示词段的 role 类型只有这三种, 两者等价; 但写成"不是 user"表达的是**意图**
     // (末条必须是 user), 将来若加了新角色类型也不会漏。
-    if (messages.length > 0 && messages[messages.length - 1].role !== 'user')
-        messages.push({ role: 'user', content: TAIL_KICKOFF });
-    return { messages };
+    if (合并后.length > 0 && 合并后[合并后.length - 1].role !== 'user')
+        合并后.push({ role: 'user', content: TAIL_KICKOFF });
+    return { messages: 合并后 };
 }
 /** 单格取值: 卡片字段可能是 undefined/null/数字, 统一转成去空白的字符串 */
 const 注入取值 = (值: unknown): string => String(值 ?? '').trim();
