@@ -145,6 +145,7 @@ async function chatCompletionInner(host: 接口宿主, messages: any[], options?
     const 直连 = options?.接口?.直连 ?? baseCfg.直连;
     const 请求打散 = options?.接口?.请求打散 ?? baseCfg.请求打散 ?? false;
     const 工具通道 = options?.接口?.工具通道 ?? baseCfg.工具通道 ?? false;
+    const 上下文进工具 = options?.接口?.上下文进工具 ?? baseCfg.上下文进工具 ?? false;
     // 流式在工具通道开启期间**强制关闭**(方案 §11.1): tool_call 的参数是分片到达的,
     // 拼接是最容易产生偶发空回包的地方, 而这类 bug 极难复现。用户明确接受这个代价。
     const 流式 = (options?.接口?.流式 ?? baseCfg.流式 ?? false) && !工具通道;
@@ -162,8 +163,31 @@ async function chatCompletionInner(host: 接口宿主, messages: any[], options?
             return String(total);
         }),
     }));
+    // 上下文进工具(W4, 第三个开关): 整份上下文搬进工具的 description, messages 只留一句无害指令。
+    // 为什么要有它: 这是"防服务端按请求形态/内容降级"的另一半 —— 上下文本身也不留在 messages 里。
+    // 代价(面板灰字里写了): description 每轮都变 → 前缀缓存全失效; description 变长可能变慢。
+    // 边界: 工具通道关着时请求里根本没有 tools, 这个开关**无效** —— 必须明确提示, 不许静默。
+    //
+    // ⚠️ 顺序有讲究: 必须在**打散之前**收上下文。否则打散标记会被收进工具说明里
+    // (违反 P2-7: 标记只能进 messages, 进了 tools 就让前缀每轮都变),
+    // 而且 messages 被换成单句之后标记就没了 —— 打散等于白开。
+    let 工具上下文 = '';
+    if (上下文进工具) {
+        if (!工具通道) {
+            console.warn('[彼方] 「上下文进工具」已开启但「工具通道」关着: 请求里没有工具, 这个开关本次不生效。'
+                + '要让它起作用, 请同时打开「工具通道」。');
+        }
+        else {
+            工具上下文 = messages
+                .map((message: any) => `【${message.role === 'system' ? '系统指令' : message.role === 'user' ? '用户' : '助手'}】\n${String(message.content ?? '')}`)
+                .join('\n\n────────\n\n');
+            // messages 只留一句无害指令: 上下文已经在 description 里了, 再留一份等于发两遍。
+            // 末条必须是 user —— 转发路径会把末条 user 抽成 user_input, 抽不到就会追加空消息。
+            messages = [{ role: 'user', content: '请按工具说明里的要求，把本轮 NPC 状态写入缓冲区。' }];
+        }
+    }
     // 请求打散(K1): 每次请求换一个随机标记, 让同一份提示词不再字节相同。
-    // 放在宏展开**之后**: 标记本身不该被宏替换, 也不该让骰子结果每次重掷。
+    // 放在宏展开与 W4 搬上下文**之后**: 标记本身不该被宏替换, 也不该被收进工具说明。
     if (请求打散)
         messages = 加打散标记(messages, 生成打散标记());
     // 一次更新的多次重试共用一个请求态(由调用方创建并传下来): 请求序号要连续,
@@ -178,6 +202,8 @@ async function chatCompletionInner(host: 接口宿主, messages: any[], options?
     const 日志 = 请求日志(功能, 路径, 请求态, 工具通道 ? 建工具定义().length : 0);
     if (日志)
         console.info(日志);
+    if (工具通道 && 上下文进工具)
+        console.info(`[彼方] 上下文已搬进工具说明(${工具上下文.length} 字), messages 只剩一句指令`);
     // 归属标记: 两个开关全关时是空串 —— 老报错逐字节不变(验收 G2)。
     const 归属 = 归属标记(功能, 路径, 请求态);
     const base = normalizeBaseUrl(地址);
@@ -187,7 +213,7 @@ async function chatCompletionInner(host: 接口宿主, messages: any[], options?
         throw Error('请先选择模型');
     // 直连: 浏览器直接 POST /chat/completions, 不经过酒馆的生成管线
     if (直连)
-        return await 直连请求(host, { base, 密钥, 模型, 温度, 最大token, 流式, messages, options, 工具通道, 归属 });
+        return await 直连请求(host, { base, 密钥, 模型, 温度, 最大token, 流式, messages, options, 工具通道, 工具上下文, 归属 });
     // 最后一条 user 消息作为 user_input 传入, 避免 generateRaw 追加空消息
     let userInput = '';
     const orderedPrompts = messages.map((message: any) => ({
@@ -242,7 +268,7 @@ async function chatCompletionInner(host: 接口宿主, messages: any[], options?
         // 搬进 description 是 (b), 留第二轮独立开关(方案 §12.1)。
         // tools 与 json_schema 互斥, 这里只用 tools。
         if (工具通道) {
-            请求配置.tools = 建工具定义();
+            请求配置.tools = 建工具定义(工具上下文);
             请求配置.tool_choice = 建工具选择();
         }
         const result = await Promise.race([
@@ -309,6 +335,7 @@ async function 直连请求(host: 接口宿主, p: {
     messages: any[];
     options: any;
     工具通道: boolean;
+    工具上下文: string;
     归属: string;
 }) {
     const body: Record<string, any> = {
@@ -321,7 +348,7 @@ async function 直连请求(host: 接口宿主, p: {
     // 工具通道(K2): 与转发同一条定义、同一种 tool_choice 对象形式。
     // 直连这边本来是自己解 SSE, 而工具通道强制关流式 —— 等于这条支路顺带少一条代码路径。
     if (p.工具通道) {
-        body.tools = 建工具定义();
+        body.tools = 建工具定义(p.工具上下文);
         body.tool_choice = 建工具选择();
     }
     const 外部 = p.options?.signal as AbortSignal | undefined;

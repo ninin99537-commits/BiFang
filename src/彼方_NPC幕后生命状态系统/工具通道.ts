@@ -21,7 +21,9 @@ import { CARD_FIELDS } from './卡字段';
 
 /** 工具名: 一个请求只带这一个工具, 并且强制调用它 */
 const 工具名 = 'update_npc_state';
-/** description 只留一句话。**不要**把整份上下文塞进来(理由见文件头)。 */
+/** description 只留一句话。**不要**把整份上下文塞进来 —— 除非调用方显式要求(W4 的第三个开关)。
+ *  理由: 往 description 塞超长文本会让前缀缓存每轮全毁(彼方上下文每轮都变),
+ *  社区预设还实测过速度退化(170→69 t/s)。所以默认一句话, 要搬是用户自己选的。 */
 const 工具描述 = '把本轮 NPC 幕后状态与剧情时间写入缓冲区';
 
 /** NPC 状态卡的参数 schema。
@@ -34,14 +36,19 @@ const 工具描述 = '把本轮 NPC 幕后状态与剧情时间写入缓冲区';
  *  只报剧情时间的轮次也不该被 schema 拦下。
  *
  *  description 里只有字段名(来自 卡字段.ts), **不含任何请求级随机量** ——
- *  打散标记只能进 messages, 进了 tools 就会让前缀每轮都变(验收 P2-7 专门断言这条)。 */
-export function 建工具定义() {
+ *  打散标记只能进 messages, 进了 tools 就会让前缀每轮都变(验收 P2-7 专门断言这条)。
+ *
+ *  @param 上下文 非空时把它作为 description 的正文(W4 的第三个开关: 整份上下文搬进工具)。
+ *    传空串 = 现状(description 一句话, 上下文留在 messages)。
+ *    **打散标记不进这里** —— 调用方要在打散之前调用本函数, 或传进来的上下文本身不含标记。 */
+export function 建工具定义(上下文 = '') {
+    const 描述 = 上下文 ? `${工具描述}\n\n${上下文}` : 工具描述;
     return [
         {
             type: 'function' as const,
             function: {
                 name: 工具名,
-                description: 工具描述,
+                description: 描述,
                 parameters: {
                     type: 'object',
                     properties: {
