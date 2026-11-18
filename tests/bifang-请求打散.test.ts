@@ -37,7 +37,7 @@ function eq(名: string, 实际: any, 期望: any) {
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[A] 打散标记: 形态 / 位置 / 不改入参 / 每次不同 (P1-4)');
+console.log('\n[A] 打散标记: 形态 / 位置(头部) / 不改入参 / 每次不同');
 {
   const 标记 = 生成打散标记();
   ok('[A] 标记带明确包裹', /^\[请求标识 [a-z0-9]{12}\]$/.test(标记), 标记);
@@ -47,20 +47,23 @@ console.log('\n[A] 打散标记: 形态 / 位置 / 不改入参 / 每次不同 (
     { role: 'user', content: '正文' },
   ];
   const 甲 = 加打散标记(基线, 标记);
-  ok('[A] 标记追加在 system 末尾', 甲[0].content.endsWith(标记), 甲[0].content);
-  ok('[A] system 原有内容没被动', 甲[0].content.startsWith('系统指令'));
+  // 2026-11-18 改向(§27): 标记在 system **最前面**, 不是末尾 —— 服务端前缀哈希从头比,
+  // 放末尾前面几千 token 仍逐字节相同, 缓存照样命中, 指纹等于没打散。
+  ok('[A] 标记在 system 最前面', 甲[0].content.startsWith(标记), 甲[0].content.slice(0, 40));
+  ok('[A] system 原有内容仍在', 甲[0].content.endsWith('系统指令'));
+  ok('[A] 标记不在末尾(只保留头部一处)', !甲[0].content.endsWith(标记), 甲[0].content.slice(-30));
   eq('[A] 消息条数不变', 甲.length, 基线.length);
   eq('[A] 不改入参(基线原样)', 基线[0].content, '系统指令');
 
-  // 两条 system 时只动最后一条 —— 前面的保持稳定, 前缀缓存的收益不被打掉
+  // 两条 system 时加在**第一条** —— 必须让第一字节就不同
   const 双系统 = [
     { role: 'system', content: '第一段' },
     { role: 'user', content: '正文' },
     { role: 'system', content: '最后一段' },
   ];
   const 乙 = 加打散标记(双系统, 标记);
-  eq('[A] 只改最后一条 system', 乙[0].content, '第一段');
-  ok('[A] 最后一条 system 带标记', 乙[2].content.endsWith(标记));
+  ok('[A] 加在第一条 system 的最前面', 乙[0].content.startsWith(标记), 乙[0].content.slice(0, 40));
+  eq('[A] 最后一条 system 一个字都没动', 乙[2].content, '最后一段');
 
   // 没有 system 时插一条在最前
   const 无系统 = [{ role: 'user', content: '正文' }];
@@ -80,10 +83,13 @@ console.log('\n[A] 打散标记: 形态 / 位置 / 不改入参 / 每次不同 (
   for (let i = 0; i < 50; i++)
     长度集.add(String(生成打散标记().length));
   eq('[A] 标记长度恒定', 长度集.size, 1);
+
+  // 关键: 打散后**第一个字节**必须与原文不同 —— 这是"破缓存"唯一有效的判据
+  ok('[A] 改后首字节 ≠ 原文首字节', 甲[0].content[0] !== 基线[0].content[0], `${甲[0].content[0]} vs ${基线[0].content[0]}`);
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[B] 请求构造: 开关开→标记进 system 末尾; 关→逐字节不变');
+console.log('\n[B] 请求构造: 开关开→标记在 system 头部; 关→逐字节不变');
 {
   async function 跑一次(接口设置: Record<string, any>) {
     setActivePinia(createPinia());
@@ -112,8 +118,9 @@ console.log('\n[B] 请求构造: 开关开→标记进 system 末尾; 关→逐�
   const 开 = await 跑一次({ 请求打散: true });
   ok('[B] 开: 不崩', 开.错误 === null);
   const 开system = 开.请求.ordered_prompts[0].content;
-  ok('[B] 开: system 末尾有标记', /\[请求标识 [a-z0-9]{12}\]$/.test(开system), 开system);
-  ok('[B] 开: system 原有内容还在', 开system.startsWith('系统指令'));
+  ok('[B] 开: system 最前面有标记', /^\[请求标识 [a-z0-9]{12}\]/.test(开system), 开system.slice(0, 40));
+  ok('[B] 开: system 原有内容还在', 开system.includes('系统指令'));
+  ok('[B] 开: 标记不在末尾', !/\[请求标识 [a-z0-9]{12}\]$/.test(开system), 开system.slice(-30));
 
   // 连跑两次, 标记必须不同(这正是 K1 要的效果)
   const 第二次 = await 跑一次({ 请求打散: true });
