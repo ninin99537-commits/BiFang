@@ -228,63 +228,70 @@ console.log('\n[F] 与预填充的交互: 末条仍是 user');
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[G] 与「上下文进工具」的优先级: 伪装不生效 + 明确提示');
+console.log('\n[G] §33: 规则进工具 + 常驻伪装**同时生效**(正交, 不是互斥)');
 {
-  // 更新输入.ts 传参时已经互斥, 这里直接验 api.ts 的警告与最终结构
-  setActivePinia(createPinia());
-  const { host, 记 } = 彼方假宿主({ 模型回复: ['{"NPC":{}}'] });
-  Object.assign((host as any).vars.get({ type: 'global' })['彼方_settings'].接口, { 工具通道: true, 上下文进工具: true, 消息伪装: true });
-  const 原文 = console.warn;
-  const 警告: string[] = [];
-  console.warn = (...args: any[]) => { 警告.push(args.map(String).join(' ')); };
-  try {
-    await chatCompletion(host as any, [
-      { role: 'system', content: '系统指令' },
-      { role: 'user', content: '剧情正文' },
-    ]);
-  }
-  finally {
-    console.warn = 原文;
-  }
-  const 有提示 = 警告.some(w => w.includes('消息伪装') && w.includes('不生效'));
-  ok('[G] 明确提示"消息伪装不生效"(不许静默)', 有提示, 警告.join(' | ').slice(0, 300));
-  // 上下文进工具生效: messages 只剩一句指令
-  const 全文 = `${JSON.stringify(记.rawCalls[0].ordered_prompts)}${String(记.rawCalls[0].user_input ?? '')}`;
-  ok('[G] 上下文进工具生效(messages 只剩一句)', 全文.includes('请按工具说明'), 全文.slice(0, 200));
-  ok('[G] 上下文搬进了工具说明', JSON.stringify(记.rawCalls[0].tools).includes('系统指令'), JSON.stringify(记.rawCalls[0].tools).slice(0, 200));
+  // 真实路径: buildUpdateMessages 产出 messages + 工具说明, api.ts 只负责把工具说明交给工具定义。
+  // 直接调 chatCompletion 会绕过 buildUpdateMessages, 走到"没拿到工具说明"的兜底分支 ——
+  // 那样测的是兜底, 不是真实路径(第一版就踩了这个坑)。
+  const 出 = buildUpdateMessages(造输入({ 消息伪装: true, 规则进工具: true, context: '主角走进广场。' }) as any);
+  const 段 = 出.messages as any[];
+
+  // ① 规则进了工具说明
+  ok('[G] 产出了工具说明', typeof 出.工具说明 === 'string' && 出.工具说明.length > 1000, `长度 ${(出.工具说明 ?? '').length}`);
+  ok('[G] 工具说明里有规则正文', String(出.工具说明).includes('核心原则'));
+  ok('[G] 工具说明里有输出要求', String(出.工具说明).includes('输出要求'));
+  // ② 规则**不在** messages 里了
+  ok('[G] messages 里没有核心原则', !JSON.stringify(段).includes('核心原则'), JSON.stringify(段).slice(0, 200));
+  // ③ messages 仍是多条短问答
+  ok('[G] messages 仍是多条(不是一句)', 段.length >= 4, `条数 ${段.length}`);
+  ok('[G] messages 里有 assistant 确认', 段.some((m: any) => m.role === 'assistant'), JSON.stringify(段.map((m: any) => m.role)));
+  eq('[G] 末条是 user', 段[段.length - 1].role, 'user');
+  // ④ 剧情正文留在 messages 里
+  ok('[G] 剧情正文仍在 messages', JSON.stringify(段).includes('这是一段剧情正文'), JSON.stringify(段).slice(0, 200));
+  // ⑤ 输出要求仍贴在末条 user 尾部(承重指令离生成最近)
+  ok('[G] 输出要求仍在末条 user 尾部', String(段[段.length - 1].content).includes('\n输出要求:'));
+  // ⑥ 无连续 assistant
+  let 连续 = 0;
+  for (let i = 1; i < 段.length; i++)
+    if (段[i].role === 'assistant' && 段[i - 1].role === 'assistant')
+      连续++;
+  eq('[G] 无连续 assistant', 连续, 0);
+  // ⑦ 对比: 规则不进工具时, 规则在 messages 里、没有工具说明
+  const 不进 = buildUpdateMessages(造输入({ 消息伪装: true, 规则进工具: false }) as any);
+  eq('[G] 规则不进工具时没有工具说明', 不进.工具说明, undefined);
+  ok('[G] 规则不进工具时规则在 messages 里', JSON.stringify(不进.messages).includes('核心原则'));
+  // ⑧ 工具说明的正文必须与原文逐字相同(不是重新拼的)
+  const 原文系统 = String(buildUpdateMessages(造输入({ 消息伪装: false }) as any).messages[0].content);
+  eq('[G] 工具说明逐字 === 原文系统提示词', sha(String(出.工具说明)), sha(原文系统));
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[H] 16 种开关组合都不崩');
+console.log('\n[H] 四组合都不崩(工具通道 × 请求打散)');
 {
   for (const 工具 of [false, true]) {
-    for (const 上下文 of [false, true]) {
-      for (const 打散 of [false, true]) {
-        for (const 伪装 of [false, true]) {
-          const 标签 = `工具=${+工具} 上下文=${+上下文} 打散=${+打散} 伪装=${+伪装}`;
-          setActivePinia(createPinia());
-          const { host } = 彼方假宿主({ 模型回复: ['{"NPC":{}}'] });
-          Object.assign((host as any).vars.get({ type: 'global' })['彼方_settings'].接口, {
-            工具通道: 工具, 上下文进工具: 上下文, 请求打散: 打散, 消息伪装: 伪装,
-          });
-          let 错误: unknown = null;
-          const 原文warn = console.warn;
-          console.warn = () => {};
-          try {
-            await chatCompletion(host as any, [
-              { role: 'system', content: '系统指令' },
-              { role: 'user', content: '剧情正文' },
-            ]);
-          }
-          catch (e) {
-            错误 = e;
-          }
-          finally {
-            console.warn = 原文warn;
-          }
-          ok(`[H] ${标签}: 不崩`, 错误 === null, 错误 instanceof Error ? 错误.message.slice(0, 100) : '');
-        }
+    for (const 打散 of [false, true]) {
+      const 标签 = `工具=${+工具} 打散=${+打散}`;
+      setActivePinia(createPinia());
+      const { host } = 彼方假宿主({ 模型回复: ['{"NPC":{}}'] });
+      Object.assign((host as any).vars.get({ type: 'global' })['彼方_settings'].接口, {
+        工具通道: 工具, 请求打散: 打散,
+      });
+      let 错误: unknown = null;
+      const 原文warn = console.warn;
+      console.warn = () => {};
+      try {
+        await chatCompletion(host as any, [
+          { role: 'system', content: '系统指令' },
+          { role: 'user', content: '剧情正文' },
+        ]);
       }
+      catch (e) {
+        错误 = e;
+      }
+      finally {
+        console.warn = 原文warn;
+      }
+      ok(`[H] ${标签}: 不崩`, 错误 === null, 错误 instanceof Error ? 错误.message.slice(0, 100) : '');
     }
   }
 }

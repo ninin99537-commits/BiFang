@@ -214,7 +214,7 @@ export async function 收集本轮输入(参数: 取料参数) {
             }
         }
     }
-    const { messages } = buildUpdateMessages({
+    const { messages, 工具说明 } = buildUpdateMessages({
         reply,
         replyCount: recent.length,
         context,
@@ -229,9 +229,12 @@ export async function 收集本轮输入(参数: 取料参数) {
         恋爱对象名单: tracked.filter((name: string) => String(currentCards[name]?.['恋爱对象'] ?? '').trim() === '是'),
         自定义段: settings.提示词?.自定义段 ?? [], // 用户自定义段: 只插锚点, 不改内置提示词
         预填充: !!settings.更新.预填充,
-        // 消息伪装(§28/§29): 与「上下文进工具」同开时伪装不生效 ——
-        // 那时 messages 会被整段替换成一句指令, 没有东西可拆(警告在 api.ts 里打, 那里才知道最终走哪条路)
-        消息伪装: !!settings.接口.消息伪装 && !settings.接口.上下文进工具,
+        // 消息伪装(§33): **常驻**, 没有开关。与工具通道**正交** ——
+        // 规则进表了, messages 照样是有来有回的短问答(伪装的对象是对话形状, 不是规则段落)。
+        消息伪装: true,
+        // 规则进工具(§33): 工具通道开着时, 规则/设定/字段说明整块搬进工具说明,
+        // 剧情与状态仍留在 messages。两件事各管一边, 不抢位置。
+        规则进工具: !!settings.接口.工具通道,
         worldbook,
         currentStoryTime: data.剧情时间,
         storyTimeHint,
@@ -270,7 +273,7 @@ export async function 收集本轮输入(参数: 取料参数) {
     });
     console.info(`[彼方] 开始更新幕后NPC状态 (使用最近 ${recent.length} 条回复: #${recent.map(message => message.message_id).join(', #')})`);
 
-    return { data, messages, playerName, recent, timeJump };
+    return { data, messages, 工具说明, playerName, recent, timeJump };
 }
 
 

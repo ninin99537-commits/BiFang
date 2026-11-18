@@ -6,6 +6,13 @@ import { 身体迹象 } from './身体迹象';
 type 提示词段 = { role: 'system' | 'user' | 'assistant'; content: string };
 interface 提示词形状 {
     messages: 提示词段[];
+    /** 规则进工具时(§33): 要放进工具说明的整块规则文本。
+     *  为空/undefined = 规则仍在 messages 里(没开工具通道), 工具说明只需一句短描述。
+     *
+     *  为什么由本文件产出而不是 api.ts 自己从 messages 里抠:
+     *  §33 之后规则已经**不在 messages 里**了(搬进了工具), api.ts 抠不到。
+     *  规则正文只存在于 SYSTEM_PROMPT_BODY 一处, 谁知道怎么切谁产出 —— 就是这里。 */
+    工具说明?: string;
 }
 
 /** 系统提示词头部(身份句) */
@@ -326,9 +333,18 @@ interface 更新提示词入参 {
     playerName?: string;
     /** 玩家角色描述(persona) */
     playerDescription?: string;
-    /** 消息伪装(§28/§29): 开=拆成有来有回的问答结构; 关=现状(一条 system + 一条 user)。
+    /** 消息伪装(§33): **常驻**, 不再有开关。把 messages 排成有来有回的短问答
+     *  (system 短身份 → user 规则 → assistant 极短确认 → … → user 剧情+输出要求)。
      *  只改结构与承载位置, 规则文字一个字不改(正文仍只有 SYSTEM_PROMPT_BODY 一处)。 */
     消息伪装?: boolean;
+    /** 规则进工具(§33): 工具通道开着时为真。把**规则、设定、字段说明**整块交给工具的说明,
+     *  剧情与状态仍留在 messages 的最后一条 user。
+     *
+     *  与「消息伪装」**完全正交**(这是 §32.4 的更正):
+     *    · 本项决定"规则放哪、要不要填表"
+     *    · 消息伪装决定"messages 里那几条怎么排"
+     *  两者不抢位置 —— 规则进表了, 对话照样可以有来有回(只是内容变短)。 */
+    规则进工具?: boolean;
     /** 酒馆宏展开; 调用方不给就原样返回(本文件不依赖平台) */
     展开宏?: (text: string) => string;
 }
@@ -448,19 +464,36 @@ ${JSON.stringify(input.currentCards, null, 2)}${台账账况(input.currentCards,
     // 三段是它的纯字符串切片, 拼回去必然相等(不是断言保证, 是结构上不可能不相等)。
     // 承重指令(输出要求)放**末条 user 的尾部** —— 方案 §29 ② 的裁定: 放中间会被假确认推远两步,
     // 反而抵消"离生成最近"的收益。
+    //
+    // §33 更正(需求方自己改判): 伪装与「规则进工具」**完全正交**, 不冲突。
+    //   规则搬进工具说明之后, messages 照样可以有来有回 —— 伪装的对象是**对话的形状**,
+    //   不是规则段落。所以两条路合并成一条:
+    //     · 规则进工具 → 规则段不出现, 改为产出 工具说明
+    //     · 规则不进工具 → 规则段照常进 messages
+    //   其余(确认句、场景判断、末条 user、锚点位置)完全一样。
     if (input.消息伪装) {
         const 正文 = SYSTEM_PROMPT_BODY(physioEnabled);
         const { 规则段1, 规则段2, 输出要求段 } = 切规则段(正文);
+        const 规则进工具 = !!input.规则进工具;
         const 伪装段: 提示词段[] = [
             // 「最前」锚点: 仍在最前面(主身份句之前)
             ...锚点段(用户段们, '最前', 展开宏),
             // system 只留身份句 —— 短身份, 像一个人在开场自我介绍
             { role: 'system', content: 展开宏(SYSTEM_PROMPT_HEAD) },
-            { role: 'user', content: 展开宏(规则段1) },
-            { role: 'assistant', content: 确认句[0] },
-            { role: 'user', content: 展开宏(规则段2) },
-            { role: 'assistant', content: 确认句[1] },
         ];
+        // 规则段: 进工具时不进 messages(它们在 工具说明 里), 否则照常拆成两轮
+        if (!规则进工具) {
+            伪装段.push({ role: 'user', content: 展开宏(规则段1) });
+            伪装段.push({ role: 'assistant', content: 确认句[0] });
+            伪装段.push({ role: 'user', content: 展开宏(规则段2) });
+            伪装段.push({ role: 'assistant', content: 确认句[1] });
+        }
+        else {
+            // 规则进工具时, 开场也要有"人味": 一句说明这轮要干什么 + 它应一声。
+            // **这两句不含任何规则内容** —— 规则全在工具说明里, 这里只是对话形状。
+            伪装段.push({ role: 'user', content: '这轮的幕后状态要更新一下，规则和设定都在表里。' });
+            伪装段.push({ role: 'assistant', content: 确认句[0] });
+        }
         // 「主提示词之后」锚点: 全部规则之后、场景判断之前(语义与现状一致)
         伪装段.push(...锚点段(用户段们, '主提示词之后', 展开宏));
         // 场景判断: 伪装下改成 user —— 它本来就是"玩家最近一次输入", 是 user 说的话。
@@ -485,7 +518,12 @@ ${JSON.stringify(input.currentCards, null, 2)}${台账账况(input.currentCards,
         // 两处必须一致: 不一致就是"开关两边行为分叉", 以后出问题第一个要问的就是"开没开伪装"。
         if (合并后.length > 0 && 合并后[合并后.length - 1].role !== 'user')
             合并后.push({ role: 'user', content: TAIL_KICKOFF });
-        return { messages: 合并后 };
+        // 规则进工具时, 整块规则(三段按原顺序拼)交给工具说明。
+        // **注意**: 进工具的必须是**原文三段按原顺序拼接**, 不是打乱后的顺序 ——
+        // 模型读工具说明时是按文本顺序读的, 顺序变了就是改了内容。
+        return 规则进工具
+            ? { messages: 合并后, 工具说明: `${SYSTEM_PROMPT_HEAD}${规则段1}${规则段2}${输出要求段}` }
+            : { messages: 合并后 };
     }
     const messages: 提示词段[] = [
         // 「最前」锚点: 主 system 之前(以前头部填充占的位置——头部填充已删, 想要垫文本的人自己插一段)

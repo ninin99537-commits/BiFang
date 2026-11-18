@@ -168,51 +168,25 @@
         <label class="bf-switch-row">
           <span class="bf-switch-copy">
             <b>工具通道</b>
-            <span>改用"填表"的方式要状态</span>
+            <span>让 AI 填一张表</span>
           </span>
           <input v-model="settings.接口.工具通道" type="checkbox" class="bf-switch" />
         </label>
         <p class="bf-hint">
-          打开后，彼方改用"填表"的方式要状态：让 AI 调用一个工具，把结果填进参数里。
-          <br />打开期间「流式输出」和「预填充」不起作用——这两项和填表方式冲突。
-          <br />如果你的接口不支持这种方式，这一轮会失败并提示你关掉它，它不会自动退回旧方式。
-        </p>
-
-        <label class="bf-switch-row">
-          <span class="bf-switch-copy">
-            <b>上下文也放进表里</b>
-            <span>连剧情内容也一起放进表里，对话只留一句指令</span>
-          </span>
-          <input v-model="settings.接口.上下文进工具" type="checkbox" class="bf-switch" />
-        </label>
-        <p class="bf-hint">
-          打开后，把全部上下文放进工具说明里，对话部分只留一句指令。
-          <br />需要同时打开「工具通道」，否则本项不生效（会提示你）。
-          <br />代价：可能变慢。
+          让 AI 填一张表：连剧情内容也一起放进表里，对话只留一句指令。
+          <br />打开期间「流式输出」和「预填充」不起作用。
         </p>
 
         <label class="bf-switch-row">
           <span class="bf-switch-copy">
             <b>请求打散</b>
-            <span>每次请求开头多一小段随机字符</span>
+            <span>每次请求开头加一小段随机字符</span>
           </span>
           <input v-model="settings.接口.请求打散" type="checkbox" class="bf-switch" />
         </label>
         <p class="bf-hint">
-          打开后，每次请求开头会多一小段随机字符，让每一次请求都不完全相同。
-          <br />代价：每次更新都要重新计算全部提示词，可能变慢、更费 token。
-        </p>
-
-        <label class="bf-switch-row">
-          <span class="bf-switch-copy">
-            <b>消息伪装</b>
-            <span>规则拆成几段一问一答发过去</span>
-          </span>
-          <input v-model="settings.接口.消息伪装" type="checkbox" class="bf-switch" />
-        </label>
-        <p class="bf-hint">
-          打开后，规则会拆成几段一问一答发过去，而不是整块发过去。
-          <br />与「上下文也放进表里」同时打开时，本项不生效（会提示你）。
+          每次请求开头加一小段随机字符，让每次请求都不一样。
+          <br />代价：变慢、更费 token。
         </p>
 
         <h4 class="bf-subgroup-title">配置预设</h4>

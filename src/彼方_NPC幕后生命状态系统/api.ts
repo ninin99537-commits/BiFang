@@ -145,7 +145,6 @@ async function chatCompletionInner(host: 接口宿主, messages: any[], options?
     const 直连 = options?.接口?.直连 ?? baseCfg.直连;
     const 请求打散 = options?.接口?.请求打散 ?? baseCfg.请求打散 ?? false;
     const 工具通道 = options?.接口?.工具通道 ?? baseCfg.工具通道 ?? false;
-    const 上下文进工具 = options?.接口?.上下文进工具 ?? baseCfg.上下文进工具 ?? false;
     // 流式在工具通道开启期间**强制关闭**(方案 §11.1): tool_call 的参数是分片到达的,
     // 拼接是最容易产生偶发空回包的地方, 而这类 bug 极难复现。用户明确接受这个代价。
     const 流式 = (options?.接口?.流式 ?? baseCfg.流式 ?? false) && !工具通道;
@@ -163,35 +162,26 @@ async function chatCompletionInner(host: 接口宿主, messages: any[], options?
             return String(total);
         }),
     }));
-    // 上下文进工具(W4, 第三个开关): 整份上下文搬进工具的 description, messages 只留一句无害指令。
-    // 为什么要有它: 这是"防服务端按请求形态/内容降级"的另一半 —— 上下文本身也不留在 messages 里。
-    // 代价(面板灰字里写了): description 每轮都变 → 前缀缓存全失效; description 变长可能变慢。
-    // 边界: 工具通道关着时请求里根本没有 tools, 这个开关**无效** —— 必须明确提示, 不许静默。
+    // 工具通道 = 填表 + 把剧情内容一起放进表里(§32: 原「上下文进工具」开关已并入本开关)。
+    // 为什么两件事绑在一起: 用户要的最终形态就是"整个请求看起来像一次填表", 内容留在对话里
+    // 反而半吊子。代价是无法再单独测"只换形态"与"换形态+搬内容"(§32.5 已记录, 用户接受)。
     //
-    // ⚠️ 顺序有讲究: 必须在**打散之前**收上下文。否则打散标记会被收进工具说明里
-    // (违反 P2-7: 标记只能进 messages, 进了 tools 就让前缀每轮都变),
-    // 而且 messages 被换成单句之后标记就没了 —— 打散等于白开。
-    let 工具上下文 = '';
-    if (上下文进工具) {
-        if (!工具通道) {
-            console.warn('[彼方] 「上下文进工具」已开启但「工具通道」关着: 请求里没有工具, 这个开关本次不生效。'
-                + '要让它起作用, 请同时打开「工具通道」。');
-        }
-        else {
-            // 与「消息伪装」同开时, 伪装没有东西可拆(上下文已全搬进工具说明) —— 明确提示, 不静默。
-            if (options?.接口?.消息伪装 ?? baseCfg.消息伪装)
-                console.warn('[彼方] 「消息伪装」与「上下文进工具」同时开着: 这次以「上下文进工具」为准, 消息伪装不生效。'
-                    + '想让伪装起作用, 请先关掉「上下文进工具」。');
-            工具上下文 = messages
-                .map((message: any) => `【${message.role === 'system' ? '系统指令' : message.role === 'user' ? '用户' : '助手'}】\n${String(message.content ?? '')}`)
-                .join('\n\n────────\n\n');
-            // messages 只留一句无害指令: 上下文已经在 description 里了, 再留一份等于发两遍。
-            // 末条必须是 user —— 转发路径会把末条 user 抽成 user_input, 抽不到就会追加空消息。
-            messages = [{ role: 'user', content: '请按工具说明里的要求，把本轮 NPC 状态写入缓冲区。' }];
-        }
+    // §33 更正: **规则搬进工具说明, 剧情仍留在 messages** —— 伪装与工具通道正交。
+    //   规则正文由 prompts.ts 产出(它才知道怎么切), 这里只负责把它交给工具定义。
+    //   messages 那边已经是短问答了(由 buildUpdateMessages 排好), 这里不再整段替换。
+    let 工具上下文 = options?.工具说明 ?? '';
+    if (工具通道 && !工具上下文) {
+        // 兜底: 调用方没给 工具说明(比如别的调用点还没接上) —— 从当前 messages 现拼一份,
+        // 保证"开了工具通道就一定把内容放进表里", 不会静默退化成一个只换形态的半成品。
+        console.warn('[彼方] 工具通道开着但没拿到 工具说明, 已按当前 messages 现拼一份(内容可能不完整)。');
+        工具上下文 = messages
+            .map((message: any) => `【${message.role === 'system' ? '系统指令' : message.role === 'user' ? '用户' : '助手'}】\n${String(message.content ?? '')}`)
+            .join('\n\n────────\n\n');
     }
     // 请求打散(K1): 每次请求换一个随机标记, 让同一份提示词不再字节相同。
-    // 放在宏展开与 W4 搬上下文**之后**: 标记本身不该被宏替换, 也不该被收进工具说明。
+    // 放在最前面是为了让**首字节**就不同 —— 服务端按请求前缀识别, 前缀一样就当成同一份内容。
+    // **标记只进 messages, 绝不进工具说明**(P2-7): 工具说明每轮都变会让前缀每轮都变,
+    // 而那本来正是打散要的效果 —— 两处都加等于把同一个随机量发两遍, 且工具说明不该有随机内容。
     if (请求打散)
         messages = 加打散标记(messages, 生成打散标记());
     // 一次更新的多次重试共用一个请求态(由调用方创建并传下来): 请求序号要连续,
@@ -214,8 +204,8 @@ async function chatCompletionInner(host: 接口宿主, messages: any[], options?
     const 日志 = 请求日志(功能, 路径, 请求态, 工具通道 ? 建工具定义().length : 0);
     if (日志)
         console.info(日志);
-    if (工具通道 && 上下文进工具)
-        console.info(`[彼方] 上下文已搬进工具说明(${工具上下文.length} 字), messages 只剩一句指令`);
+    if (工具通道)
+        console.info(`[彼方] 规则已搬进工具说明(${工具上下文.length} 字); messages 是 ${messages.length} 条短问答`);
     // 归属标记: 两个开关全关时是空串 —— 老报错逐字节不变(验收 G2)。
     const 归属 = 归属标记(功能, 路径, 请求态);
     // "本轮真的发过请求"这个事实交给调用方(复查 P1-11): 状态机判收尾要靠它,

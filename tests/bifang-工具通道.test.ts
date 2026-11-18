@@ -152,16 +152,16 @@ console.log('\n[C] 请求构造与开关矩阵 (§13.4 / §11.1)');
     ok(`[C] ${标签}: 打散标记跟随请求打散`, 全文.includes('请求标识') === 打散);
     // 工具通道开 → 流式必须被强制关掉
     eq(`[C] ${标签}: should_stream`, 请求.should_stream, false);
-    // 上下文仍留在 messages 里(§12.1: (b) 搬位置不做)。
-    // 注意: 末条 user 会被抽成 user_input 传进 generateRaw(既有行为), 所以要两处一起看。
-    const 请求全文 = `${JSON.stringify(请求.ordered_prompts)}${String(请求.user_input ?? '')}`;
-    ok(`[C] ${标签}: 上下文仍在 messages`, 请求全文.includes('系统指令') && 请求全文.includes('正文'), 请求全文.slice(0, 120));
-    // P2-7: 标记不进 tools
+    // §32/§33 之后的形态: 工具通道开 = 填表 + 内容一起进表(原「上下文进工具」已并入),
+    // 所以**上下文进 tools 是正确的**, 不再断言"工具说明里没有正文"(那是 §12.1 的旧形态)。
+    // 注意: 这条用例直接调 chatCompletion(绕过 buildUpdateMessages), 走的是"没拿到 工具说明"
+    // 的兜底分支 —— 所以只能断言"内容进了表", 不能断言"表里有规则正文"(规则由 prompts.ts 产出)。
+    // 真实路径的断言在 bifang-消息伪装.test.ts 的 [G]。
+    if (工具)
+      ok('[C] 工具说明里带着本轮内容(兜底路径)', JSON.stringify(请求.tools).includes('系统指令'), JSON.stringify(请求.tools).slice(0, 200));
+    // P2-7: 标记绝不进 tools(这条与形态无关, 一直有效)
     if (工具 && 打散)
       ok('[C] 工具通道+打散: 标记没进 tools', !JSON.stringify(请求.tools).includes('请求标识'));
-    // §12.1: 上下文不搬进 description —— 工具描述必须很短, 不能包含正文
-    if (工具)
-      ok('[C] 工具 description 里没有本轮正文', !JSON.stringify(请求.tools).includes('系统指令'), JSON.stringify(请求.tools).slice(0, 200));
   }
 
   // 工具通道关但用户开了流式 → 流式照旧生效(不能被工具通道的门控误伤)
