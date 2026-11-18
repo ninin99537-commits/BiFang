@@ -189,6 +189,19 @@
           <br />代价：变慢、更费 token。
         </p>
 
+        <label class="bf-switch-row">
+          <span class="bf-switch-copy">
+            <b>登记归档</b>
+            <span>把"写状态"说成"登记档案"，让 AI 不评判内容</span>
+          </span>
+          <input v-model="settings.接口.登记归档" type="checkbox" class="bf-switch" />
+        </label>
+        <p class="bf-hint">
+          打开后，告诉 AI 它在登记已发生的事实，而不是在创作。这样它不会去判断内容合不合适。
+          <br /><b>代价：可能让推演变弱</b>——「接下来想做」「心事」这类字段可能变成复述剧情，而不是推断。
+          <br />建议开几次、关几次对比着看。
+        </p>
+
         <h4 class="bf-subgroup-title">配置预设</h4>
         <div class="bf-set-row bf-set-row-inline">
           <label class="bf-form-label" for="bf-preset-name">预设名</label>

@@ -93,7 +93,15 @@ console.log('\n[B] 工具定义: 不含随机量 / description 一句话 / tool_
   eq('[B] 只带一个工具', 定义.length, 1);
   ok('[B] 工具名正确', 定义[0].function.name === 工具名, 定义[0].function.name);
   eq('[B] 工具类型是 function', 定义[0].type, 'function');
-  ok('[B] description 是一句话(不含整份上下文)', 定义[0].function.description!.length < 60, `长度 ${定义[0].function.description!.length}`);
+  // description 必须**短**: 不含整份上下文(规则/剧情)。§35.1 之后它多了一段"写入通道分级"
+  // (约 100 字), 所以不能再用"< 60 字"这种硬数字 —— 那会把合法内容判成违规。
+  // 改成断言**意图**: 不含规则正文、不含剧情、不含状态卡。
+  const 无上下文描述 = String(定义[0].function.description);
+  ok('[B] description 不含规则正文(没有整份上下文)', !无上下文描述.includes('核心原则'), `长度 ${无上下文描述.length}`);
+  ok('[B] description 不含状态卡字段', !无上下文描述.includes('当前在做'), `长度 ${无上下文描述.length}`);
+  ok('[B] description 很短(< 300 字)', 无上下文描述.length < 300, `长度 ${无上下文描述.length}`);
+  // §35.1: 分级文案必须在这里(工具通道开时自动带)
+  ok('[B] description 带写入通道分级(§35.1)', 无上下文描述.includes('写入通道说明'), 无上下文描述);
   // 两次构造必须逐字节相同 —— 否则前缀每轮都变
   eq('[B/P2-7] 两次构造的工具定义逐字节相同', JSON.stringify(建工具定义()), 定义文本);
   ok('[B/P2-7] 工具定义里没有打散标记的痕迹', !定义文本.includes('请求标识'));
