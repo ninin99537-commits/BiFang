@@ -227,11 +227,83 @@ function emptyData(): 彼方数据 {
     };
 }
 /**
+ * 读取"本轮更新该用的基线": 与 `loadData` 的唯一区别是**同层重跑时回退**。
+ *
+ * 为什么要单独一个函数而不改 `loadData`(方案 §23 W3):
+ *   `loadData` 有四个调用方, 其中**界面(数据仓)与世界书注入读的是"现在是什么样"** ——
+ *   它们不该跟着回退。只有"算这一轮的基线"这一处需要"像没填过"。
+ *   所以 loadData 的行为一个字节都不变, 需要回退的人来调这个。
+ *
+ * 回退判据 `data.锚点楼层 >= anchorFloor`(用户 2026-11-18 裁定):
+ *   同层重跑时锚点相等, 读到的正是**上一次在同一层写的结果** —— 它的名字、它的错误、
+ *   它的幻觉全都回到提示词里, 与名字归一的自激回路叠加。
+ *   手动保存的快照也一起回退(用户原话「既然重跑, 那这一层手动改的作废就作废呗」),
+ *   不加来源标记、不分 force —— 单一规则, 行为可预测。
+ *
+ * @param anchorFloor 本轮要写的锚点楼层
+ */
+function 读取基线(host: 快照宿主, anchorFloor: number): 彼方数据 {
+    const 现状 = loadData(host);
+    if (!(现状.锚点楼层 >= anchorFloor))
+        return 现状;
+    // 回退: 找**严格早于** anchorFloor 的最新一份有效快照
+    let meta: 快照元数据;
+    try {
+        meta = loadMeta(host);
+    }
+    catch {
+        return { ...emptyData(), 清空层: 现状.清空层 };
+    }
+    const 更早 = [...meta.快照楼层].filter(floor => floor < anchorFloor).sort((a, b) => b - a);
+    for (const floorId of 更早) {
+        let message = null;
+        try {
+            message = host.chat.messages(floorId)[0] ?? null;
+        }
+        catch {
+            message = null;
+        }
+        if (!message)
+            continue;
+        let snapshot = null;
+        try {
+            snapshot = host.vars.get({ type: 'message', message_id: floorId })?.[STORAGE_KEY] ?? null;
+        }
+        catch {
+            snapshot = null;
+        }
+        if (!snapshot || typeof snapshot !== 'object')
+            continue;
+        if (snapshot.楼层 !== floorId)
+            continue;
+        const 原NPC = snapshot.NPC && typeof snapshot.NPC === 'object' ? snapshot.NPC : {};
+        const 迁移后NPC: Record<string, any> = {};
+        for (const [名, 卡] of Object.entries(原NPC))
+            迁移后NPC[名] = 迁移旧字段名(卡 as Record<string, any>) ?? 卡;
+        console.info(`[彼方] 同层重跑: 楼层 #${anchorFloor} 上已有本层的状态, 已回退到 #${floorId} 的基线重新计算(这一层的手动修改随之作废)`);
+        return {
+            ...emptyData(),
+            名单: Array.isArray(snapshot.名单) ? [...snapshot.名单] : [],
+            NPC: 迁移后NPC,
+            统计: { 更新次数: 0, 最后更新: 0, ...(snapshot.统计 && typeof snapshot.统计 === 'object' ? snapshot.统计 : {}) },
+            剧情时间: typeof snapshot.剧情时间 === 'string' ? snapshot.剧情时间 : '',
+            清空层: meta.清空层,
+            锚点楼层: floorId,
+            处理到楼层: typeof snapshot.处理到楼层 === 'number' ? snapshot.处理到楼层 : 0,
+        };
+    }
+    console.info(`[彼方] 同层重跑: 楼层 #${anchorFloor} 上已有本层的状态, 且没有更早的快照 —— 按"从没填过"的空状态重新计算`);
+    return { ...emptyData(), 清空层: meta.清空层 };
+}
+
+/**
  * 读取彼方当前状态: 从最新快照楼层往前找第一份**有效**快照。
  * - 楼层不存在(被删) → 快照随之消亡, 从索引清理, 继续往前;
  * - 楼层变量里没有快照(如重roll产生的新swipe页) → 继续往前;
- * - 楼层变量里没有快照(如重roll产生的新swipe页) → 继续往前;
  * 命中或扫尽后返回状态; 一个快照都没有时返回空状态(清空层仍生效)。
+ *
+ * **注意**: 这是"现在是什么样", 界面与世界书注入用它。
+ * "本轮更新该用的基线"(同层重跑要回退)用 读取基线, 不是这个。
  */
 function loadData(host: 快照宿主): 彼方数据 {
     try {
@@ -603,5 +675,5 @@ function 读取快照序列(host: 快照宿主, K: number): Array<{ 楼层: numb
     return 结果.reverse();
 }
 
-export { DATA_VERSION, SNAPSHOT_LIMIT, STORAGE_KEY, clearAllData, discardSnapshotAt, emptyData, loadData, saveData, updateClearLayer, writeStateSnapshot, 读取快照序列, 锚点之后的快照楼层 };
+export { DATA_VERSION, SNAPSHOT_LIMIT, STORAGE_KEY, clearAllData, discardSnapshotAt, emptyData, loadData, saveData, updateClearLayer, writeStateSnapshot, 读取基线, 读取快照序列, 锚点之后的快照楼层 };
 export type { 快照宿主 };
