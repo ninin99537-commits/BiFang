@@ -7,7 +7,7 @@
 import { 合并 } from './卡合并';
 import { parseStoryTimeRange } from './剧情时间';
 import { 认出NPC } from './模型请求';
-import { 归一名 } from './名字归一';
+import { 归一名, 疑似重复提示 } from './名字归一';
 import { 读取台账, 未回票编号, 新建台账诊断, 待核对事务 } from './事务台账';
 import type { 彼方数据 } from './快照';
 // 2026-11-14: lodash 是 webpack externals 注入的全局（webpack.config.ts:4），不在 auto-imports 里 ——
@@ -59,11 +59,14 @@ export type 更新摘要 = {
     跳过: string[];
     /** 本轮没被模型过问的「进行中」事务编号(逐轮临时, 不落库) */
     未回票: Record<string, string[]>;
+    /** 疑似重复但**未合并**的名字(只报告, 供面板与日志提示玩家手动确认) */
+    疑似重复: Array<{ 新名: string; 疑似: string }>;
 };
+
 export type 更新结果 = { 数据: 彼方数据; 摘要: 更新摘要 };
 
 function 空摘要(): 更新摘要 {
-    return { 更新: [], 移除: [], 跳过: [], 未回票: {} };
+    return { 更新: [], 移除: [], 跳过: [], 未回票: {}, 疑似重复: [] };
 }
 
 /**
@@ -101,6 +104,8 @@ function applyUpdate(data: 彼方数据, parsed: Record<string, any> | null, pla
     const updatedNames: string[] = [];
     /** 本轮每个 NPC 的未回票编号(逐轮临时, 只进摘要, 不落库) */
     const 未回票记录: Record<string, string[]> = {};
+    /** 本轮"疑似重复但未合并"的名字(只报告) */
+    const 疑似重复: Array<{ 新名: string; 疑似: string }> = [];
     /**
      * 合并一张卡, 并把台账层的三条**静默路径**汇总成日志(每轮每 NPC 至多三行)。
      * 为什么必须留痕: 这三条路径过去全是无声的——载荷被丢(内容重复)、改动被吞(重抄+改状态)、
@@ -155,10 +160,14 @@ function applyUpdate(data: 彼方数据, parsed: Record<string, any> | null, pla
             newData.名单 = newData.名单.filter((n: string) => n !== name);
             continue;
         }
-        // 名字归一守卫(方案 §23 W1): 模型会把同一个人写成两个只差一个字的名字
+        // 名字归一守卫(方案 §23 W1, 2026-11-18 改判 §25): 模型会把同一个人写成两个只差一个字的名字
         // (实测: "埃莉" / "艾莉", 内容一字不差)。而**错名字一旦进名单, 之后每轮提示词都带着它**,
-        // 模型照着输出 —— 自激回路, 自己不会好。所以这里在**建档之前**把它并掉。
-        // 以已有名字为准(先来的赢): 已有名字已经在名单里、已经在提示词里了。
+        // 模型照着输出 —— 自激回路, 自己不会好。
+        //
+        // 合并的条件必须是**证据**, 不是**相似**(§25 裁定):
+        //   证据 → 自动合并: 完全同名 / 去姓前缀 / 同一回复内名字相近且内容重合度高
+        //   相似 → 只报告:   跨轮次的近名(如已有「艾莉」遇到新的「埃莉」)照常建卡, 留一行提示
+        // 因为同长度单字替换会把「张三/张四」判成两个真不同的人 —— 误伤比漏判贵得多。
         const 归一 = 归一名(
             name,
             [...newData.名单, ...Object.keys(newData.NPC)],
@@ -167,7 +176,12 @@ function applyUpdate(data: 彼方数据, parsed: Record<string, any> | null, pla
             newData.NPC,
         );
         if (归一.合并到 && 归一.合并到 !== name) {
-            console.info(`[彼方] 名字归一: 「${name}」并入「${归一.合并到}」(判据=${归一.理由}), 不新建卡`);
+            console.info(`[彼方] 名字归一: 「${name}」并入「${归一.合并到}」(依据=${归一.理由}), 不新建卡`);
+        }
+        if (归一.疑似重复) {
+            // 只报告不合并: 照常建卡, 但让人看见。**绝对不许静默合并**, 也不许静默放过。
+            console.warn(`[彼方] ${疑似重复提示(name, 归一.疑似重复)}`);
+            疑似重复.push({ 新名: name, 疑似: 归一.疑似重复 });
         }
         const 采用名 = 归一.名;
         // 自动建档关闭: 新角色(未在名单且无卡)不建档不追踪, 记录后跳过
@@ -208,6 +222,7 @@ function applyUpdate(data: 彼方数据, parsed: Record<string, any> | null, pla
     摘要.移除 = removedNpcs;
     摘要.跳过 = skippedNewNpcs;
     摘要.未回票 = 未回票记录;
+    摘要.疑似重复 = 疑似重复;
     return { 数据: newData, 摘要 };
 }
 
