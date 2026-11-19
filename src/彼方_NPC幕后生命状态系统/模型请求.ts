@@ -400,8 +400,8 @@ function validateParsedFormat(parsed: unknown, existingCards: Record<string, any
 type 请求参数 = {
     /** 基础消息(重试时原样重发这一份) */
     messages: any[];
-    /** 设置里的"预填充": 末位补一条 assistant '{' 引导模型直接从 JSON 开始 */
-    预填充: boolean;
+    // 「预填充」已从彼方删除（2026-11-19 用户裁定）—— 用户改用段列表自己加 assistant 段。
+    // 共用层的参数现在是可选的，彼方不传。
     /** 校验用: 已有的 NPC 卡(用来判断哪些名字算新角色) */
     现有卡: Record<string, any>;
     /** 校验用: 当前追踪的名单 */
@@ -421,12 +421,14 @@ type 请求参数 = {
     记录请求统计?: (统计: { 请求耗时: number; 请求次数: number }) => void;
 };
 /** 彼方这一侧要告诉共用模块的只有"怎么解析、怎么校验、文案叫什么";
- *  重试节奏、预填充拼回这些三边一样的部分都在 共用/模型往返.ts 里。 */
+ *  重试节奏这些三边一样的部分都在 共用/模型往返.ts 里。
+ *
+ *  ⚠ **彼方不传 `预填充`**（2026-11-19 用户裁定）：那个开关已从彼方删除。
+ *    共用层的参数是可选，不传 = 不启用 —— 所以这里连字段都不用出现。 */
 async function 请求并校验(params: 请求参数): Promise<{ parsed: any; 请求耗时: number; 请求次数: number }> {
     const { 现有卡, 名单, 玩家名, 自动建档 } = params;
     return await 共用请求并校验({
         messages: params.messages,
-        预填充: params.预填充,
         signal: params.signal,
         发请求: params.发请求,
         记日志: params.记日志,
