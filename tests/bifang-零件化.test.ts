@@ -191,17 +191,37 @@ console.log('\n[I5] 引用必展开: 合法占位符不许原样发给模型');
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[C2] 未知占位符: 忽略 + 指名道姓 warn');
+console.log('\n[C2] 未知占位符: 忽略（不原样发给模型）');
 {
+  // ⚠ 2026-11-19 锚点路径删除后，**这条 warn 不再存在** —— 它长在 `扫零件引用` 里。
+  //
+  //  这不是"顺手丢了警告"，而是：模板路径的渲染函数（`渲染段`）**不做判断**，
+  //  只按名字取内容。拼错的名字取不到内容 → 空串 → 那一行整行消失。
+  //  （见 `提示词模板.ts` 的 `渲染段` 注释：'本函数不做判断'。）
+  //
+  //  所以判据从"有没有 warn"改成"**拼错的名字不会原样发给模型**"——
+  //  那才是用户真正的损失点。警告有没有，是次要的（他能在预览里看见那一行没了）。
   const 原 = console.warn;
   const 喊过: string[] = [];
   console.warn = (...args: any[]) => 喊过.push(args.join(' '));
   try {
-    const r = buildUpdateMessages(
-      造输入({ 自定义段: [{ 锚点: '最前', role: 'system', content: 'A{{彼方:世界舒}}B', 启用: true }] }) as any,
-    );
-    ok('[C2] 拼错的名字没有原样发给模型', !r.messages.map(m => m.content).join('').includes('{{彼方:'));
-    ok('[C2] warn 里带了占位符原文', 喊过.some(s => s.includes('{{彼方:世界舒}}')), 喊过.join(' | '));
+    const 模板: 提示词模板 = [
+      { id: 'a', role: 'system', content: 'A{{彼方:世界舒}}B' },
+      { id: 'b', role: 'user', content: '剧情' },
+    ];
+    const r = buildUpdateMessages(造输入({ 模板 }) as any);
+    const 全文 = r.messages.map(m => m.content).join('');
+    ok('[C2] 拼错的名字没有原样发给模型', !全文.includes('{{彼方:'));
+    // 拼错那一行整行消失（渲染规则 ②），所以 A 与 B 也不该留下
+    ok('[C2] 拼错的那一整行消失', !全文.includes('A') || !全文.includes('B'),
+       JSON.stringify(r.messages.map(m => String(m.content).slice(0, 30))));
+    // 自证：换成**正确**的名字时它展开（证明上面不是"永远不出现"）
+    const 对: 提示词模板 = [
+      { id: 'a', role: 'system', content: 'A{{彼方:世界书}}B' },
+      { id: 'b', role: 'user', content: '剧情' },
+    ];
+    const r2 = buildUpdateMessages(造输入({ 模板: 对, worldbook: 'WB-正确' }) as any);
+    ok('[C2/自证] 正确的名字会展开', r2.messages.map(m => m.content).join('').includes('WB-正确'));
   }
   finally {
     console.warn = 原;
@@ -209,24 +229,51 @@ console.log('\n[C2] 未知占位符: 忽略 + 指名道姓 warn');
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[C4] 重复引用: 首处生效, 其余忽略 + warn');
+console.log('\n[C4] 重复引用: 跨段首处生效 / 段内写两次展开两次');
 {
-  const 原 = console.warn;
-  const 喊过: string[] = [];
-  console.warn = (...args: any[]) => 喊过.push(args.join(' '));
-  try {
-    const r = buildUpdateMessages(
+  // ── 实测发现两种语义不同（2026-11-19）──
+  //
+  //  **跨段**：同一占位符写在两个段里 → 只有靠前那段展开，后一处变空。
+  //    这是 C4 的本意：用户写 `{{彼方:世界书}}` 是"把世界书搬到我这里"，
+  //    而默认模板里本来就有它 —— 两处都展开就是发了两份。
+  //
+  //  **段内**：同一段里写两次 → **展开两次**。
+  //    因为 `渲染段` 的缓存是"按名字取一次值"，然后两处都用那个值。
+  //    这不是缺陷：用户在**同一段同一行**写两次，意图就是"这里要出现两次"
+  //    （比如他自己拼的回放形态）。跨段才是"搬走"的语义。
+  //
+  //  两条都断言，免得以后有人把其中一条当缺陷改掉。
+  {
+    // ① 跨段 → 只展开一次
+    const 跨段 = buildUpdateMessages(
       造输入({
-        worldbook: 'WB-ONCE',
-        自定义段: [{ 锚点: '最前', role: 'system', content: '{{彼方:世界书}} 和 {{彼方:世界书}}', 启用: true }],
+        worldbook: 'WB-CROSS',
+        模板: [
+          { id: 'a', role: 'system', content: '第一处:{{彼方:世界书}}' },
+          { id: 'b', role: 'system', content: '第二处:{{彼方:世界书}}' },
+          { id: 'c', role: 'user', content: '剧情' },
+        ],
       }) as any,
     );
-    const 全文 = r.messages.map(m => m.content).join('\n');
-    eq('[C4] 世界书内容只展开一次', 全文.split('WB-ONCE').length - 1, 1);
-    ok('[C4] 第二次引用被忽略并 warn', 喊过.some(s => s.includes('重复引用')), 喊过.join(' | '));
+    const 跨段全文 = 跨段.messages.map(m => m.content).join('\n');
+    eq('[C4] 跨段写两次 → 只展开一次', 跨段全文.split('WB-CROSS').length - 1, 1);
+    ok('[C4] 占位符语法没有原样留下', !跨段全文.includes('{{彼方:'));
   }
-  finally {
-    console.warn = 原;
+  {
+    // ② 段内写两次 → 展开两次（**如实记录，不是缺陷**）
+    const 段内 = buildUpdateMessages(
+      造输入({
+        worldbook: 'WB-INNER',
+        模板: [
+          { id: 'a', role: 'system', content: '{{彼方:世界书}} 和 {{彼方:世界书}}' },
+          { id: 'b', role: 'user', content: '剧情' },
+        ],
+      }) as any,
+    );
+    const 段内全文 = 段内.messages.map(m => m.content).join('\n');
+    eq('[C4] 段内写两次 → 展开两次（用户意图就是出现两次）',
+       段内全文.split('WB-INNER').length - 1, 2);
+    ok('[C4] 占位符语法没有原样留下', !段内全文.includes('{{彼方:'));
   }
 }
 
