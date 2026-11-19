@@ -377,14 +377,18 @@ const 清单未出现 = computed(() =>
       </div>
     </header>
 
-    <!-- 工具条：导入 / 导出 / 载入默认 / 在最上方插入 -->
+    <!-- 工具条：导入 / 导出 / 载入默认 / 在最上方插入
+         ⚠ **这里不用箭头符号**（2026-11-19 需求方 #241）：段上的 `↑`/`↓` 是"移动顺序"，
+         而 `↓ 导入` / `↑ 导出` 是"数据进出" —— 同一个符号两种动作，人也会误读。
+         （我自己那个探针就被骗过：`↑|↓` 正则匹配到了「↑ 导出 JSON」。）
+         移动是高频操作，箭头够用；导入导出是低频，纯文字更清楚。 -->
     <div class="bf-tpl-toolbar">
       <label class="bf-btn bf-btn-sm">
-        ↓ 导入 JSON
+        导入 JSON
         <input type="file" accept="application/json,.json" class="bf-tpl-file" @change="导入JSON" />
       </label>
       <button class="bf-btn bf-btn-sm" type="button" @click="导出JSON">
-        ↑ 导出 JSON
+        导出 JSON
       </button>
       <button class="bf-btn bf-btn-sm" type="button" @click="载入默认">
         载入默认提示词
