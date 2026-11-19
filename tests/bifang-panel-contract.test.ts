@@ -118,7 +118,19 @@ function 无法解析的名字(text: string): string[] {
     const clean = expr
       .replace(/'(?:[^'\\]|\\.)*'/g, "''")
       .replace(/"(?:[^"\\]|\\.)*"/g, '""')
-      .replace(/`(?:[^`\\]|\\.)*`/g, '``');
+      .replace(/`(?:[^`\\]|\\.)*`/g, '``')
+      // ── 剥掉 TS 类型断言 `as XXX`（2026-11-20，需求方 #421 ③）──
+      //
+      //  `($event.target as HTMLInputElement).value` 是 **Vue 3 + TS 的合法模板语法**。
+      //  原来这里会把 `as` 和 `HTMLInputElement` 当成"未解析的名字"报出来 ——
+      //  **是判据的错，不是代码的错。**
+      //
+      //  ⚠ **不许改成白名单**（把那三个词列进去就完事）——
+      //    那下次 `as HTMLTextAreaElement` 又会红，再下次 `as HTMLSelectElement` 还是红。
+      //    要剥的是**这个语法形态**，不是某几个词。
+      //
+      //  形态：`as` + 可选的泛型/命名空间 + 类型名（可能带 `[]`、`<...>`、`|` 联合）
+      .replace(/\bas\s+(?:[\w$]+\.)*[\w$]+(?:\s*<[^>]*>)?(?:\s*\[\s*\])?(?:\s*\|\s*(?:[\w$]+\.)*[\w$]+)*/g, '');
     for (const m of clean.matchAll(/(?<![.\w$\u4e00-\u9fa5])([A-Za-z_$\u4e00-\u9fa5][\w$\u4e00-\u9fa5]*)/g)) {
       const id = m[1];
       if (内置.has(id) || 可用.has(id))
@@ -187,6 +199,24 @@ console.log('\n[1] 模板里用到的每个名字，页面脚本里都拿得到�
   // 判据能失败：把 selectedNpcCard 从解构里抠掉，必须报出来
   const 挖掉 = 原版NPC.replace('selectedNpc, selectedNpcCard,', 'selectedNpc,');
   ok('反面对照：抠掉 selectedNpcCard 后判据会报错', 无法解析的名字(挖掉).includes('selectedNpcCard'));
+
+  // ── 类型断言不许被当成"未解析的名字"（2026-11-20 #421 ③）──
+  //
+  //  `($event.target as HTMLInputElement).value` 是 Vue 3 + TS 的合法模板语法。
+  //  判据原来把 `as` 和 `HTMLInputElement` 都报出来了 —— 是判据的错。
+  //
+  //  自证两头都要有：
+  //    ① 喂类型断言 → **不许报**（否则下次换个类型名又红）
+  //    ② 喂真没解构的变量 → **必须报**（否则等于把判据删了）
+  const 造模板 = (expr: string) => `<template><input @input="${expr}" /></template>\n<script setup lang="ts">\nconst a = 1;\n</script>\n`;
+  check('[自证] 类型断言 as HTMLInputElement 不报错',
+    无法解析的名字(造模板('a = ($event.target as HTMLInputElement).value')), []);
+  check('[自证] 类型断言 as HTMLDivElement 也不报错（换个类型名同样过）',
+    无法解析的名字(造模板('a = ($event.target as HTMLDivElement).id')), []);
+  check('[自证] 类型断言 as HTMLTextAreaElement 同样过',
+    无法解析的名字(造模板('a = ($event.target as HTMLTextAreaElement).value')), []);
+  ok('[自证] 真没解构的变量必须报',
+    无法解析的名字(造模板('a = 某个真没解构的变量')).length > 0);
 }
 
 console.log('\n[2] 五个页面：解构的名字 == 它自己那份面板的类型键');
