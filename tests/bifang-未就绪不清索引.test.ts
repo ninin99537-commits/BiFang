@@ -256,24 +256,64 @@ console.log('\n[自证] 索引为空时，护栏不该干预');
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[结构] 源码里必须有这两条护栏');
+console.log('\n[顺序] loadData 必须先 loadMeta（触发旧结构迁移），再调内核');
 {
+  // ── 这条防一个真实的坑（C1 接入时自查发现的）──
+  //
+  //  `loadMeta` 里带着 `migrateLegacyData`：**v2 及更早的旧结构**（状态本体存在聊天变量里）
+  //  会在那里被迁移成楼层快照。
+  //
+  //  而内核的 `读索引` 只认 `Array.isArray(raw.快照楼层)` —— 旧结构**没有这个数组**，
+  //  所以它会返回 `null`（= 空索引）。
+  //
+  //  如果 `loadData` 先调内核、后调 `loadMeta`，**旧结构用户会看到空状态**（迁移没跑）。
+  //  所以顺序必须是：`loadMeta` 先跑（迁移发生）→ 内核再读（读到迁移后的索引）。
   const { readFileSync } = await import('node:fs');
   const path = await import('node:path');
   const 源 = readFileSync(path.join(process.cwd(), 'src/彼方_NPC幕后生命状态系统/快照.ts'), 'utf8');
-  const 代码行 = 源.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  const 函数体 = 源.slice(源.indexOf('function loadData('), 源.indexOf('/** 把快照载荷翻成彼方数据'));
+  const 代码行 = 函数体.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
 
-  ok('[结构] 有"聊天未就绪"的判断（lastMessageId）', /lastMessageId\(\)/.test(代码行));
-  ok('[结构] 未就绪时直接 return（不清索引）', /!\(最后楼层 >= 0\)[\s\S]{0,400}?return \{ \.\.\.emptyData\(\)/.test(代码行));
-  ok('[结构] 有"可判为已删"的判据（楼层号 > 末层）', /可判为已删\s*=/.test(代码行));
-  ok('[结构] missingFloors.push 被"可判为已删"保护', /if \(可判为已删\(floorId\)\)[\s\S]{0,120}?missingFloors\.push/.test(代码行));
+  const 位置_loadMeta = 代码行.indexOf('loadMeta(host)');
+  const 位置_内核 = 代码行.indexOf('取最新有效(');
+
+  ok('[顺序] loadMeta 在 取最新有效 之前',
+     位置_loadMeta >= 0 && 位置_内核 >= 0 && 位置_loadMeta < 位置_内核,
+     `loadMeta@${位置_loadMeta} / 内核@${位置_内核}`);
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[结构] 护栏现在在共用内核里（2026-11-20 C1 搬家后）');
+{
+  // ── 这条判据的**行为部分**（上面那些）没变，但**结构部分**要跟着搬 ──
+  //  护栏从 `彼方/快照.ts` 搬到了 `共用/楼层快照.ts`（三家共用一份）。
+  //  如果还断言"彼方源码里有 lastMessageId()"，搬家后就会假红 ——
+  //  而它红的原因不是 bug，是**代码搬了家**。
+  //
+  //  所以这里改成：断言**内核**有护栏，且**彼方确实调了内核**。
+  const { readFileSync } = await import('node:fs');
+  const path = await import('node:path');
+  const 内核源 = readFileSync(path.join(process.cwd(), 'src/共用/楼层快照.ts'), 'utf8');
+  const 彼方源 = readFileSync(path.join(process.cwd(), 'src/彼方_NPC幕后生命状态系统/快照.ts'), 'utf8');
+  const 内核代码 = 内核源.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  const 彼方代码 = 彼方源.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+
+  ok('[内核] 有"聊天未就绪"的判断（末层）', /末层\(\)/.test(内核代码));
+  ok('[内核] 未就绪时直接 return（不清索引）', /!\(末层 >= 0\)[\s\S]{0,300}?未就绪: true/.test(内核代码));
+  ok('[内核] 有"楼层还在"与"读楼层"两个独立方法', /楼层还在:/.test(内核代码) && /读楼层:/.test(内核代码));
+  ok('[内核] 平台可疑时把 已删楼层 清空', /已删楼层: 平台状态可疑 \? \[\] : 已删楼层/.test(内核代码));
+
+  ok('[彼方] 确实调了内核 取最新有效', /取最新有效\(/.test(彼方代码));
+  ok('[彼方] 未就绪时只按空状态返回（不写盘）', /读结果\.未就绪[\s\S]{0,300}?return \{ \.\.\.emptyData\(\)/.test(彼方代码));
+  ok('[彼方] 平台可疑时也不认领', /读结果\.平台状态可疑[\s\S]{0,300}?return \{ \.\.\.emptyData\(\)/.test(彼方代码));
+  ok('[彼方] 认领仍然在彼方侧（没搬进内核）', /function 认领重排快照/.test(彼方代码) && !/function 认领/.test(内核代码));
 
   // **自证**：这些正则可以抓到"没有护栏"的写法
   const 旧写法 = `
     for (let i = floors.length - 1; i >= 0; i--) {
       if (!message) { missingFloors.push(floorId); continue; }
     }`;
-  ok('[自证] 旧写法没有"可判为已删"保护', !/可判为已删/.test(旧写法));
+  ok('[自证] 旧写法没有"楼层还在"的独立判据', !/楼层还在/.test(旧写法));
 }
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
