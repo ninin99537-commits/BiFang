@@ -5,8 +5,9 @@
          两列看着省地方, 实际是"列高由内容决定"的伪瀑布流: 五组高度差 2~4 倍, 两列各自到底,
          中间留下大片空白(实测空掉约 35% 的栅格面积), 读的时候还得左右横跳。
          行宽由控件自己管: 说明文字 74ch、数字框 200px, 输入框才拉满。
-      ② **六组按"改得勤 → 改得少"排**: 接口 / 幕后更新 / 世界书 / 提示词 / 标签过滤 / 数据备份。
+      ② **五组按"改得勤 → 改得少"排**: 接口 / 幕后更新 / 世界书 / 标签过滤 / 数据备份。
          原来「幕后更新」一组 1154px 里塞了更新节奏 + 世界书写入两件事, 现在拆成 02 / 03。
+         ⚠ 2026-11-19: 原来是**六组**, 删掉了第四节（功能已并入「拼装」页）。
       ③ **只有三种行**: 开关行(标题+说明+右侧开关) / 字段行(120px 标签槽+控件+行内动作) /
          分段行(标签+分段控件)。同一页里出现第四种排法就算破规矩。
       ④ **说明文字一行封顶**(.bf-page-settings .bf-hint 限 74ch, 12px): 原理与长表格塞进
@@ -35,7 +36,7 @@
       <header class="bf-page-head">
         <div>
           <h2 class="bf-page-title">设置</h2>
-          <p class="bf-page-sub">接口、更新、世界书、提示词、标签与备份。改动后自动保存（停止输入约 0.3 秒落盘；「写入世界书」立即生效）。</p>
+          <p class="bf-page-sub">接口、更新、世界书、标签与备份。改动后自动保存（停止输入约 0.3 秒落盘；「写入世界书」立即生效）。</p>
         </div>
       </header>
       <!-- 01 接口 -->
@@ -369,33 +370,10 @@
         </div>
       </section>
 
-      <!-- 04 提示词: 已并入「拼装」页（2026-11-19）。
-           **不许静默消失** —— 用户进来找不到这一节，会以为功能被删了。
-           所以原位置留一句引导 + 一个直接跳过去的按钮。 -->
-      <details class="bf-setting-group bf-set-group">
-        <summary class="bf-set-head">
-          <span class="bf-set-index" aria-hidden="true">04</span>
-          <h3 id="bf-set-prompt">提示词</h3>
-          <span class="bf-set-aside">已并入「拼装」</span>
-        </summary>
-        <p class="bf-hint">
-          自定义提示词段已并入<strong>「拼装」页</strong> —— 那里能看到的更多，也能拖顺序。
-        </p>
-        <p class="bf-hint">
-          你在旧版写的段会自动迁过去，内容一字不改；迁完之后这一节不再单独管理它们。
-        </p>
-        <div class="bf-set-row">
-          <span class="bf-form-label">去拼装页</span>
-          <button class="bf-btn bf-btn-sm" type="button" @click="emit('去拼装页')">
-            打开「拼装」
-          </button>
-        </div>
-      </details>
-
       <!-- 05 标签过滤: 默认收起 -->
       <details class="bf-setting-group bf-set-group">
         <summary class="bf-set-head">
-          <span class="bf-set-index" aria-hidden="true">05</span>
+          <span class="bf-set-index" aria-hidden="true">04</span>
           <h3 id="bf-set-tags">标签过滤</h3>
           <span class="bf-set-aside">{{ settings.标签.模式 }}</span>
         </summary>
@@ -440,10 +418,10 @@
         </p>
       </details>
 
-      <!-- 06 数据备份: 默认收起(救急时才用) -->
+      <!-- 05 数据备份: 默认收起(救急时才用) -->
       <details class="bf-setting-group bf-set-group">
         <summary class="bf-set-head">
-          <span class="bf-set-index" aria-hidden="true">06</span>
+          <span class="bf-set-index" aria-hidden="true">05</span>
           <h3 id="bf-set-backup">数据备份</h3>
           <span class="bf-set-aside">状态只存楼层里，删楼就没</span>
         </summary>
@@ -475,10 +453,6 @@
 <script setup lang="ts">
 import { use设置面板 } from './设置面板';
 
-/** 04「提示词」已并入「拼装」页（2026-11-19）。
- *  这里 emit 一个事件让壳切页签 —— 设置页自己不碰路由/页签状态。 */
-const emit = defineEmits<{ 去拼装页: [] }>();
-
 const {
   settings, showKey, modelList, 模型候选开, 选模型, fetchingModels, testing, loadModels, testConnection,
   presetName, presetNames, selectedPreset, saveApiPreset, loadApiPreset, deleteApiPreset,
@@ -486,10 +460,10 @@ const {
   导出数据, 导入数据, 导入文本, 清空生理数据,
 } = use设置面板();
 
-// ---- 左侧章节目录(§4.5): 6 节 + 实时摘要; 点击平滑滚动, 滚动时反查高亮 ----
-// 分节按 **设计稿 HTML 的 6 节**(接口/幕后更新/世界书/提示词/标签过滤/数据备份),
-// 不是 MD §4.5 表格里那版(恋爱追踪/生理状态)—— R1–R15 总原则: 冲突以 HTML + 源码为准,
-// 而 settings.ts 里根本没有「启用恋爱追踪」这个字段(恋爱是按人物标记的, 不是全局开关)。
+// ---- 左侧章节目录(§4.5): 5 节 + 实时摘要; 点击平滑滚动, 滚动时反查高亮 ----
+// **2026-11-19：从 6 节变 5 节** —— 第四节删了（功能已并入「拼装」页，
+//  而用户在导航里能直接看到它，不需要设置里再放一个指路牌）。
+//  留一个指向别处的空壳，那个壳本身就是障碍。
 const 章节表 = computed(() => [
   { key: 'bf-set-api', 编号: '01', 标题: '接口与模型', 摘要: () => settings.value.接口?.模型 || '未填模型' },
   {
@@ -500,9 +474,8 @@ const 章节表 = computed(() => [
       `${settings.value.更新?.自动更新 ? '自动' : '手动'} · 每 ${settings.value.更新?.更新频率 ?? 1} 层 · 读 ${settings.value.更新?.读取最近回复数 ?? 3} 条`,
   },
   { key: 'bf-set-worldbook', 编号: '03', 标题: '世界书', 摘要: () => settings.value.更新?.世界书写入 || '关闭' },
-  { key: 'bf-set-prompt', 编号: '04', 标题: '提示词', 摘要: () => `${settings.value.提示词?.自定义段?.length ?? 0} 段自定义` },
-  { key: 'bf-set-tags', 编号: '05', 标题: '标签过滤', 摘要: () => settings.value.标签?.模式 || '排除' },
-  { key: 'bf-set-backup', 编号: '06', 标题: '数据备份', 摘要: () => 'JSON' },
+  { key: 'bf-set-tags', 编号: '04', 标题: '标签过滤', 摘要: () => settings.value.标签?.模式 || '排除' },
+  { key: 'bf-set-backup', 编号: '05', 标题: '数据备份', 摘要: () => 'JSON' },
 ]);
 
 const 根节点 = ref<HTMLElement | null>(null);

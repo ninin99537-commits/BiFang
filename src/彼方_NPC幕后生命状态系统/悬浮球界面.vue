@@ -82,7 +82,7 @@
              判据在 tests/bifang-拼装页.test.ts 的 `[prop]` 段（扫全部页面组件的 defineProps）。 -->
         <PartsPage v-else-if="tab === 'parts'" key="parts" :host="host" />
         <LogsPage v-else-if="tab === 'logs'" key="logs" />
-        <SettingsPage v-else key="settings" @去拼装页="tab = 'parts'" />
+        <SettingsPage v-else key="settings" />
       </main>
 
       <footer class="bf-rail-foot">
