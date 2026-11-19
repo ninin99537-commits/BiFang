@@ -32,13 +32,6 @@ const ApiConfigSchema = z
     流式: z.boolean().default(false),
     温度: z.coerce.number().default(0.7).transform(value => _.clamp(value, 0, 2)),
     最大token: z.coerce.number().default(60000).transform(value => Math.max(1, Math.min(131072, Math.round(value)))),
-    /** 请求打散(K1): 开=每次请求在 system 末尾插一段随机标记, 让同一份提示词不再字节相同。
-     *  动机: 用户观察到"官方 key 请求某些模型时输出异常快而质量差", 怀疑服务端按提示词字节
-     *  判定是否降级到更低档的模型 —— 逐字节相同的提示词是这类判定最好的素材。
-     *  标记放 system **末尾**而不是开头: 放开头会让整个 system 段每轮都变,
-     *  打掉"system 稳定、至少那一段能命中前缀缓存"的收益。
-     *  默认关: 老用户不该被动受影响, 而"有没有用"只能用户自己开一天关一天比。 */
-    请求打散: z.boolean().default(false),
 })
     .prefault({});
 const Settings = z

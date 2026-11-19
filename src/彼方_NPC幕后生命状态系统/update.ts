@@ -8,7 +8,6 @@ import { useDebugStore } from './日志仓';
 import { useUpdatingStore } from './任务中断';
 import { toastError, toastInfo, toastSuccess, toastWarning } from './toast';
 import { 请求并校验 } from './模型请求';
-import { 新建请求态 } from './请求归属';
 import { applyUpdate, maskBaseUrl } from './应用更新';
 import { 收集本轮输入 } from './更新输入';
 import { 写入日志 } from './日志落盘';
@@ -41,8 +40,6 @@ async function updateNpcStates(host: Host, force = false) {
         const 输入 = await 收集本轮输入({ host, settings, force, timing, debugStore });
         if (!输入) return; // 前置条件不满足(如没有可用的 AI 回复): 上面已经提示过用户
         const { data, messages, playerName, recent } = 输入;
-        // 一轮更新一个请求态: 多次重试共用(请求序号连续), 但不跨轮、不进 pinia、不落盘。
-        const 请求态 = 新建请求态();
         let 请求结果;
         try {
             // 取模型输出这一段已独立成模块(模型请求.ts): 发请求 → 解析 → 校验, 不合格就原样重试
@@ -54,7 +51,7 @@ async function updateNpcStates(host: Host, force = false) {
                 玩家名: playerName,
                 自动建档: settings.更新.自动建档 !== false,
                 signal: abortSignal,
-                发请求: (messages, options) => chatCompletion(host, messages, { ...options, 请求态 }),
+                发请求: (messages, options) => chatCompletion(host, messages, options),
                 记日志: (partial) => debugStore.record(partial),
                 报进度: (文字) => { updatingStore.message = 文字; },
                 // 共用请求层在每个出口(成功/失败/中断)都会通知, 失败日志因此不会写成 0 次 0 秒

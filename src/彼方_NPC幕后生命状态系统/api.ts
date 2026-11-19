@@ -8,9 +8,6 @@
 // 宿主由调用方传进来(约定见 host.ts 顶部), 本文件不再自己取。
 // 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
 import { getSettings } from './settings';
-import { 加打散标记, 生成打散标记 } from './请求打散';
-import { 新建请求态, 归属标记, 请求日志 } from './请求归属';
-import type { 功能状态, 请求态 } from './请求归属';
 import type { Host } from './host';
 
 /** 本层需要的平台能力: 模型调用 + 变量表(读设置)。直连时只用得到 vars */
@@ -142,7 +139,6 @@ async function chatCompletionInner(host: 接口宿主, messages: any[], options?
     const 温度 = options?.接口?.温度 ?? baseCfg.温度;
     const 最大token = options?.接口?.最大token ?? baseCfg.最大token;
     const 直连 = options?.接口?.直连 ?? baseCfg.直连;
-    const 请求打散 = options?.接口?.请求打散 ?? baseCfg.请求打散 ?? false;
     const 流式 = options?.接口?.流式 ?? baseCfg.流式 ?? false;
     // 展开酒馆骰子宏 {{roll 1d100}} → 真实随机数:
     // 直连 / generateRaw 都不经过酒馆的 substituteParams, 宏不会自动展开,
@@ -158,22 +154,6 @@ async function chatCompletionInner(host: 接口宿主, messages: any[], options?
             return String(total);
         }),
     }));
-    // 请求打散(K1): 每次请求换一个随机标记, 让同一份提示词不再字节相同。
-    // 放在宏展开**之后**: 标记本身不该被宏替换, 也不该让骰子结果每次重掷。
-    if (请求打散)
-        messages = 加打散标记(messages, 生成打散标记());
-    // 一次更新的多次重试共用一个请求态(由调用方创建并传下来): 请求序号要连续,
-    // 否则"第几次请求"这条归属信息在重试时全是 1。
-    const 请求态: 请求态 = options?.请求态 ?? 新建请求态();
-    请求态.请求序号 += 1;
-    const 功能: 功能状态 = { 工具通道: false, 请求打散 };
-    const 路径 = 直连 ? '直连' : '转发';
-    // 每次**实际请求**一条日志(不是每次更新一条): 重试时才定位得到是哪一发出了问题。
-    const 日志 = 请求日志(功能, 路径, 请求态, 0);
-    if (日志)
-        console.info(日志);
-    // 归属标记: 两个开关全关时是空串 —— 老报错逐字节不变(验收 G2)。
-    const 归属 = 归属标记(功能, 路径, 请求态);
     const base = normalizeBaseUrl(地址);
     if (!base)
         throw Error('请先填写接口地址');
@@ -181,7 +161,7 @@ async function chatCompletionInner(host: 接口宿主, messages: any[], options?
         throw Error('请先选择模型');
     // 直连: 浏览器直接 POST /chat/completions, 不经过酒馆的生成管线
     if (直连)
-        return await 直连请求(host, { base, 密钥, 模型, 温度, 最大token, 流式, messages, options, 归属 });
+        return await 直连请求(host, { base, 密钥, 模型, 温度, 最大token, 流式, messages, options });
     // 最后一条 user 消息作为 user_input 传入, 避免 generateRaw 追加空消息
     let userInput = '';
     const orderedPrompts = messages.map((message: any) => ({
@@ -237,7 +217,7 @@ async function chatCompletionInner(host: 接口宿主, messages: any[], options?
         ]);
         const content = typeof result === 'string' ? result : (result as any)?.content ?? '';
         if (!content) {
-            throw Error(`响应中没有找到有效的正文内容(${requestContext(host)})。可能是推理模型把最大输出Token用尽(无正文), 或模型不支持当前参数。请调大「最大输出Token」或更换模型后重试。${归属}`);
+            throw Error(`响应中没有找到有效的正文内容(${requestContext(host)})。可能是推理模型把最大输出Token用尽(无正文), 或模型不支持当前参数。请调大「最大输出Token」或更换模型后重试。`);
         }
         return content;
     }
@@ -248,10 +228,10 @@ async function chatCompletionInner(host: 接口宿主, messages: any[], options?
             throw error;
         // 超时通常是推理模型把时间花在思考上, 或接口负载高: 提示调小最大输出Token或换模型
         if (error instanceof Error && /Gateway|timeout|time-out|超时/i.test(error.message)) {
-            throw Error(`生成超时(可能是推理模型的思考时间过长, 或接口负载高)。可调小「最大输出Token」或换更快的模型后重试。原始错误: ${error.message}${归属}`, { cause: error });
+            throw Error(`生成超时(可能是推理模型的思考时间过长, 或接口负载高)。可调小「最大输出Token」或换更快的模型后重试。原始错误: ${error.message}`, { cause: error });
         }
         const errText = error instanceof Error ? error.message : String(error);
-        throw Error(`通过酒馆服务器请求失败(${requestContext(host)}): ${errText}${policyBlockHint(errText)}${归属}`, { cause: error });
+        throw Error(`通过酒馆服务器请求失败(${requestContext(host)}): ${errText}${policyBlockHint(errText)}`, { cause: error });
     }
     finally {
         if (abortSignal)
@@ -273,7 +253,6 @@ async function 直连请求(host: 接口宿主, p: {
     流式: boolean;
     messages: any[];
     options: any;
-    归属: string;
 }) {
     const body: Record<string, any> = {
         model: p.模型,
@@ -315,7 +294,7 @@ async function 直连请求(host: 接口宿主, p: {
         if (!response.ok) {
             const bodyText = await response.text();
             const errText = readableError(response.status, bodyText);
-            throw Error(`请求失败 (${errText})${policyBlockHint(errText)}${p.归属}`);
+            throw Error(`请求失败 (${errText})${policyBlockHint(errText)}`);
         }
         // 流式: 逐 token 读 SSE 并拼接 content(边生成边返回)
         if (p.流式) {
@@ -371,19 +350,19 @@ async function 直连请求(host: 接口宿主, p: {
             }
             if (!content) {
                 throw Error(reasoning.length > 0
-                    ? `响应中没有找到有效的正文内容。模型只返回了推理内容(${reasoning.length}字)而没有正文, 通常是「最大输出Token」被推理占满, 请调大最大输出Token。${p.归属}`
-                    : `响应中没有找到有效的正文内容(${requestContext(host)})。请检查模型名是否正确、是否支持当前参数。${p.归属}`);
+                    ? `响应中没有找到有效的正文内容。模型只返回了推理内容(${reasoning.length}字)而没有正文, 通常是「最大输出Token」被推理占满, 请调大最大输出Token。`
+                    : `响应中没有找到有效的正文内容(${requestContext(host)})。请检查模型名是否正确、是否支持当前参数。`);
             }
             return content;
         }
         const data = await response.json();
         if (data?.error) {
             const message = typeof data.error === 'string' ? data.error : (data.error?.message ?? JSON.stringify(data.error));
-            throw Error(`接口返回错误: ${String(message).slice(0, 300)}${policyBlockHint(String(message))}${p.归属}`);
+            throw Error(`接口返回错误: ${String(message).slice(0, 300)}${policyBlockHint(String(message))}`);
         }
         const content = extractTextContent(data?.choices?.[0]);
         if (!content) {
-            throw Error(`响应中没有找到有效的正文内容。${describeEmptyContent(data?.choices?.[0], data)}${p.归属}`);
+            throw Error(`响应中没有找到有效的正文内容。${describeEmptyContent(data?.choices?.[0], data)}`);
         }
         return content;
     }
