@@ -327,10 +327,22 @@ async function 生成预览() {
     预览文本.value = '';
     return;
   }
+  // ── 前置检查：宿主有没有传进来（2026-11-19 P0）─────────────────────
+  //  真发生过：壳里 `<PartsPage>` 漏了 `:host="host"`，于是 props.host 是 undefined，
+  //  崩在几十层调用之后，用户只看到 `Cannot read properties of undefined (reading 'persona')`。
+  //  **在入口拦一句**，用户就知道"不是模板的问题，是这个页面没拿到数据"。
+  if (!props.host) {
+    预览错误.value = '预览拿不到宿主（面板数据未注入）—— 这是页面挂载的问题，不是模板的问题。请刷新页面；若仍失败请反馈。';
+    toastWarning('预览失败: 面板未拿到宿主');
+    return;
+  }
   预览中.value = true;
   预览错误.value = '';
+  // 分阶段记录，出错时能说清"死在哪一步"
+  let 当前阶段 = '准备';
   try {
     // **把当前段列表传给取料入口** —— 预览与实发用同一份模板，这才叫同源。
+    当前阶段 = '取料（读聊天记录 / 世界书 / 人设）';
     const 结果 = await 收集本轮输入({
       host: props.host,
       settings: { ...settings.value, 提示词: { ...settings.value.提示词, 模板: 段们.value } },
@@ -344,6 +356,7 @@ async function 生成预览() {
       预览文本.value = '';
       return;
     }
+    当前阶段 = '拼装模板';
     const 段结果 = (结果.messages ?? []).map((段: any, i: number) =>
       `── 第 ${i + 1} 条 · ${段.role} ──\n${段.content}`);
     if (结果.工具说明)
@@ -353,7 +366,9 @@ async function 生成预览() {
     清单.value = (结果 as any).拼装清单 ?? [];
   }
   catch (error: any) {
-    预览错误.value = `预览失败: ${error?.message ?? String(error)}`;
+    // 说清"哪一步" —— 裸 `error.message` 会甩出 `Cannot read properties of undefined`，
+    // 用户既不知道是我们代码的问题，也不知道该改什么。
+    预览错误.value = `预览失败（在「${当前阶段}」这一步）：${error?.message ?? String(error)}`;
     toastWarning('预览失败, 详见本页提示');
   }
   finally {

@@ -248,6 +248,152 @@ console.log('\n[U3a] 结果锁: 预览与实发走同一个取料入口、同一
 }
 
 // ─────────────────────────────────────────────────────────────
+console.log('\n[无人设] 没选人设的聊天不该崩：主角信息降级为空 + 留痕（2026-11-19 P1）');
+{
+  // ── 这条守什么 ──
+  //  `user_avatar = null` 的聊天里，`getPersona('current')` 内部会读 `undefined.persona`。
+  //  宿主边界（`host.ts`）已有 try/catch，但这里**再验一次端到端**：
+  //  真没选人设的用户，取料不该整份失败 —— 主角信息是**可选输入**。
+  //
+  //  ⚠ 这条与 [prop] 那条是**两件事**（需求方 #258 明确要求分开验）：
+  //     [prop] 是"页面没传 host"（我们的 bug）；
+  //     这条是"宿主给了 host 但人设读不到"（用户的真实边界）。
+  const { 收集本轮输入 } = await import('../src/彼方_NPC幕后生命状态系统/更新输入');
+  const { 彼方假宿主 } = await import('./helpers/彼方假宿主');
+  const { getSettings, invalidateReadCache } = await import('../src/彼方_NPC幕后生命状态系统/settings');
+
+  const 跑 = async (改宿主: (h: any) => void) => {
+    const { host } = 彼方假宿主({ 模型回复: [] });
+    改宿主(host);
+    // ⚠ 用**真实完整设置**（`getSettings`），不要手写残缺对象 ——
+    //    手写会漏 `接口.工具通道` 之类的字段，于是崩在别处，测的就不是人设这条了。
+    invalidateReadCache();
+    const settings = getSettings(host);
+    const 原W = console.warn;
+    const 警: string[] = [];
+    console.warn = (...a: any[]) => 警.push(a.join(' '));
+    try {
+      const r = await 收集本轮输入({
+        host,
+        settings,
+        force: true, timing: {}, debugStore: null, 只读: true,
+      } as any);
+      return { r, 警, 抛了: null as any };
+    }
+    catch (error: any) {
+      return { r: null, 警, 抛了: error };
+    }
+    finally {
+      console.warn = 原W;
+    }
+  };
+
+  // ① 人设方法返回 null/空 —— 最常见的"没选人设"
+  {
+    const { r, 抛了, 警 } = await 跑((h) => {
+      h.persona.name = () => null;
+      h.persona.description = () => '';
+      h.persona.lorebook = () => null;
+    });
+    ok('[无人设] 返回空时不抛错', !抛了, 抛了?.message);
+    ok('[无人设] 仍然拼出了结果', !!r);
+    if (r) {
+      const 全文 = (r.messages ?? []).map((m: any) => String(m.content)).join('\n');
+      // 主角信息为空 → 那个占位符展开为空 → 整行消失（渲染规则 ②）
+      ok('[无人设] 产物里没有主角信息（那一段缺席）',
+         !/流浪的旅行者/.test(全文), 全文.slice(0, 100));
+      ok('[无人设] 但仍然有 messages', (r.messages ?? []).length > 0);
+    }
+  }
+
+  // ② 人设方法**内部抛错** —— 真正会发生的那种（`getPersona` 读 undefined）
+  {
+    const { r, 抛了, 警 } = await 跑((h) => {
+      const 抛 = () => { throw new TypeError("Cannot read properties of undefined (reading 'persona')"); };
+      h.persona.name = 抛;
+      h.persona.description = 抛;
+      h.persona.lorebook = 抛;
+    });
+    ok('[无人设] 人设方法内部抛错时，取料不抛', !抛了, 抛了?.message);
+    ok('[无人设] 仍然拼出了结果（降级成功）', !!r);
+    // **留痕**：不许静默降级
+    ok('[无人设] 有 warn 说明为什么空', 警.some(s => /人设|主角/.test(s)), 警.join(' | '));
+    // 自证：这两条判据能区分"降级"和"崩" —— 若没包 try/catch，上面的 `抛了` 会有值
+    ok('[无人设/自证] 判据能区分崩与不崩', typeof (抛了 as any) === 'object');
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[prop] 页面组件声明了 props，壳里就必须真的传（2026-11-19 P0）');
+{
+  // ── 这条判据从哪来 ──
+  //  用户点「预览」报 `Cannot read properties of undefined (reading 'persona')`。
+  //  真因不是"没选人设"，而是：
+  //
+  //      <PartsPage v-else-if="tab === 'parts'" key="parts" />     ← 漏了 :host="host"
+  //
+  //  而 `页面-拼装.vue` 声明了 `defineProps<{ host: Host }>()`。
+  //  **编译期完全看不出来**：Vue 不会因为少传一个 prop 报错，它只是 `undefined`，
+  //  然后崩在几十层调用之后（`host.persona.name()`）。
+  //
+  //  ── 判据 ──
+  //  扫所有页面组件（`.vue`）里的 `defineProps<{...}>`，取出它声明的 prop 名；
+  //  再看壳（`悬浮球界面.vue`）里那个组件的标签上，是否绑定了同名的 `:prop`。
+  //
+  //  ⚠ 这是**结构判据**，不是"记住要传 host"。加一个新页面时它会自动覆盖。
+  const 壳 = 去注释(readFileSync(path.join(彼方目录, '悬浮球界面.vue'), 'utf8'));
+
+  /** 组件文件名 → 它在壳里的模板标签名（`页面-拼装.vue` → `PartsPage`） */
+  //  ⚠ 文件名里有中文，`[\w-]` 匹配不到（`\w` 是 ASCII —— 与 `[词边界]` 段同一个坑）。
+  //    这里刚踩过一次：写成 `[\w-]` 时组件名表是空的，于是"检查了 0 个"照样绿。
+  //    是 `[prop/自证] 至少检查到 1 个页面组件` 那条把它抓出来的。
+  const 组件名表: Record<string, string> = {};
+  for (const m of 壳.matchAll(/import\s+(\w+)\s+from\s+'\.\/(页面-[\w\u4e00-\u9fa5-]+\.vue)'/g))
+    组件名表[m[2]] = m[1];
+
+  const 页面文件们 = readdirSync(彼方目录).filter(f => f.startsWith('页面-') && f.endsWith('.vue'));
+  const 漏传: string[] = [];
+  let 检查过 = 0;
+  for (const 文件 of 页面文件们) {
+    const 源 = 去注释(readFileSync(path.join(彼方目录, 文件), 'utf8'));
+    const 声明 = 源.match(/defineProps<\{([^}]*)\}>/);
+    if (!声明)
+      continue;
+    // 取出 prop 名（`host: Host;` → `host`；`card?: X` 也认）
+    const props = [...声明[1].matchAll(/(\w+)\s*\??\s*:/g)].map(m => m[1]);
+    if (props.length === 0)
+      continue;
+    const 标签 = 组件名表[文件];
+    if (!标签)
+      continue; // 不是壳里直接挂的页面（如 页面-关系身体.vue 由别的页挂）
+    // 找壳里那个标签的**完整开标签**（可能有换行）
+    const 标签匹配 = 壳.match(new RegExp(`<${标签}\\b[\\s\\S]*?>`, 'm'));
+    if (!标签匹配) {
+      漏传.push(`${文件}: 壳里找不到 <${标签}> 标签`);
+      continue;
+    }
+    const 开标签 = 标签匹配[0];
+    检查过++;
+    for (const p of props) {
+      if (!new RegExp(`:${p}=|v-bind:${p}=|\\b${p}=`).test(开标签))
+        漏传.push(`${文件}: 声明了 ${p}，但 <${标签}> 没传（${开标签.slice(0, 80)}…）`);
+    }
+  }
+  eq('[prop] 所有页面组件声明的 prop 都在壳里传了', 漏传, []);
+  // 自证 ①：这条判据至少真的检查到了东西（否则空转也是绿）
+  ok('[prop/自证] 至少检查到 1 个页面组件', 检查过 >= 1, `检查了 ${检查过} 个`);
+  // 自证 ②：漏传会被抓到 —— 用**曾经的真实错法**喂它
+  const 假壳 = '<PartsPage v-else-if="tab === \'parts\'" key="parts" />';
+  const 假标签 = 假壳.match(/<PartsPage\b[\s\S]*?>/m)![0];
+  ok('[prop/自证] 漏传 host 会被抓到', !/:host=/.test(假标签));
+  // 自证 ③：传了就不该被抓（否则判据会逼人写多余的东西）
+  const 真壳 = '<PartsPage v-else-if="tab === \'parts\'" key="parts" :host="host" />';
+  ok('[prop/自证] 传了 host 就不报', /:host=/.test(真壳));
+  // 自证 ④：**跨行**的标签也要认（模板里常有换行）
+  ok('[prop/自证] 跨行标签也能认', /:host=/.test('<PartsPage\n  key="parts"\n  :host="host"\n/>'));
+}
+
+// ─────────────────────────────────────────────────────────────
 console.log('\n[页签] 拼装页挂在壳里, 且与其余页同级');
 {
   const 壳 = 去注释(readFileSync(path.join(彼方目录, '悬浮球界面.vue'), 'utf8'));

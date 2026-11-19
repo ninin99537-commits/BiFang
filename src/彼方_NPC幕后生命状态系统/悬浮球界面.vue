@@ -77,7 +77,10 @@
         <DashboardPage v-if="tab === 'dashboard'" key="dashboard" />
         <NpcPage v-else-if="tab === 'npc'" key="npc" />
         <ConsistencyPage v-else-if="tab === 'consistency'" key="consistency" />
-        <PartsPage v-else-if="tab === 'parts'" key="parts" />
+        <!-- ⚠ `:host="host"` 不能漏（2026-11-19 P0）：拼装页的预览要真读一次聊天，
+             而它靠 `props.host` 走宿主接缝。漏了就是 `undefined.persona` 崩在预览里。
+             判据在 tests/bifang-拼装页.test.ts 的 `[prop]` 段（扫全部页面组件的 defineProps）。 -->
+        <PartsPage v-else-if="tab === 'parts'" key="parts" :host="host" />
         <LogsPage v-else-if="tab === 'logs'" key="logs" />
         <SettingsPage v-else key="settings" @去拼装页="tab = 'parts'" />
       </main>

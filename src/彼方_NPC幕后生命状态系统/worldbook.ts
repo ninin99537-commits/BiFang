@@ -144,8 +144,15 @@ function 收集世界书来源(host: 世界书宿主): string[] {
         (一本.additional ?? []).forEach(加入);
     }
     加入(host.worldbook.chatName());
-    // persona 绑定的世界书: 主 AI 会加载它(主角设定等常写在这里), 彼方同样需要读取
-    加入(host.persona.lorebook());
+    // persona 绑定的世界书: 主 AI 会加载它(主角设定等常写在这里), 彼方同样需要读取。
+    // ⚠ 2026-11-19 P1：`persona.lorebook()` 在"没选人设"时可能抛错。
+    //    这里是**收集来源**，不是必须项 —— 读不到就少一本，不该让整轮世界书读取失败。
+    try {
+        加入(host.persona.lorebook());
+    }
+    catch (error) {
+        console.warn('[彼方] 读不到 persona 绑定的世界书(可能没选人设), 本轮跳过:', error);
+    }
     return names;
 }
 /**

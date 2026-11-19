@@ -30,12 +30,28 @@ export async function 收集本轮输入(参数: 取料参数) {
     const { host, settings, force, timing, debugStore } = 参数;
 
     let data = loadData(host);
-    // 获取玩家/主角名, 避免给主角建档; 顺带清理历史误建的主角卡
-    const playerName = host.persona.name();
-    // 主角信息(persona 描述): 主 AI 能看到 persona, 彼方此前没有读取通道——
-    // 主角设定不写在世界书里时, 更新 AI 完全不知道主角是谁, 这里补齐。
+    // ── 主角名 / 主角信息：**可选的输入，缺失不该让整份提示词失败** ──────────
+    // 2026-11-19 P1：真没选人设的聊天（`user_avatar = null`）会让 `getPersona('current')`
+    // 内部抛错。`host.ts` 的三个人设方法已有 try/catch，但这里**再包一层** ——
+    // 理由是：宿主是边界，边界之外的任何实现都可能换（比如以后换成直接调酒馆 API）。
+    // 一个可选输入缺失，不该让整份提示词拼不出来。
+    // 用空串而不是 null 表示"没有" —— 下游（`玩家名`）的既有类型是 string，
+    // 而"空串 = 没有"在这条链上已经成立（原来 `?? null` 走到那里也是空串语义）。
+    let playerName = '';
+    let playerDescription = '';
+    try {
+        playerName = host.persona.name() ?? '';
+    }
+    catch (error) {
+        console.warn('[彼方] 读不到主角名(可能没选人设), 本轮按"无主角"处理:', error);
+    }
+    try {
+        playerDescription = (host.persona.description() ?? '').trim();
+    }
+    catch (error) {
+        console.warn('[彼方] 读不到主角信息(可能没选人设), 本轮主角信息为空:', error);
+    }
     // 零截断原则: 全量发送, 不在发送时砍内容(规模控制只做在源头的读取范围/账本容量)。
-    const playerDescription = host.persona.description().trim();
     const recentCount = Math.max(1, settings.更新.读取最近回复数 ?? 3);
     let clearLayer = data.清空层 ?? 0;
     // 清空层自适应: 清空后楼层被删到清空层以下时, 现有楼层号永远追不上清空层,
