@@ -1,4 +1,4 @@
-// 彼方 · 条目列表（零件化 v3）—— 批次: 2026-11-19 列表模型后端
+// 彼方 · 条目列表（零件化 v3）—— 批次: 2026-11-19（列表模型后端 + UI + 存量去重）
 //
 // 这个用例要证明两件事（需求方 2026-11-19 点名要的）：
 //   ① **`解析位置()` 是唯一的顺序逻辑** —— 全项目只有一处把"列表"变成"段序"
@@ -8,6 +8,9 @@
 //   [C18] 块划分：内置项按语义块、用户条目按 role
 //   [C19] 原位记号：关闭的项也要显示
 //   [C14] 默认列表顺序 = 去伪装后的拼装顺序（对齐新基准）
+//   [并集] 锚点段与用户条目同时引用同一零件 —— 只展开一次（验收点名补的）
+//   [字数] UI 的字数取自真实内容，不许拿"说明长度"顶
+//   [id] 条目 id 用 uuid；存量重复 id 在加载时清掉（撞 id 会删一条删两条）
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { createPinia, setActivePinia } from 'pinia';
@@ -528,36 +531,133 @@ console.log('\n[id] 用户条目 id 必须唯一，且不依赖模块级状态')
   // id 相同的两条会被一起删掉。那是**数据丢失**, 不是显示问题。
   // 所以判据不是"撞的概率多低", 而是"结构上还会不会撞"。
   const 源码 = 去注释(readFileSync(path.join(彼方目录, '页面-拼装.vue'), 'utf8'));
-  ok('[id] 用 crypto.randomUUID', /randomUUID/.test(源码));
-  ok('[id] 没有模块级的自增计数器(重挂会归零)', !/^\s*let\s+条目序号/m.test(源码),
+  // 实现搬到了 条目列表.ts（UI 与存量去重共用），所以 randomUUID 在那边查
+  const 列表源码 = 去注释(readFileSync(path.join(彼方目录, '条目列表.ts'), 'utf8'));
+  ok('[id] 用 crypto.randomUUID', /randomUUID/.test(列表源码));
+  ok('[id] UI 里没有模块级的自增计数器(重挂会归零)', !/^\s*let\s+条目序号/m.test(源码),
     (源码.match(/let\s+条目序号.*/g) || []).join(' | '));
   ok('[id] 不再用裸 Date.now() 当 id 主体', !/const id = `用户-\$\{Date\.now\(\)/u.test(源码));
+  // UI 里不许再自己拼 id —— 与存量去重共用 `生成条目id`（只有一处实现）
+  ok('[id] UI 调 生成条目id 而不是自己拼', /生成条目id\s*\(/.test(源码));
 
   // 运行时自证: 连造 200 个 id, 必须全部不同。
   // 这条比"看源码有没有 randomUUID"更强 —— 它验的是**行为**。
-  const 造 = (源码.match(/function 新条目id\(\)[\s\S]*?\n\}/) || [''])[0];
-  ok('[id] 能取出 新条目id 的实现(否则下面的行为断言测的是空气)', 造.length > 0);
+  const 造 = (列表源码.match(/export function 生成条目id\([\s\S]*?\n\}/) || [''])[0];
+  ok('[id] 能取出 生成条目id 的实现(否则下面的行为断言测的是空气)', 造.length > 0);
   if (造.length > 0) {
     // 用 Function 在测试里重放这段实现 —— 它只依赖 globalThis 与 Date/Math。
-    // **要先把 TS 语法剥掉**（`(): string` 的返回类型、`as any` 的断言），
+    // **要先把 TS 语法剥掉**（参数与返回类型、`as any`、`?:` 可选标记），
     // 因为 `new Function` 吃的是 JS。第一版没剥，直接 SyntaxError。
     const js实现 = 造
+      .replace(/export /, '')
       .replace(/\)\s*:\s*string\s*\{/, ') {')
+      .replace(/\(已用\?\s*:\s*Set<string>\)/, '(已用)')
       .replace(/\s+as\s+any/g, '');
-    const 工厂 = new Function(`${js实现}; return 新条目id;`) as () => () => string;
-    const 新条目id = 工厂();
+    const 工厂 = new Function(`${js实现}; return 生成条目id;`) as () => (已用?: Set<string>) => string;
+    const 生成条目id = 工厂();
     const 已见 = new Set<string>();
     for (let i = 0; i < 200; i++)
-      已见.add(新条目id());
+      已见.add(生成条目id());
     eq('[id] 连造 200 个 id 全部不同', 已见.size, 200);
     ok('[id] id 带 用户- 前缀', [...已见].every(x => x.startsWith('用户-')));
+    // 传入已用集合时必须避开它
+    const 占用 = new Set(['用户-固定值']);
+    ok('[id] 传入已用集合时会避开', 生成条目id(占用) !== '用户-固定值');
   }
   // 自证: 旧的"时间戳 + 模块级自增"写法会被上面第 2 条抓到
   ok('[id/自证] 旧的模块级计数器写法会被抓到', /^\s*let\s+条目序号/m.test('let 条目序号 = 0;\nfunction f(){}'));
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[默认] 不引用、不关闭时, 列表产出与实发一致(I3 的结构面)');
+console.log('\n[存量] 重复 id 必须清掉（旧版遗留），且留痕');
+{
+  // 需求方 2026-11-19: 存量撞 id 不是"不影响使用"，是**雷** ——
+  // 用户删其中一条，两条一起没。所以每次加载都要修（幂等）。
+  const { 去重条目id, 生成条目id } = await import('../src/彼方_NPC幕后生命状态系统/条目列表');
+
+  // ① 正常数据不动
+  {
+    const 提示词 = {
+      条目: [{ id: 'a', content: 'A' }, { id: 'b', content: 'B' }],
+      条目顺序: ['a', 'b'],
+    };
+    const 快照 = JSON.stringify(提示词);
+    eq('[存量] 没有重复时返回 0', 去重条目id(提示词), 0);
+    eq('[存量] 没有重复时数据一个字节都不动', JSON.stringify(提示词), 快照);
+  }
+
+  // ② 有重复：保留第一个，其余重分配
+  {
+    const 提示词 = {
+      条目: [
+        { id: 'dup', content: 'A' },
+        { id: 'ok', content: 'B' },
+        { id: 'dup', content: 'C' },
+      ],
+      条目顺序: ['dup', 'ok', 'dup'],
+    };
+    const 数 = 去重条目id(提示词);
+    eq('[存量] 报出 1 条重分配', 数, 1);
+    eq('[存量] 第一条保留原 id', 提示词.条目[0].id, 'dup');
+    eq('[存量] 正常的那条不动', 提示词.条目[1].id, 'ok');
+    ok('[存量] 第二条撞的拿到新 id', 提示词.条目[2].id !== 'dup' && 提示词.条目[2].id.length > 0, 提示词.条目[2].id);
+    // 内容一个字都没丢
+    eq('[存量] 三条内容都还在', 提示词.条目.map((x: any) => x.content), ['A', 'B', 'C']);
+    // 顺序表：去重后不再有重复，且长度等于条目数
+    eq('[存量] 顺序表无重复项', 提示词.条目顺序.filter((x: string, i: number, a: string[]) => a.indexOf(x) !== i), []);
+    eq('[存量] 顺序表覆盖全部条目', [...提示词.条目顺序].sort(), 提示词.条目.map((x: any) => x.id).sort());
+  }
+
+  // ③ 幂等：再跑一遍什么都不做
+  {
+    const 提示词 = {
+      条目: [{ id: 'dup', content: 'A' }, { id: 'dup', content: 'C' }],
+      条目顺序: ['dup', 'dup'],
+    };
+    去重条目id(提示词);
+    const 快照 = JSON.stringify(提示词);
+    eq('[存量] 第二次跑返回 0（幂等）', 去重条目id(提示词), 0);
+    eq('[存量] 第二次跑数据不变', JSON.stringify(提示词), 快照);
+  }
+
+  // ④ 三条全同 id：两条重分配，三条 id 全不同
+  {
+    const 提示词 = {
+      条目: [{ id: 'x', content: '1' }, { id: 'x', content: '2' }, { id: 'x', content: '3' }],
+      条目顺序: [],
+    };
+    eq('[存量] 三条同 id → 重分配 2 条', 去重条目id(提示词), 2);
+    const ids = 提示词.条目.map((x: any) => x.id);
+    eq('[存量] 三条 id 现在全不同', new Set(ids).size, 3);
+  }
+
+  // ⑤ 坏数据不炸（非对象/缺 id/条目不是数组）
+  {
+    eq('[存量] 提示词不是对象 → 0', 去重条目id(null), 0);
+    eq('[存量] 条目不是数组 → 0', 去重条目id({ 条目: 'nope' }), 0);
+    eq('[存量] 条目里有 null → 不炸', 去重条目id({ 条目: [null, { id: 'a' }] }), 0);
+    eq('[存量] 缺 id 的条目被跳过', 去重条目id({ 条目: [{ content: 'x' }, { content: 'y' }] }), 0);
+  }
+
+  // ⑥ 迁移里真的调了它，且 warn 带条数
+  {
+    const 设置源码 = 去注释(readFileSync(path.join(彼方目录, 'settings.ts'), 'utf8'));
+    ok('[存量] settings 迁移调了 去重条目id', /去重条目id\s*\(/.test(设置源码));
+    ok('[存量] settings 迁移有 warn 留痕', /重复的条目 id/.test(设置源码));
+    // 自证: 若把调用删了, 上面第一条会红
+    ok('[存量/自证] 删掉调用后第一条判据会红', !/去重条目id\s*\(/.test('const x = 1;'));
+  }
+
+  // ⑦ 生成条目id 会避开已占用的 id（去重时靠它保证不再撞）
+  {
+    const 已用 = new Set<string>();
+    const 一 = 生成条目id(已用);
+    已用.add(一);
+    const 二 = 生成条目id(已用);
+    ok('[存量] 生成条目id 避开已占用集合', 一 !== 二);
+  }
+}
+
 {
   const 造输入 = (额外: Record<string, any> = {}) => ({
     reply: '剧情正文', replyCount: 1, context: '', timeJump: '',

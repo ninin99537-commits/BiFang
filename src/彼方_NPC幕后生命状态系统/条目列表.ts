@@ -98,6 +98,100 @@ export function 规范条目(输入: 条目输入, i: number): 用户条目 {
  *  想把用户条目当内置项写回去，`来源` 对不上、`内容` 的类型也对不上。 */
 export type 列表项 = 内置条目 | 用户条目;
 
+/** 生成一个新的用户条目 id。
+ *
+ *  ── 为什么是 uuid，而不是 `Date.now()` 加自增后缀（需求方 2026-11-19 裁定）──
+ *  两个原因，第二个是决定性的：
+ *    ① 自增序号若是**模块级变量**，页面重挂会归零 → 新条目可能拿到与旧条目相同的 id
+ *    ② id 相同的后果不只是"撞" —— `删除条目` 用 `filter(id !== ...)`，
+ *       **删一条会把两条都删掉**。那是数据丢失，不是显示问题。
+ *
+ *  所以不"算同毫秒概率多低"，而是把整类问题消掉：uuid 不依赖时间、不依赖进程内状态、
+ *  重挂不归零。浏览器环境原生有（酒馆跑在现代 Chromium/Firefox 上）。
+ *
+ *  ── 为什么这个函数在这里，而不在 UI 里 ──
+ *  它有两处用处：**新增条目**（UI）与 **存量重复 id 去重**（settings 迁移）。
+ *  两处各写一遍就是两份实现（规矩 §十二 #1）。放在这里，两边都调它。
+ *
+ *  @param 已用 可选的"已被占用的 id"集合 —— 去重时用它保证新 id 不再撞
+ */
+export function 生成条目id(已用?: Set<string>): string {
+    const 原生 = (globalThis as any).crypto?.randomUUID;
+    for (let 尝试 = 0; 尝试 < 8; 尝试++) {
+        const id = typeof 原生 === 'function'
+            ? `用户-${原生.call((globalThis as any).crypto)}`
+            // 兜底: 时间戳 + 两段随机。极老浏览器没有 randomUUID 时走这条。
+            : `用户-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 10)}`;
+        if (!已用 || !已用.has(id))
+            return id;
+    }
+    // 连撞 8 次（uuid 下不可能；兜底分支理论上也可能）—— 用时间戳兜到底
+    return `用户-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** 存量条目的**重复 id 去重**（2026-11-19）。
+ *
+ *  ── 为什么必须做，不能"只防新增" ──
+ *  旧版 id 是 `用户-<时间戳>-<模块级自增>`，而那个自增变量在页面重挂时归零，
+ *  所以**存量数据里可能已经存在两条同 id 的条目**。
+ *  而 `删除条目` 用 `filter(id !== ...)` —— 两条共用一个 id 时，**删一条会把两条都删掉**。
+ *  那不是"显示问题"，是**数据丢失**。用户的数据已经坏了，只是还没删到那一条。
+ *
+ *  ── 行为 ──
+ *  · 保留第一个，其余重新分配（只动重复的那些，正常的不重编号）
+ *  · 顺序表里指向被改 id 的项也跟着改；顺序表自身的重复项一并清掉
+ *  · **幂等**：没有重复时什么都不做（所以不需要迁移版本号，每次加载跑一遍）
+ *
+ *  ── 为什么不在这里 warn ──
+ *  这个函数是纯的（不改外部状态、不打日志），方便直接测。
+ *  调用方（settings 迁移）负责按返回条数打 warn —— C8：静默零降级。
+ *
+ *  @returns 重新分配的条数（0 = 没有重复）
+ */
+export function 去重条目id(提示词: any): number {
+    if (!提示词 || typeof 提示词 !== 'object' || Array.isArray(提示词))
+        return 0;
+    const 条目们 = 提示词.条目;
+    if (!Array.isArray(条目们))
+        return 0;
+    const 已见 = new Set<string>();
+    const 映射: { 旧: string; 新: string }[] = [];
+    for (const 条 of 条目们) {
+        if (!条 || typeof 条 !== 'object')
+            continue;
+        const 原id = String(条.id ?? '');
+        if (!原id)
+            continue;
+        if (!已见.has(原id)) {
+            已见.add(原id);
+            continue;
+        }
+        const 新id = 生成条目id(已见);
+        已见.add(新id);
+        条.id = 新id;
+        映射.push({ 旧: 原id, 新: 新id });
+    }
+    if (映射.length === 0)
+        return 0;
+    // 顺序表：把指向被改 id 的项换成新 id，并清掉重复项。
+    // 注意第一条同 id 的保留原 id —— 所以映射是"用掉一个旧 id，换一个新 id"。
+    const 顺序 = 提示词.条目顺序;
+    if (Array.isArray(顺序)) {
+        const 已用 = new Set<string>();
+        提示词.条目顺序 = 顺序
+            .map((id: any) => {
+            const 串 = String(id ?? '');
+            const 可用 = 映射.find(m => m.旧 === 串 && !已用.has(m.新));
+            if (!可用)
+                return 串;
+            已用.add(可用.新);
+            return 可用.新;
+        })
+            .filter((id: string, i: number, 全: string[]) => !!id && 全.indexOf(id) === i);
+    }
+    return 映射.length;
+}
+
 /** 一个零件在默认列表里的 role。
  *
  *  C18 要求"相邻同 role 合并成一条消息"，所以内置项也要有 role。

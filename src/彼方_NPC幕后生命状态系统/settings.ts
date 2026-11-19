@@ -5,6 +5,8 @@ import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
 import type { Host } from './host';
 import { 建写回闸门, type 写回闸门 as 写回闸门类型 } from '../共用/设置写回';
+// 条目 id 的生成与去重只有一处（新增条目与存量迁移共用），见 条目列表.ts
+import { 去重条目id } from './条目列表';
 // 2026-11-14: lodash 是 webpack externals 注入的全局（webpack.config.ts:4），不在 auto-imports 里 ——
 // 一旦把 no-undef 开成 error 就会报悬空，所以显式写出来（default 形式，与 设置.ts 一致）。
 import _ from 'lodash';
@@ -217,6 +219,15 @@ function migrateSettings(raw: unknown): unknown {
         delete 接口.上下文进工具;
         delete 接口.消息伪装;
     }
+    // ── 存量条目的重复 id 去重（2026-11-19）─────────────────────────────
+    // 旧版 id 是 `用户-<时间戳>-<模块级自增>`，而那个自增变量在页面重挂时归零，
+    // 所以**存量数据里可能已经存在两条同 id 的条目**。
+    // 而 `删除条目` 用 `filter(id !== ...)` —— 删一条会把两条都删掉，是**数据丢失**。
+    // 用户的存量数据可能已经坏了，只是还没删到那一条 —— 所以每次加载都修一遍（幂等）。
+    // 实现在 `条目列表.ts`（与新增条目共用同一个 id 生成器，只有一处实现）。
+    const 重分配数 = 去重条目id(旧设置.提示词);
+    if (重分配数 > 0)
+        console.warn(`[彼方] 发现 ${重分配数} 条重复的条目 id（旧版本遗留），已重新分配，你的内容没有丢`);
     return raw;
 }
 /**

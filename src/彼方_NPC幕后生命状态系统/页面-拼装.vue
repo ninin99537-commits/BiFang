@@ -28,7 +28,7 @@ import { computed, ref } from 'vue';
 import { 零件表, 清单摘要 } from './零件表';
 import {
   默认列表顺序, 造内置列表, 解析位置, 合并成块, 块内用户文本,
-  零件所在块, 原位序号, 规范条目,
+  零件所在块, 原位序号, 规范条目, 生成条目id,
   type 列表项, type 用户条目, type 解析段,
 } from './条目列表';
 import { 收集本轮输入 } from './更新输入';
@@ -113,30 +113,11 @@ function 切换(项: 列表项) {
 }
 
 /** 用户条目增删改 */
-/** 新条目的 id 用 `crypto.randomUUID()`（需求方 2026-11-19 裁定）。
- *
- *  ── 为什么不是 `Date.now()` 加自增后缀 ──
- *  两个原因，第二个是决定性的:
- *    ① 自增序号是**模块级变量**，页面重挂会归零 → 新条目可能拿到与旧条目相同的 id
- *    ② id 相同的后果不只是"撞" —— `删除条目` 用 `filter(id !== ...)`，
- *       **删一条会把两条都删掉**。那是数据丢失，不是显示问题。
- *
- *  所以不"算同毫秒概率多低"，而是把整类问题消掉：uuid 不依赖时间、不依赖进程内状态、
- *  重挂不归零。浏览器环境原生有（酒馆是 Chromium/Firefox 现代版本）。
- *
- *  兜底：极老的浏览器没有 `randomUUID` 时退回时间戳 + 随机串 —— 仍然比纯时间戳强。
- */
-function 新条目id(): string {
-  const 原生 = (globalThis as any).crypto?.randomUUID;
-  if (typeof 原生 === 'function')
-    return `用户-${原生.call((globalThis as any).crypto)}`;
-  // 兜底: 时间戳 + 两段随机。碰撞概率远低于纯时间戳。
-  const 随机 = () => Math.random().toString(36).slice(2, 10);
-  return `用户-${Date.now().toString(36)}-${随机()}-${随机()}`;
-}
 function 新增条目() {
   const 条目们 = settings.value.提示词?.条目 ?? [];
-  const id = 新条目id();
+  // id 由 `生成条目id()` 产出（uuid）—— 与 settings 里的存量去重共用同一个函数，
+  // 见 条目列表.ts 的注释。**这里不再自己拼 id**，否则就是两处实现。
+  const id = 生成条目id(new Set(条目们.map((x: any) => String(x.id ?? ''))));
   条目们.push({ id, role: 'system', content: '', 启用: true });
   settings.value.提示词.条目 = 条目们;
   // 新条目追加到顺序末尾
