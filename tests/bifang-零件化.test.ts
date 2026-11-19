@@ -17,11 +17,14 @@
 //   正确的形状是"性质写成函数, 随机生成配置喂给它" —— 组合覆盖靠随机性, 正确性靠不变量。
 import { createPinia, setActivePinia } from 'pinia';
 import lodash from 'lodash';
-import 提示词源码 from '../src/彼方_NPC幕后生命状态系统/prompts.ts?raw';
 import { buildUpdateMessages } from '../src/彼方_NPC幕后生命状态系统/prompts';
 import { 零件表, 扫占位符, 切规则零件, 清单摘要, 是默认配置 } from '../src/彼方_NPC幕后生命状态系统/零件表';
 import { 校验全部, type 拼装结果 } from './helpers/彼方-零件不变量';
-import 快照文本 from './fixtures/bifang-prompt-改造前.json?raw';
+import 提示词源码 from '../src/彼方_NPC幕后生命状态系统/prompts.ts?raw';
+// I3 的基准。**2026-11-19 重采过一次**：用户裁定「现在的伪装可以去掉了」，
+// 那是一次**有意的行为变更**，旧快照（含伪装）不再是基准。
+// 现在这份是"去掉伪装之后、零件化之前"的产物 —— 零件化必须与它逐字节一致。
+import 快照文本 from './fixtures/bifang-prompt-去伪装后.json?raw';
 
 (globalThis as any)._ = lodash;
 setActivePinia(createPinia());
@@ -80,15 +83,15 @@ function 造输入(额外: Record<string, any> = {}) {
 /** 快照里那 6 种组合对应的输入(必须与生成器里的一致) */
 const 组合: Record<string, Record<string, any>> = {
   默认: {},
-  伪装: { 消息伪装: true },
-  全进工具: { 消息伪装: true, 规则进工具: true },
-  带场景判断: { 消息伪装: true, context: '主角走进广场。' },
+  带场景判断: { context: '主角走进广场。' },
+  全进工具: { 规则进工具: true },
+  全进工具带场景: { 规则进工具: true, context: '主角走进广场。' },
   生理开: { physioEnabled: true },
   登记归档: { 登记归档: true },
 };
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[I3] 全默认逐字节: 与改造前快照比(这是整个功能的刹车)');
+console.log('\n[I3] 全默认逐字节: 与基准快照比(这是整个功能的刹车)');
 {
   for (const [名, 额外] of Object.entries(组合)) {
     const 期望 = 快照[名];

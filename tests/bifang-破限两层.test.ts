@@ -141,18 +141,20 @@ console.log('\n[C] 第 4 层 · 登记归档: 开关关/开 换身份句');
   ok('[C] 开时含"登记"', 开全文.includes('登记'));
   ok('[C] 开时含"不做内容审查"', 开全文.includes('不做内容审查'));
 
-  // 伪装形态下: system 那条**只有身份句**(没有规则), 所以可以断言全等
-  const 伪装开 = buildUpdateMessages(造输入({ 消息伪装: true, 登记归档: true }) as any);
-  const 伪装开身份 = String(伪装开.messages[0].content);
-  ok('[C] 伪装形态: 首条 system 是登记归档身份句', 伪装开身份.startsWith('你是一个档案写入进程'), 伪装开身份.slice(0, 40));
-  ok('[C] 伪装形态: 首条 system 只有身份句(不含规则)', !伪装开身份.includes('核心原则'), 伪装开身份.slice(0, 60));
-  const 伪装关 = buildUpdateMessages(造输入({ 消息伪装: true, 登记归档: false }) as any);
-  eq('[C] 伪装形态: 首条 system 是原身份句', String(伪装关.messages[0].content).startsWith('你是「彼方 / Elsewhere」'), true);
+  // §2026-11-19: 伪装已移除。原先这里还有两条"伪装形态"断言(首条 system 只有身份句),
+  // 那个形态不存在了 —— 现在 messages[0] 永远是"身份句 + 全部规则"。
+  // 要断言"身份句单独长什么样"改用**全进工具**形态: 那时 messages[0] 只留身份句。
+  const 全进开 = buildUpdateMessages(造输入({ 规则进工具: true, 登记归档: true }) as any);
+  const 全进开身份 = String(全进开.messages[0].content);
+  ok('[C] 全进工具时首条 system 是登记归档身份句', 全进开身份.startsWith('你是一个档案写入进程'), 全进开身份.slice(0, 40));
+  ok('[C] 全进工具时首条 system 只有身份句(不含规则)', !全进开身份.includes('核心原则'), 全进开身份.slice(0, 60));
+  const 全进关 = buildUpdateMessages(造输入({ 规则进工具: true, 登记归档: false }) as any);
+  eq('[C] 全进工具时首条 system 是原身份句', String(全进关.messages[0].content).startsWith('你是「彼方 / Elsewhere」'), true);
 
   // 全进工具形态: 工具说明里的身份句也跟着换
-  const 工具开 = buildUpdateMessages(造输入({ 消息伪装: true, 规则进工具: true, 登记归档: true }) as any);
+  const 工具开 = buildUpdateMessages(造输入({ 规则进工具: true, 登记归档: true }) as any);
   ok('[C] 工具说明以登记归档身份句开头', String(工具开.工具说明).startsWith('你是一个档案写入进程'), String(工具开.工具说明).slice(0, 40));
-  const 工具关 = buildUpdateMessages(造输入({ 消息伪装: true, 规则进工具: true, 登记归档: false }) as any);
+  const 工具关 = buildUpdateMessages(造输入({ 规则进工具: true, 登记归档: false }) as any);
   ok('[C] 工具说明以原身份句开头', String(工具关.工具说明).startsWith('你是「彼方 / Elsewhere」'), String(工具关.工具说明).slice(0, 40));
 }
 
@@ -178,9 +180,10 @@ console.log('\n[D] 第 4 层 · 只换身份句, 规则正文一个字不改');
 // ─────────────────────────────────────────────────────────────
 console.log('\n[E] 第 4 层 · 文案只有职能身份, 无角色名/人格');
 {
-  // 用**伪装形态**取身份句 —— 那时 system 那条只有身份句, 没有规则正文干扰。
-  // (非伪装形态下 messages[0] 含全部规则, 里面当然有"角色扮演"这类词, 那不是身份句的问题。)
-  const 身份 = String(buildUpdateMessages(造输入({ 消息伪装: true, 登记归档: true }) as any).messages[0].content);
+  // 用**全进工具形态**取身份句 —— 那时 messages[0] 只有身份句, 没有规则正文干扰。
+  // (§2026-11-19: 原来用"伪装形态", 伪装已删除; 全进工具是现在唯一能单独看到身份句的形态。)
+  // (非全进工具时 messages[0] 含全部规则, 里面当然有"角色扮演"这类词, 那不是身份句的问题。)
+  const 身份 = String(buildUpdateMessages(造输入({ 规则进工具: true, 登记归档: true }) as any).messages[0].content);
   // 不该出现任何扮演性质的角色名或人格词
   const 禁词 = ['你是「', '彼方 / Elsewhere', '扮演', '人格', '小猫', '昆仑', 'SoliUmbra', 'catgod'];
   const 命中 = 禁词.filter(w => 身份.includes(w));

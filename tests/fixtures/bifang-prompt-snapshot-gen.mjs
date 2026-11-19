@@ -1,11 +1,16 @@
-// 一次性生成器：把**改造前**的 buildUpdateMessages 输出冻结成 fixture，供 I3（全默认逐字节）比对。
-// 用法: node tests/fixtures/bifang-prompt-snapshot-gen.mjs
+// 生成器：把 buildUpdateMessages 的输出冻结成 fixture，供 I3（全默认逐字节）比对。
+// 用法: node tests/fixtures/bifang-prompt-snapshot-gen.mjs <输出路径>
 //
-// 为什么必须先跑这个再动代码：I3 的判据是"改造后 === 改造前"。
-// 改造前那一半只能在这一刻采集 —— 代码一改就永久丢失（规矩 §十二 #24）。
+// ⚠ **这个脚本会覆盖基准**。什么时候该跑：
+//   ① 改动代码**之前**采"改造前"（规矩 §十二 #24：有些事实只在某一刻为真）
+//   ② **有意的行为变更之后**重采新基准（例如 2026-11-19 移除消息伪装）
 //
-// 采四种组合：伪装关/开 × 全进工具关/开。这四种覆盖了 messages 的全部承载路径。
-// 场景判断单独采一次（它是条件段，只有 context 非空才出现）。
+// 第二种情形必须单独成一个 commit，而且要在交付里说清"基准变了、为什么变"——
+// 否则后来人看到 diff 会以为是改坏了。
+//
+// 采的组合覆盖 messages 的全部承载路径：
+//   默认 / 带场景判断 / 全进工具 / 全进工具+带场景 / 生理开 / 登记归档
+// 每个组合同时采 messages 与 工具说明。
 import { writeFileSync } from 'node:fs';
 import { buildTest } from '../build.mjs';
 import path from 'node:path';
@@ -43,9 +48,9 @@ const 造输入 = (额外 = {}) => ({
 
 const 组合 = {
   '默认': {},
-  '伪装': { 消息伪装: true },
-  '全进工具': { 消息伪装: true, 规则进工具: true },
-  '带场景判断': { 消息伪装: true, context: '主角走进广场。' },
+  '带场景判断': { context: '主角走进广场。' },
+  '全进工具': { 规则进工具: true },
+  '全进工具带场景': { 规则进工具: true, context: '主角走进广场。' },
   '生理开': { physioEnabled: true },
   '登记归档': { 登记归档: true },
 };
