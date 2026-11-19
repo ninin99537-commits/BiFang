@@ -70,6 +70,53 @@ function 改段(id: string, 字段: 'content' | 'role', 值: any) {
   存段们(段们.value.map(段 => (段.id === id ? { ...段, [字段]: 值 } : 段)));
 }
 
+// ── 旧条目没并进模板（情形 C）─────────────────────────────────────
+/** 还没并进模板的旧条目。
+ *
+ *  ── 为什么要有这个提示（需求方 #239 ①）──
+ *  `条目转模板` 在"已有模板"时**不覆盖**（否则会盖掉用户手改的东西）。
+ *  于是"用户先改过模板、之后又从旧版本升级"这种情形下，旧条目会**留在 `条目` 里**。
+ *
+ *  而 `input.条目` 已经**不生效**（实测：给带标记的条目，产物逐条相同）。
+ *  所以那些内容是**静默不发送**的 —— 用户不会收到任何错误，只是内容消失了。
+ *
+ *  ── 为什么是常驻提示而不是 toast ──
+ *  需求方原话：**"一句话提示，用户看完就忘，而丢的是他的内容。"**
+ *  所以：常驻一条提示 + 一个按钮，直到他处理或确认。
+ *
+ *  ── 为什么按钮而不是自动并入 ──
+ *  自动并入 = 我们替他决定（而且会改变他现在的模板）。按钮把决定权还给他。
+ */
+const 待并入条目 = computed<any[]>(() => {
+  const 条目 = (settings.value.提示词 as any)?.条目;
+  if (!Array.isArray(条目))
+    return [];
+  // 只算"有内容且启用"的 —— 空条目并进去也没意义
+  return 条目.filter((条: any) => 条 && 条.启用 !== false && String(条?.content ?? '').trim());
+});
+
+/** 把旧条目**追加到模板末尾**（用户点了按钮才做）。
+ *
+ *  ── 为什么追加到末尾而不是按 role 插到中间 ──
+ *  按 role 插需要判断"插在哪一段之后"，而用户的模板已经是他自己排过的 ——
+ *  任何"替他选位置"都可能选错。追加到末尾是**可预测的**：
+ *  他点完之后能立刻在列表最后看到那几段，再自己上移/下移。
+ */
+function 并入条目() {
+  const 待并 = 待并入条目.value;
+  if (待并.length === 0)
+    return;
+  const 新段们: 模板段[] = 待并.map((条: any) => ({
+    id: 新段id(),
+    role: (条.role === 'user' || 条.role === 'assistant') ? 条.role : 'system',
+    content: String(条.content ?? ''),
+  }));
+  存段们([...段们.value, ...新段们]);
+  // 清空条目 —— 否则提示不会消失，用户会以为没生效
+  (settings.value.提示词 as any).条目 = [];
+  (settings.value.提示词 as any).条目顺序 = [];
+}
+
 /** 插入段。**插到最上方**（需求方 #226 的截图：`＋ 在最上方插入`）。
  *
  *  ── 为什么新段默认 `role: 'system'` ──
@@ -358,6 +405,22 @@ const 清单未出现 = computed(() =>
       所以想让一句说明只在有内容时出现，就把说明和占位符<strong>写在同一行</strong>。
     </p>
 
+    <!-- ── 情形 C 的常驻提示（需求方 #239 ①）──
+         它不是 toast、不是一次性 console：**一旦发生就是静默丢内容**，
+         所以一直显示到用户处理为止。 -->
+    <div v-if="待并入条目.length" class="bf-hint bf-hint-error bf-merge-old" role="alert">
+      <span>
+        有 <strong>{{ 待并入条目.length }}</strong> 段旧内容没有并进模板，
+        它们<strong>现在不会发送</strong>。
+      </span>
+      <button class="bf-btn bf-btn-sm" type="button" @click="并入条目">
+        并入模板
+      </button>
+      <span class="bf-merge-old-note">
+        （会追加到列表末尾，你可以再自己上移/下移）
+      </span>
+    </div>
+
     <p v-if="预览中" class="bf-hint" role="status">
       正在读这一轮的正文、世界书与状态卡，通常需要一两秒。
     </p>
@@ -579,6 +642,21 @@ const 清单未出现 = computed(() =>
 /* 模板校验错误：比警告更重（它会阻止发送），所以用错误色 */
 .bf-hint-error {
   color: var(--bf-error, #e05a5a);
+}
+/* 情形 C 的常驻提示：一行文字 + 一个按钮，不占太多竖向空间 */
+.bf-merge-old {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--bf-error, #e05a5a);
+  border-radius: var(--bf-radius-sm);
+  margin: 8px 0 12px;
+}
+.bf-merge-old-note {
+  font-size: 11.5px;
+  opacity: 0.75;
 }
 /* 预览与清单 */
 .bf-parts-preview {
