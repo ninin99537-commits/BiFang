@@ -91,10 +91,25 @@ console.log('\n[落盘] 自证：正常落盘时三件事都要照常发生');
   ok('[自证] 成功提示在 `!已落盘` 的 return 之后（正常路径仍会弹）',
      /if \(!已落盘\)[\s\S]{0,200}?return;[\s\S]{0,40}?\}\s*toastSuccess/.test(代码行));
 
-  // ── 从 git 取旧版本，证明这个 bug 真实存在过 ──
+  // ── 从 git 取**修复前**的旧版本，证明这个 bug 真实存在过 ──
+  //
+  //  ⚠ **不能用 `HEAD~N` 写死相对编号**（2026-11-19 踩过）：
+  //    这条判据写的是 `HEAD~2`，当时确实指向修复前的版本。
+  //    后来又提交了几批，`HEAD~2` 变成了"已经修好的版本" → 判据红，
+  //    而它红的原因是**引用漂了**，不是 bug 回来了。
+  //
+  //  正确做法：**按内容找**那个提交（`git log -S` 找引入/移除这一行的提交），
+  //  或者直接断言"仓库历史里曾经存在过这一行"。
   let 旧版 = '';
   try {
-    旧版 = execFileSync('git', ['show', 'HEAD~2:src/彼方_NPC幕后生命状态系统/update.ts'], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+    // 找最后一个"包含 stateStore.data = newData 这一行"的提交
+    const 提交 = execFileSync(
+      'git',
+      ['log', '--format=%H', '-S', 'stateStore.data = newData', '--', 'src/彼方_NPC幕后生命状态系统/update.ts'],
+      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] },
+    ).trim().split('\n').filter(Boolean);
+    if (提交.length > 0)
+      旧版 = execFileSync('git', ['show', `${提交[提交.length - 1]}:src/彼方_NPC幕后生命状态系统/update.ts`], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
   }
   catch {
     // 取不到就跳过（比如浅克隆）—— **但要打出来，不能静默**

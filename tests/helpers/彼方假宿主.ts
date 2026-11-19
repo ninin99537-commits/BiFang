@@ -83,7 +83,36 @@ export function 彼方假宿主(选项: 假平台选项 = {}) {
       del: (key: string, arg: any) => {
         delete 变量表(arg)[key];
       },
-      insertOrAssign: () => undefined,
+      /**
+       * 往楼层变量里写入指定键（**深合并**，与真平台 `insertOrAssignVariables` 一致）。
+       *
+       * ── 2026-11-19 补：原来这里是 `() => undefined` ──
+       *  后果：`快照.ts` 的**认领分支**（`loadData` 里楼层号对不上时改写那一楼的快照）
+       *  在测试里**从来没被执行过** —— 调了等于没调，而它不报错。
+       *
+       *  实测暴露：写「发现4/发现5」的探针时，`[自证] 非只读时认领会写盘` 一直是 false，
+       *  查了半天以为产品代码有问题，实际是**假宿主没这个能力**。
+       *
+       *  > **一个测不到的写入路径，等于没测。** 它比"测试失败"更危险 —— 失败会红，它不会。
+       */
+      insertOrAssign: (数据: Record<string, any>, arg: any) => {
+        if (arg?.type === 'message') {
+          存.message[arg.message_id] ??= {};
+          Object.assign(存.message[arg.message_id], 数据);
+          return;
+        }
+        if (arg?.type === 'global') {
+          存.global = { ...存.global, ...数据 };
+          return;
+        }
+        if (arg?.type === 'chat') {
+          存.chat = { ...存.chat, ...数据 };
+          return;
+        }
+        if (arg?.type === 'script') {
+          存.script = { ...存.script, ...数据 };
+        }
+      },
       scriptId: () => 't',
     },
     chat: {

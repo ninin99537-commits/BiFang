@@ -305,7 +305,49 @@ function 读取基线(host: 快照宿主, anchorFloor: number): 彼方数据 {
  * **注意**: 这是"现在是什么样", 界面与世界书注入用它。
  * "本轮更新该用的基线"(同层重跑要回退)用 读取基线, 不是这个。
  */
-function loadData(host: 快照宿主): 彼方数据 {
+/**
+ * 认领之后的新索引（2026-11-19 波2「发现5」）。
+ *
+ * ── 原来错在哪 ──
+ *  认领分支写的是 `meta.快照楼层 = [floorId]` —— **把索引里其余快照全部丢弃**。
+ *  那些快照本体还在楼层变量里（没物理删），但索引不再指向它们
+ *  → `读取快照序列` 只读到 1 份 → `生成近期轨迹` 的跨轮 diff 此后为空。
+ *  **它们成了永久孤儿：数据还在，但再也没有代码会去找它们。**
+ *
+ * ── 现在怎么算 ──
+ *  ① 剔掉已删楼层（`missing`）
+ *  ② 剔掉**失效**的旧编号（认领的语义就是"这些编号已经对不上了"）
+ *  ③ 把认领到的那一楼加进去
+ *  ④ 保持升序（读侧按顺序取）
+ */
+function 认领后的索引(原索引: number[], floorId: number, missing: number[]): number[] {
+    const 集合 = new Set(原索引.filter(floor => !missing.includes(floor) && floor !== floorId));
+    集合.add(floorId);
+    return [...集合].sort((a, b) => a - b);
+}
+
+/**
+ * 读当前状态。**注意：它不是纯读函数** —— 它会顺手修复索引（见下面三处 `saveMeta`）。
+ *
+ * ── 2026-11-19 波2「发现4」：加了 `只读` 参数 ──
+ *
+ * 这个函数的**名字和形态都像读**，但它里面藏着**三处写盘**：
+ *   ① 索引里有已删楼层 → 从索引里剔掉，然后 `saveMeta`
+ *   ② 认领分支 → 改写那一楼的快照 + 重置索引 + `saveMeta`
+ *   ③ 兜底 → 再剔一次已删楼层 + `saveMeta`
+ *
+ *  **预览（`只读: true`）走这条路时，聊天变量被改了** —— 而"预览"的承诺是一个字节都不写。
+ *  注释里那句「loadData 本来就不写盘」正是这个 bug 的思想来源（已改，见 更新输入.ts）。
+ *
+ * ── 为什么是参数而不是拆成两个函数 ──
+ *  拆成 `loadDataReadonly` / `loadDataFix` 会让"该调哪个"变成一个**每次调用都要判断**的事，
+ *  而漏判的后果是静默写盘（正是现在的病）。参数只有一处默认值，调用方不改就还是旧行为。
+ *
+ *  ⚠ **只读时仍然会"认领"** —— 它只是不把认领结果写回存储。
+ *    读侧必须能看到那份数据，否则预览会显示空状态，用户以为"我的数据没了"。
+ *    不写回只是让**下次**再认领一遍（幂等，代价是多一次 warn）。
+ */
+function loadData(host: 快照宿主, 只读 = false): 彼方数据 {
     try {
         const meta = loadMeta(host);
         const floors = [...meta.快照楼层].sort((a, b) => a - b);
@@ -364,7 +406,9 @@ function loadData(host: 快照宿主): 彼方数据 {
             // (更新次数恒为1、名单反复消失)。
             if (missingFloors.length > 0) {
                 meta.快照楼层 = meta.快照楼层.filter(floor => !missingFloors.includes(floor));
-                saveMeta(host, meta);
+                // 只读（预览）时**不写回**：这是本函数三处写盘之一（见函数头注释）
+                if (!只读)
+                    saveMeta(host, meta);
             }
             return { ...成数据(snapshot, floorId), 清空层: meta.清空层 };
         }
@@ -396,22 +440,29 @@ function loadData(host: 快照宿主): 彼方数据 {
         if (候选) {
             const { floorId, snapshot } = 候选;
             const 修正: Record<string, any> = { ...snapshot, 楼层: floorId, 处理到楼层: floorId };
-            try {
-                host.vars.insertOrAssign({ [STORAGE_KEY]: 修正 }, { type: 'message', message_id: floorId });
+            // ⚠ **这一支是「发现4」的核心**：它改写那一楼的快照 + 重置索引，
+            //    两处写盘。预览走到这里时，用户的聊天变量会被改。
+            //
+            //    只读时不写，但**照样返回认领到的数据** —— 否则预览会显示空状态，
+            //    用户以为数据丢了（比"偷偷写盘"更吓人）。
+            if (!只读) {
+                try {
+                    host.vars.insertOrAssign({ [STORAGE_KEY]: 修正 }, { type: 'message', message_id: floorId });
+                }
+                catch {
+                    // 写不回去也不影响本次读到的东西
+                }
+                // ⚠ 这里原来写的是 `meta.快照楼层 = [floorId]` —— **把索引里其余快照全丢了**
+                //    （复查「发现5」）。现在改成"替换失效项、保留其他"。
+                meta.快照楼层 = 认领后的索引(meta.快照楼层, floorId, missingFloors);
+                saveMeta(host, meta);
             }
-            catch {
-                // 写不回去也不影响本次读到的东西
-            }
-            meta.快照楼层 = [floorId];
-            if (missingFloors.length > 0)
-                meta.快照楼层 = meta.快照楼层.filter(floor => !missingFloors.includes(floor));
-            saveMeta(host, meta);
             const 位移 = 编号对不上.map(x => x.floorId - Number(x.snapshot.楼层 ?? 0)).filter(n => Number.isFinite(n));
             console.warn(`[彼方] 楼层号与快照对不上(楼层被删过, 编号重排): 已按 #${floorId} 上的快照认领(它记的原编号 ${snapshot.楼层}), `
-                + `恢复 ${Array.isArray(修正.名单) ? 修正.名单.length : 0} 个 NPC。位移线索: ${位移.join(' / ') || '(无)'}`);
+                + `恢复 ${Array.isArray(修正.名单) ? 修正.名单.length : 0} 个 NPC。位移线索: ${位移.join(' / ') || '(无)'}${只读 ? '（只读：未写回）' : ''}`);
             return { ...成数据(修正, floorId), 清空层: meta.清空层 };
         }
-        if (missingFloors.length > 0) {
+        if (missingFloors.length > 0 && !只读) {
             meta.快照楼层 = meta.快照楼层.filter(floor => !missingFloors.includes(floor));
             saveMeta(host, meta);
         }

@@ -29,7 +29,7 @@ type 取料参数 = { host: any; settings: any; force: any; timing: any; debugSt
 export async function 收集本轮输入(参数: 取料参数) {
     const { host, settings, force, timing, debugStore } = 参数;
 
-    let data = loadData(host);
+    let data = loadData(host, !!参数.只读);
     // ── 主角名 / 主角信息：**可选的输入，缺失不该让整份提示词失败** ──────────
     // 2026-11-19 P1：真没选人设的聊天（`user_avatar = null`）会让 `getPersona('current')`
     // 内部抛错。`host.ts` 的三个人设方法已有 try/catch，但这里**再包一层** ——
