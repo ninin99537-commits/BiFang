@@ -210,11 +210,11 @@ import {
   PhX,
 } from '@phosphor-icons/vue';
 import { chatCompletion, fetchModelList } from './api';
-import { useSettingsStore, 世界书写入目标表 } from './settings';
+import { useSettingsStore } from './settings';
 import { useStateStore } from './数据仓';
 import { useConsoleStore, useDebugStore, useMainPromptStore } from './日志仓';
 import { useUpdatingStore } from './任务中断';
-import { 加NPC, 移除NPC, 更新状态卡, 改事务状态, 新增事务, 清空彼方数据, 清空生理数据, 建变更环境, 导出数据, 导入数据 } from './数据变更';
+import { 加NPC, 移除NPC, 更新状态卡, 清空彼方数据, 清空生理数据, 建变更环境, 导出数据, 导入数据 } from './数据变更';
 import { 建档字段 } from './卡字段';
 import type { NpcStateCard } from './卡字段';
 import { 一致性面板键, 建一致性面板, 事实档案 } from './一致性面板';
@@ -859,10 +859,19 @@ const 打开态球位 = computed<{ left: number; top: number } | null>(() => {
 });
 
 const orbStyle = computed<Record<string, string>>(() => {
-  if (!panelOpen.value) return { left: '0px', top: '0px' };
+  // ⚠ 每个分支都返回**完整形状**（三个键都在），别让某个分支缺 `display`
+  //
+  //  原来是 `if (!pos) return { left, top, display: 'none' }` —— 那个分支多一个键，
+  //  于是联合类型里出现 `display?: undefined`，`Record<string, string>` 装不下
+  //  （`undefined` 不是 `string`）。`vue-tsc` 一进 typecheck 门就报了 TS2769。
+  //
+  //  改成"缺省值 + 覆盖"：三个键永远在，`display` 用 `''`（= 不设置）而不是 `undefined`。
+  if (!panelOpen.value)
+    return { left: '0px', top: '0px', display: '' };
   const pos = 打开态球位.value;
-  if (!pos) return { left: '0px', top: '0px', display: 'none' };
-  return { left: `${Math.round(pos.left)}px`, top: `${Math.round(pos.top)}px` };
+  if (!pos)
+    return { left: '0px', top: '0px', display: 'none' };
+  return { left: `${Math.round(pos.left)}px`, top: `${Math.round(pos.top)}px`, display: '' };
 });
 
 /** iframe 被放大后个别机器不会重新光栅化(整块空白但命中测试正常): 逼一次重绘 */

@@ -393,7 +393,7 @@
               <input v-model="seg.启用" class="bf-switch" type="checkbox" />
               <span>启用</span>
             </label>
-            <button class="bf-btn bf-btn-sm bf-btn-danger" type="button" @click="删除自定义段(index)">删除这一段</button>
+            <button class="bf-btn bf-btn-sm bf-btn-danger" type="button" @click="删除自定义段(Number(index))">删除这一段</button>
           </div>
         </div>
 

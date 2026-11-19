@@ -12,12 +12,24 @@ import { 超建议线 } from './规模';
 import type { 规模数据 } from './规模';
 
 export type 日志面板 = {
-  debugLog: ComputedRef<更新日志 | null>;
+  /**
+   * ⚠ 这几个是 **`Ref` 而不是 `ComputedRef`**（2026-11-20 C9 修）。
+   *
+   * 壳里传进来的是 `storeToRefs(store)` 的结果 —— 那是可写的 `Ref`。
+   * 原来声明成 `ComputedRef`（只读）就与实参不符，`vue-tsc` 一进 typecheck 门
+   * 就报了 5 条 `TS2739: Type 'Ref<…>' is missing the properties from type 'ComputedRef<…>'`。
+   *
+   * **为什么改声明而不是改传参**：`storeToRefs` 返回的就是 `Ref`，
+   * 硬转成 `ComputedRef` 要么 `as`（骗类型），要么包一层 `computed`（多一层、且变只读）。
+   * 而这里**本来就需要可写**（日志仓的 `record`/`reset` 走 store 本身，但这几个 ref 的
+   * `.value` 在壳里被直接赋过值）。声明成 `Ref` 才是如实的。
+   */
+  debugLog: Ref<更新日志 | null>;
   debugStore: ReturnType<typeof useDebugStore>;
-  mainPrompt: ComputedRef<string>;
-  mainPromptTime: ComputedRef<number>;
-  mainPromptCount: ComputedRef<number>;
-  consoleLines: ComputedRef<Array<Record<string, any>>>;
+  mainPrompt: Ref<string>;
+  mainPromptTime: Ref<number>;
+  mainPromptCount: Ref<number>;
+  consoleLines: Ref<Array<Record<string, any>>>;
   consoleLinesReversed: ComputedRef<Array<Record<string, any>>>;
   consoleStore: ReturnType<typeof useConsoleStore>;
   /** 时间格式化 / 复制(带降级链) / 复制诊断报告 */

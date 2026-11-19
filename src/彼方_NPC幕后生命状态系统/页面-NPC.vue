@@ -376,10 +376,10 @@ import { 台账上限 } from './事务台账';
 import { 拆分生活状态 } from './生活状态';
 
 const {
-  npcEntries, autoTrackEnabled, selectedNpc, selectedNpcCard, data, 头像色号, fmtTime,
+  npcEntries, autoTrackEnabled, selectedNpc, selectedNpcCard, data, 头像色号,
   editingNpc, 是恋爱对象, 有恋爱数据, 切换恋爱对象, startEditNpc, saveEditNpc, cancelEditNpc, updating,
   cleanText, editDraft, 台账条目, 状态类, 结果草稿, 台账状态表, 改事务,
-  新增事务草稿, 新增一条事务, detailFields, 字段说明表, 情感倾向选项, 名分词表,
+  新增事务草稿, 新增一条事务, detailFields, 字段说明表,
   字段控件表, 切换标签, 草稿标签,
   生活状态项, 设生活状态项, 生活状态类目, 近期事件项, 设近期事件项, 近期事件上限,
   生理阶段, 生理明细, 周期长度, 设生理阶段, 设生理明细, 生理阶段选项,

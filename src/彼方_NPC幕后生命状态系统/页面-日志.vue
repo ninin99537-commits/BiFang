@@ -142,9 +142,9 @@
 import { use日志面板, 规模警示属性 } from './日志面板';
 
 const {
-  debugLog, fmtTime, copyText, copyErrorReport, debugStore,
+  debugLog, fmtTime, copyErrorReport, debugStore,
   mainPrompt, mainPromptTime, mainPromptCount,
-  consoleLines, consoleLinesReversed, consoleStore,
+  consoleLines, consoleStore,
   规模超线, token口径, 可复制,
   代码标签, 代码标签表, 当前代码, 已复制, 复制当前代码,
   控制台等级, 控制台等级表, 控制台显示,
