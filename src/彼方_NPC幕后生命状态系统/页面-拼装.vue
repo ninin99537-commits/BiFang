@@ -113,9 +113,15 @@ function 切换(项: 列表项) {
 }
 
 /** 用户条目增删改 */
+/** 自增序号：防"同毫秒创建两条"时 id 相撞（需求方 2026-11-19 点名）。
+ *  `Date.now()` 单独用的话，同一毫秒内连点两次「新增条目」会生成同一个 id，
+ *  于是两条条目共用一个 id —— 删一条会把两条都删掉（`filter(id !== ...)`）。
+ *  加一个进程内自增后缀就够了，不需要 uuid（这里只是本会话内的临时标识）。 */
+let 条目序号 = 0;
 function 新增条目() {
   const 条目们 = settings.value.提示词?.条目 ?? [];
-  const id = `用户-${Date.now().toString(36)}`;
+  条目序号 += 1;
+  const id = `用户-${Date.now().toString(36)}-${条目序号}`;
   条目们.push({ id, role: 'system', content: '', 启用: true });
   settings.value.提示词.条目 = 条目们;
   // 新条目追加到顺序末尾
@@ -132,6 +138,17 @@ function 改条目(id: string, 字段: string, 值: any) {
     条目们[i][字段] = 值;
 }
 
+/** 每个零件的**真实字数**（来自预览时取到的那一份）。
+ *
+ *  ── 为什么必须从这里取，而不能用别的东西顶（需求方 2026-11-19 裁定）──
+ *  这一列是给用户判断"关掉这个能省多少"用的。**给一个假数字比不给更坏** ——
+ *  用户会据此做决定。今晚已经为同一件事返工过一次（R6 报 12 字、实际 5333 字，差 444 倍）。
+ *
+ *  所以：**没预览过就是空的**（显示 `—`），不许拿"零件说明的长度"顶。
+ *  有值时的来处写在列表下方（"字数取自 hh:mm:ss 那次预览"）。 */
+const 零件字数 = ref<Record<string, number>>({});
+const 字数来处 = ref('');
+
 /** 消息形状（C21 的核心）：把"内容顺序"解析成"块"，再算每块是第几条消息。
  *  **与实发走同一套**: 解析位置 + 合并成块（不是本页自己想的规则）。 */
 const 消息形状 = computed(() => {
@@ -140,6 +157,13 @@ const 消息形状 = computed(() => {
   return 块们.map((块, i) => {
     const 用户文本 = 块内用户文本(块);
     const 内置代号们 = 块.filter(段 => 段.来源 === '内置').map(段 => 段.代号!);
+    // 字数: 该块内各内置零件的真实字数之和。
+    // **任何一个零件缺字数, 整块就显示 `—`** —— 部分和比全无更误导。
+    const 各字数 = 内置代号们.map(代 => 零件字数.value[代]);
+    const 全部有 = 内置代号们.length > 0 && 各字数.every(n => typeof n === 'number');
+    const 字数 = 内置代号们.length === 0
+      ? (字数来处.value ? 用户文本.length : null)
+      : (全部有 ? 各字数.reduce((和, n) => 和 + (n as number), 0) : null);
     return {
       序号: i + 1,
       role: 块[0].role,
@@ -147,9 +171,7 @@ const 消息形状 = computed(() => {
       含: 内置代号们.length > 0
         ? 内置代号们.map(代 => 零件表.find(件 => 件.代号 === 代)?.名 ?? 代)
         : 块.map(段 => `用户条目 #${段.id}`),
-      字数: 内置代号们.length > 0
-        ? 内置代号们.reduce((和, 代) => 和 + (零件表.find(件 => 件.代号 === 代)?.说明.length ?? 0), 0)
-        : 用户文本.length,
+      字数,
     };
   });
 });
@@ -186,6 +208,14 @@ async function 生成预览() {
       段们.push(`── 工具说明 ──\n${结果.工具说明}`);
     预览文本.value = 段们.join('\n\n');
     预览时间.value = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    // **字数取自这一次预览的真实内容**（需求方裁定：不许拿别的东西顶）。
+    // `结果.零件内容` 就是实发那份 `buildUpdateMessages` 产出的各零件原文。
+    const 内容表 = (结果 as any).零件内容 ?? {};
+    const 表: Record<string, number> = {};
+    for (const [代, 文] of Object.entries(内容表))
+      表[代] = String(文 ?? '').length;
+    零件字数.value = 表;
+    字数来处.value = 预览时间.value;
   }
   catch (error: any) {
     预览错误.value = `预览失败: ${error?.message ?? String(error)}`;
@@ -325,11 +355,18 @@ function 偏离原位(项: 列表项): boolean {
             <span class="bf-msg-role" :class="`role-${条.role}`">{{ 条.role }}</span>
             <span class="bf-msg-block">{{ 条.块名 }}</span>
             <span class="bf-msg-contains">{{ 条.含.join('、') }}</span>
+            <span class="bf-msg-size" :title="条.字数 === null ? '还没生成预览，取不到真实字数' : '该条消息的实际字数'">
+              {{ 条.字数 === null ? '—' : `${条.字数} 字` }}
+            </span>
           </li>
         </ol>
         <p class="bf-hint">
           左栏是<strong>内容先后</strong>，右栏是<strong>发出去的样子</strong>。两者不是一回事：
           同块的条目会合成一条消息，所以左栏 15 行在右栏只有几行。
+        </p>
+        <p class="bf-hint">
+          字数取自{{ 字数来处 ? ` ${字数来处} 那次预览` : '预览' }}——
+          <strong>没生成预览时显示 —</strong>，因为不点就取不到这一轮的真实内容。
         </p>
       </section>
     </div>
@@ -511,6 +548,12 @@ function 偏离原位(项: 列表项): boolean {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bf-msg-size {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--bf-text-dim, #8a8a92);
   white-space: nowrap;
 }
 .bf-hint-warn {
