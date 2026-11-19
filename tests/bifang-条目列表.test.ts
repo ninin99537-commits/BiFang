@@ -347,9 +347,10 @@ console.log('\n[临时通道] input.条目 必须是正式字段，不是 (input
   ok('[临时通道/自证] 旧写法会被抓到', /\(input as any\)\.条目/.test('const x = (input as any).条目;'));
   // 入参类型里有 条目 字段，且**类型是从 条目输入 派生的**（不是手写一遍形状）
   const 入参段 = 源码.slice(源码.indexOf('interface 更新提示词入参'), 源码.indexOf('interface 内部入参'));
-  ok('[临时通道] 更新提示词入参 里声明了 条目', /条目\?:\s*条目输入\[\]/.test(入参段), 入参段.slice(-300));
-  ok('[临时通道] 条目 的类型是从 条目输入 派生的(不是手写形状)',
-    /条目\?:\s*条目输入\[\]/.test(入参段) && !/条目\?:\s*\{\s*id\?/.test(入参段), 入参段.slice(-300));
+  ok('[临时通道] 更新提示词入参 里声明了 条目', /条目\?:/.test(入参段), 入参段.slice(-300));
+  // 形状必须从 `条目输入` 派生（可以叠加只读标记，但不能手写 id/role/content/启用 那一串）
+  ok('[临时通道] 条目 的类型从 条目输入 派生', /条目\?:\s*\(?条目输入/.test(入参段), 入参段.slice(-300));
+  ok('[临时通道] 条目 的类型没有手写一遍形状', !/条目\?:\s*\{\s*id\?/.test(入参段), 入参段.slice(-300));
   // **且没有"内置内容"这类字段**（C11 的结构保证：外部传不进内置内容）
   ok('[临时通道] 入参里没有 内置内容/覆写 这类字段',
     !/内置内容|覆写|内置条目/.test(入参段), 入参段.slice(-400));
@@ -819,6 +820,138 @@ console.log('\n[迁移] 旧「按锚点的自定义段」按块边界迁成条�
     }
     ok('[迁移] 迁完的内容确实进了产物', r.messages.some(m => m.content.includes('迁移标记-末段')),
       JSON.stringify(r.messages.map(m => m.content.slice(0, 20))));
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[旧路] 临时双路的三个条件（需求方 2026-11-19 裁定）');
+{
+  const { 零件位置转段 } = await import('../src/彼方_NPC幕后生命状态系统/更新输入');
+
+  // ① **字段为空时必须产出 0 段** —— 否则这条"死路"不是死的：
+  //    空数据上它还在做事，而没人看得出来。
+  eq('[旧路] 空对象 → 0 段', 零件位置转段({}), []);
+  eq('[旧路] undefined → 0 段', 零件位置转段(undefined as any), []);
+  eq('[旧路] null → 0 段', 零件位置转段(null as any), []);
+  // 自证: 非空时必须产出段（否则上面三条等于没测）
+  eq('[旧路/自证] 非空 → 1 段', 零件位置转段({ D2: '最前' }).length, 1);
+
+  // ② **注释里写明删除条件**，要具体到能执行
+  const 源码 = readFileSync(path.join(彼方目录, '更新输入.ts'), 'utf8');
+  const 函数段 = 源码.slice(源码.indexOf('export function 零件位置转段'), 源码.indexOf('export async function 收集本轮输入'));
+  const 注释段 = 源码.slice(源码.indexOf('把面板里配的「零件位置」'), 源码.indexOf('export function 零件位置转段'));
+  ok('[旧路] 注释里有「删除条件」', /删除条件/.test(注释段));
+  // 验收给的可执行版本: "存量用户里不再有 零件位置 非空的设置后，下一版删"
+  ok('[旧路] 删除条件是可执行的（写了"下一版删"与观察判据）',
+    /下一版删/.test(注释段) && /来自旧设置迁移/.test(注释段), 注释段.slice(0, 200));
+  ok('[旧路] 删除条件写明要一起删哪些东西',
+    /零件位置/.test(注释段) && /零件位置转段|本函数/.test(注释段));
+
+  // ③ **走旧路径的结果要在 V1 清单里标出来**
+  ok('[旧路] 段上带 来自旧设置 标记', /来自旧设置:\s*true/.test(函数段));
+  const 提示词源码 = readFileSync(path.join(彼方目录, 'prompts.ts'), 'utf8');
+  ok('[旧路] 引用结论里有 来自旧设置 集合', /来自旧设置:\s*new Set/.test(提示词源码));
+  ok('[旧路] 清单项会写「来自旧设置迁移」备注', /（来自旧设置迁移）/.test(提示词源码));
+
+  // ③b 端到端: 真的走一遍，清单里能看到这个备注
+  {
+    const 造 = (自定义段: any[]) => ({
+      reply: '剧情', replyCount: 1, context: '', timeJump: '', tracked: ['甲'], inSceneHint: [],
+      currentCards: { 甲: { 当前在做: 'x' } }, autoTrackEnabled: true, physioEnabled: false,
+      恋爱对象名单: [], 预填充: false, worldbook: 'WB-旧路', currentStoryTime: '',
+      storyTimeHint: '', storySpan: '', recentTrace: '', playerName: 'P', playerDescription: '',
+      展开宏: (t: string) => t, 自定义段,
+    });
+    const 跑 = (自定义段: any[]) => {
+      const 原I = console.info;
+      const 原T = console.table;
+      const 原W = console.warn;
+      console.info = () => {};
+      console.table = () => {};
+      console.warn = () => {};
+      try {
+        return buildUpdateMessages(造(自定义段) as any);
+      }
+      finally {
+        console.info = 原I;
+        console.table = 原T;
+        console.warn = 原W;
+      }
+    };
+    const 项 = (跑(零件位置转段({ D2: '最前' })).拼装清单 ?? []).find((x: any) => x.代号 === 'D2');
+    eq('[旧路] D2 在清单里被标成被引用', 项?.状态, '被引用');
+    eq('[旧路] 清单备注写明来自旧设置', 项?.备注, '（来自旧设置迁移）');
+    // 自证: 换成用户手写的段，备注不该出现（证明这个标记不是永远为真）
+    const 项2 = (跑([{ 锚点: '最前', role: 'system', content: '{{彼方:世界书}}', 启用: true }]).拼装清单 ?? [])
+      .find((x: any) => x.代号 === 'D2');
+    eq('[旧路/自证] 用户手写的段不带这个备注', 项2?.备注, undefined);
+  }
+
+  // ③c UI 真的显示了这个备注（否则标记只在数据里，用户看不到）
+  const 页面源码 = readFileSync(path.join(彼方目录, '页面-拼装.vue'), 'utf8');
+  ok('[旧路] 拼装页显示 备注 字段', /项\.备注/.test(页面源码));
+  ok('[旧路] 拼装页有 V1 清单表', /bf-parts-table/.test(页面源码) && /拼装清单/.test(页面源码));
+
+  // ④ **迁移产生的条目也带标记，且清单里查得到**（需求方 2026-11-19 最后一批）
+  //    "一次性的 warn 等于没有 —— 用户当时没在看，之后想查就查不到。"
+  {
+    const { 迁移旧段 } = await import('../src/彼方_NPC幕后生命状态系统/条目列表');
+    const 提示词: any = { 自定义段: [{ 锚点: '最前', role: 'system', content: '{{彼方:世界书}}' }] };
+    迁移旧段(提示词);
+    eq('[旧路] 迁移产生的条目带 来自旧设置 标记', 提示词.条目[0].来自旧设置, true);
+
+    // 端到端: 把它喂给拼装，清单里 D2 要有备注
+    const 原I = console.info;
+    const 原T = console.table;
+    const 原W = console.warn;
+    console.info = () => {};
+    console.table = () => {};
+    console.warn = () => {};
+    let r;
+    try {
+      r = buildUpdateMessages({
+        reply: '剧情', replyCount: 1, context: '', timeJump: '', tracked: ['甲'], inSceneHint: [],
+        currentCards: { 甲: { 当前在做: 'x' } }, autoTrackEnabled: true, physioEnabled: false,
+        恋爱对象名单: [], 预填充: false, worldbook: 'WB-迁移', currentStoryTime: '',
+        storyTimeHint: '', storySpan: '', recentTrace: '', playerName: 'P', playerDescription: '',
+        展开宏: (t: string) => t,
+        条目: 提示词.条目,
+        条目顺序: 提示词.条目顺序,
+      } as any);
+    }
+    finally {
+      console.info = 原I;
+      console.table = 原T;
+      console.warn = 原W;
+    }
+    const 项 = (r.拼装清单 ?? []).find((x: any) => x.代号 === 'D2');
+    eq('[旧路] 迁移来的条目引用 D2 时，清单标了来源', 项?.备注, '（来自旧设置迁移）');
+    // 自证: 用户手写同内容的条目不该带标记
+    const 原I2 = console.info;
+    const 原T2 = console.table;
+    const 原W2 = console.warn;
+    console.info = () => {};
+    console.table = () => {};
+    console.warn = () => {};
+    let r2;
+    try {
+      r2 = buildUpdateMessages({
+        reply: '剧情', replyCount: 1, context: '', timeJump: '', tracked: ['甲'], inSceneHint: [],
+        currentCards: { 甲: { 当前在做: 'x' } }, autoTrackEnabled: true, physioEnabled: false,
+        恋爱对象名单: [], 预填充: false, worldbook: 'WB-迁移', currentStoryTime: '',
+        storyTimeHint: '', storySpan: '', recentTrace: '', playerName: 'P', playerDescription: '',
+        展开宏: (t: string) => t,
+        条目: [{ id: 'u1', role: 'system', content: '{{彼方:世界书}}', 启用: true }],
+        条目顺序: ['u1'],
+      } as any);
+    }
+    finally {
+      console.info = 原I2;
+      console.table = 原T2;
+      console.warn = 原W2;
+    }
+    const 项2 = (r2.拼装清单 ?? []).find((x: any) => x.代号 === 'D2');
+    eq('[旧路/自证] 用户自己写的同内容条目不标来源', 项2?.备注, undefined);
   }
 }
 

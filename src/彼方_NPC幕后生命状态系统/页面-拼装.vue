@@ -177,6 +177,11 @@ const 预览中 = ref(false);
 const 预览文本 = ref('');
 const 预览时间 = ref('');
 const 预览错误 = ref('');
+/** V1 拼装清单：每个零件进了哪、多少字、为什么没进。
+ *  **它来自实发那次拼装**（`收集本轮输入` 返回的 `拼装清单`），不是本页另算的。
+ *  里面可能带 `备注`，比如「（来自旧设置迁移）」—— 那条必须显示给用户看，
+ *  否则同一个零件有两条来源、他解释不了。 */
+const 清单 = ref<any[]>([]);
 
 /** 生成预览。**本页唯一一处取料调用, 走实发同一个入口。** */
 async function 生成预览() {
@@ -204,6 +209,8 @@ async function 生成预览() {
       段们.push(`── 工具说明 ──\n${结果.工具说明}`);
     预览文本.value = 段们.join('\n\n');
     预览时间.value = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    // V1 清单也取回来显示（它带 `备注`，比如「来自旧设置迁移」）
+    清单.value = (结果 as any).拼装清单 ?? [];
     // **字数取自这一次预览的真实内容**（需求方裁定：不许拿别的东西顶）。
     // `结果.零件内容` 就是实发那份 `buildUpdateMessages` 产出的各零件原文。
     const 内容表 = (结果 as any).零件内容 ?? {};
@@ -396,6 +403,39 @@ function 偏离原位(项: 列表项): boolean {
         <span class="bf-parts-when">取样于 {{ 预览时间 }}</span>
       </header>
       <pre class="bf-parts-pre">{{ 预览文本 }}</pre>
+
+      <!-- V1 清单：每个零件进了哪、多少字、为什么没进。
+           数据来自实发那次拼装（不是本页另算），所以「去向」与真发的一致。 -->
+      <details v-if="清单.length > 0" class="bf-setting-group bf-set-group bf-parts-manifest">
+        <summary class="bf-set-head">
+          <span class="bf-set-index" aria-hidden="true">03</span>
+          <h3>这一轮每个零件去了哪</h3>
+          <span class="bf-set-aside">{{ 清单.length }} 件</span>
+        </summary>
+        <table class="bf-parts-table">
+          <thead>
+            <tr>
+              <th scope="col">零件</th>
+              <th scope="col">状态</th>
+              <th scope="col">位置</th>
+              <th scope="col">字数</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="项 in 清单" :key="项.代号">
+              <th scope="row">
+                <span class="bf-parts-code">{{ 项.代号 }}</span>{{ 项.名 }}
+              </th>
+              <td>{{ 项.状态 }}</td>
+              <td>
+                {{ 项.位置 }}
+                <span v-if="项.备注" class="bf-parts-note">{{ 项.备注 }}</span>
+              </td>
+              <td class="bf-parts-num">{{ 项.字数 }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </details>
     </section>
   </section>
 </template>
@@ -564,5 +604,39 @@ function 偏离原位(项: 列表项): boolean {
   word-break: break-word;
   background: var(--bf-bg-sunken, rgba(0, 0, 0, 0.22));
   border-radius: 6px;
+}
+/* V1 清单表：与设置页同一套字号/行距 */
+.bf-parts-manifest {
+  margin-top: 14px;
+}
+.bf-parts-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.bf-parts-table th,
+.bf-parts-table td {
+  padding: 6px 0;
+  text-align: left;
+  border-bottom: 1px solid var(--bf-line, rgba(255, 255, 255, 0.08));
+  vertical-align: top;
+}
+.bf-parts-table thead th {
+  font-weight: 600;
+  font-size: 11.5px;
+  color: var(--bf-text-dim, #8a8a92);
+}
+.bf-parts-table tbody th {
+  font-weight: 500;
+  white-space: nowrap;
+}
+.bf-parts-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.bf-parts-note {
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--bf-warn, #e0a030);
 }
 </style>

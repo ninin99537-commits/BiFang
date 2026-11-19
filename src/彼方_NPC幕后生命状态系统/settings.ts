@@ -186,6 +186,43 @@ const SETTINGS_KEY = '彼方_settings';
 /** 设置对象的类型(由 schema 推出来, 不手写第二份) */
 type 设置 = z.infer<typeof Settings>;
 /** 旧设置迁移: 已删除的开关只清键; 世界书写入的旧布尔键按名搬成三档 */
+/** 同一条迁移告警**只说一次**。
+ *
+ *  ── 为什么需要这个（2026-11-19 实测发现）──
+ *  `migrateSettings` 不只在"打开设置页"时跑 —— `getSettings` 也调它，
+ *  而 `getSettings` **每收到一条 AI 消息就跑一次**。
+ *  迁移本身是幂等的（第二次跑返回 0），所以正常情况下不会重复喊；
+ *  但**去重/迁移跑在"读出来的一份副本"上，改完不落盘** ——
+ *  于是下一次读到的还是旧数据，又迁一遍、又喊一遍。
+ *  症状：Console 里同一条 warn 刷屏。
+ *
+ *  这个集合按"告警种类"记，进程内只喊一次。**不是压制错误** ——
+ *  真正的新问题会有自己的种类名。
+ */
+const 已喊过 = new Set<string>();
+function 只喊一次(种类: string, 文案: string) {
+    if (已喊过.has(种类))
+        return;
+    已喊过.add(种类);
+    console.warn(文案);
+}
+
+/** 迁移改过东西 → 标记"该落盘了"。
+ *
+ *  ── 为什么需要这个标记（2026-11-19 实测发现）──
+ *  `getVariables()` 返回的是 `klona()` **深拷贝**（见酒馆助手的 variables.ts），
+ *  所以 `migrateSettings` 改的是副本 —— **不落盘就等于没迁**：
+ *  下一次读到的还是旧数据，再迁一遍、再丢掉。
+ *  症状：Console 里 warn 刷屏（已用 `只喊一次` 压住），而**用户的段永远停在旧路径上**。
+ *
+ *  ── 为什么不在 migrateSettings 里直接写 ──
+ *  它是**读路径**上的纯函数：`getSettings` 每 500ms 就可能跑一次，
+ *  在里面写回会与写回闸门互相触发（闸门靠"基线 + 只写改动字段"判断，
+ *  读路径里写会把它弄乱）。
+ *  所以只标记，由 `getSettings` 在**拿到迁移后的设置之后**写一次。
+ */
+let 待落盘 = false;
+
 function migrateSettings(raw: unknown): unknown {
     if (!raw || typeof raw !== 'object')
         return raw;
@@ -193,6 +230,8 @@ function migrateSettings(raw: unknown): unknown {
     // 那些"新 schema 里已经没有"的旧键 —— 所以只能到"任意键"这一层, 写成精确形状等于
     // 把已删除的键再声明一遍(下次删键还得改类型)。
     const 旧设置 = raw as Record<string, any>;
+    /** 本次迁移是否真的改过东西（决定要不要落盘，见函数末尾） */
+    let 改了 = false;
     const 更新 = 旧设置.更新;
     // 「破限」不再内置: 老开关直接删掉(不搬成自定义段——那段文本是我们的, 用户没写过它)
     if (更新 && typeof 更新 === 'object' && !Array.isArray(更新) && '破限' in 更新)
@@ -230,15 +269,21 @@ function migrateSettings(raw: unknown): unknown {
     // 用户的存量数据可能已经坏了，只是还没删到那一条 —— 所以每次加载都修一遍（幂等）。
     // 实现在 `条目列表.ts`（与新增条目共用同一个 id 生成器，只有一处实现）。
     const 重分配数 = 去重条目id(旧设置.提示词);
-    if (重分配数 > 0)
-        console.warn(`[彼方] 发现 ${重分配数} 条重复的条目 id（旧版本遗留），已重新分配，你的内容没有丢`);
+    if (重分配数 > 0) {
+        改了 = true;
+        只喊一次('重复id', `[彼方] 发现 ${重分配数} 条重复的条目 id（旧版本遗留），已重新分配，你的内容没有丢`);
+    }
     // ── 旧版「按锚点的自定义段」迁成条目（2026-11-19）──────────────────
     // 设置页的 04 提示词 已并入「拼装」页，旧的段必须搬过去，否则用户的内容就"消失"了。
     // **按块边界插**（不是按序号）—— 这样与"当时开了哪些开关"无关（C16 当初担心的正是这个）。
     // **幂等**：迁完清空旧段，第二次跑什么都不做。
     const 迁移数 = 迁移旧段(旧设置.提示词);
-    if (迁移数 > 0)
-        console.warn(`[彼方] 已把 ${迁移数} 段旧的「自定义提示词段」迁进「拼装」页的条目列表，内容一字未改`);
+    if (迁移数 > 0) {
+        改了 = true;
+        只喊一次('迁移', `[彼方] 已把 ${迁移数} 段旧的「自定义提示词段」迁进「拼装」页的条目列表，内容一字未改`);
+    }
+    if (改了)
+        待落盘 = true;
     return raw;
 }
 /**
@@ -312,6 +357,12 @@ function loadSettings(host: 设置宿主) {
         const global = 全部?.[SETTINGS_KEY];
         if (global && typeof global === 'object' && !Array.isArray(global)) {
             const 设置 = Settings.parse(migrateSettings(global));
+            // **迁移改过东西就落盘一次**（2026-11-19，同 getSettings 那条）：
+            // 不落盘 = 没迁（`getVariables()` 返回深拷贝，改的是副本）。
+            if (待落盘) {
+                待落盘 = false;
+                写回全局(host, klona(设置));
+            }
             // 基线取**迁移+解析之后**这一份(与 store 里那一份一致): 否则 schema 补上的默认值
             // 会被当成"用户改动", 第一次保存就把整份灌回去 —— 那就等于整键覆盖了。
             记基线(host, 设置);
@@ -424,6 +475,13 @@ function getSettings(host: 设置宿主) {
         const global = host.vars.get({ type: 'global' })?.[SETTINGS_KEY];
         if (global && typeof global === 'object' && !Array.isArray(global)) {
             globalReadCache = Settings.parse(migrateSettings(global)); // 与 loadSettings 同一套迁移, 否则旧键在这里读不成新值
+            // **迁移改过东西就落盘一次**（2026-11-19）。
+            // 不落盘 = 没迁：`getVariables()` 返回深拷贝，改的是副本；
+            // 下次读到的还是旧数据，再迁一遍再丢掉（用户永远停在旧路径上）。
+            if (待落盘) {
+                待落盘 = false;
+                写回全局(host, klona(globalReadCache));
+            }
             // 成功读到真实远端 = 拿到了一条新基线(2026-11-12): 外层脚本只走这条读路径,
             // 不记基线的话它之后的写回会被闸门拒掉(那会让"改了没生效"看起来像坏掉)。
             记基线(host, globalReadCache);
