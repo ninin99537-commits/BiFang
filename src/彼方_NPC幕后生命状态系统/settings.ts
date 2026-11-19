@@ -208,6 +208,27 @@ const Settings = z
 const SETTINGS_KEY = '彼方_settings';
 /** 设置对象的类型(由 schema 推出来, 不手写第二份) */
 type 设置 = z.infer<typeof Settings>;
+
+/**
+ * 一个值是不是**非空的**普通对象（2026-11-19 P1）。
+ *
+ * ── 为什么需要它，而不是各处直接写 `typeof x === 'object'` ──
+ *  `{}` 也满足 `typeof === 'object'`。而"空对象"在本文件里出现过三种语义：
+ *    ① 全局设置**还没写过**（新装用户）
+ *    ② 旧脚本作用域**已被清空**（迁移完）
+ *    ③ 用户的设置**被覆盖成空**（就是这次的 bug）
+ *  三者都长得一样，但处置完全不同。把判据收成一处，至少"空"这个事实只判一次。
+ *
+ * ── 为什么判据是"键数 > 0"而不是别的 ──
+ *  这里要拦的是"**明显没有内容**"，不是"内容对不对"。键数是最便宜的近似：
+ *  一个只剩 `{ 版本: 2 }` 的残骸也算有内容 —— 那种情况由调用方的"比对新旧键数"拦
+ *  （见 `loadSettings` 第 3 段）。**两级判据，不是一处判到底。**
+ */
+function 是非空对象(x: unknown): x is Record<string, any> {
+    return !!x && typeof x === 'object' && !Array.isArray(x)
+        && Object.keys(x as Record<string, unknown>).length > 0;
+}
+
 /** 旧设置迁移: 已删除的开关只清键; 世界书写入的旧布尔键按名搬成三档 */
 /** 同一条迁移告警**只说一次**。
  *
@@ -391,12 +412,55 @@ function 首次落盘(host: 设置宿主, settings: any) {
         host.toast?.warn?.(`彼方: 旧设置迁移没能落盘(${error instanceof Error ? error.message : String(error)})`, '彼方');
     }
 }
+
+/**
+ * 把迁移结果**合并进**全局已有设置：**只补缺，不清空**（2026-11-19 P0）。
+ *
+ * ── 为什么需要它（这是丢 5 套预设的真元凶）──
+ *  `d844547`「修迁移不落盘」之后，迁移第一次**真正写进了全局**。
+ *  而它写的是 `Settings.parse(旧数据)` —— **旧数据的形状里没有 `接口预设` 这个字段**，
+ *  schema 给它补 `.default({})`，于是写回时**用空对象盖掉了已有的 5 套预设**。
+ *
+ *  > **"修好了一个不落盘的 bug"这个动作本身，会让一份陈旧的数据第一次真正写进去。**
+ *  > **修复本身会释放之前被压住的错误。**
+ *
+ * ── 判据（三条，缺一不可）──
+ *  ① 全局该字段**非空** + 迁移来源该字段**缺失/空** → **保留全局的**（补缺不清空）
+ *  ② 全局该字段**空/缺失** + 迁移来源**非空** → **用迁移的**（该补的补）
+ *  ③ 两边都非空且内容不同 → **按迁移的覆盖**（那是真迁移，用户意图变了）
+ *
+ *  ⚠ 第 ③ 条是关键：**不能因为怕丢就把所有覆盖都禁掉** —— "补缺"和"更新"是两件事。
+ *
+ *  @returns 合并后的设置 + 被保留的字段名（用于 warn）
+ */
+function 合并迁移结果(全局现有: any, 迁移结果: any): { 合并: any; 保留: string[] } {
+    if (!是非空对象(全局现有))
+        return { 合并: 迁移结果, 保留: [] };
+    const 合并: any = { ...迁移结果 };
+    const 保留: string[] = [];
+    for (const 键 of Object.keys(全局现有)) {
+        const 全局值 = 全局现有[键];
+        const 迁移值 = 迁移结果?.[键];
+        const 全局非空 = 是非空对象(全局值)
+            ? true
+            : Array.isArray(全局值) ? 全局值.length > 0 : (全局值 !== '' && 全局值 != null);
+        const 迁移空 = 迁移值 === undefined
+            || (是非空对象(迁移值) ? false : Array.isArray(迁移值) ? 迁移值.length === 0 : (迁移值 === '' || 迁移值 == null));
+        // ① 全局非空 + 迁移空 → 保留全局（**这是防丢数据的唯一一条**）
+        if (全局非空 && 迁移空) {
+            合并[键] = 全局值;
+            保留.push(键);
+        }
+        // ②③ 其余情况都用迁移值（该补的补、该更新的更新）
+    }
+    return { 合并, 保留 };
+}
 function loadSettings(host: 设置宿主) {
     // 1. 优先读全局变量(服务器端共享, 局域网各设备共用)
     try {
         const 全部 = host.vars.get({ type: 'global' });
         const global = 全部?.[SETTINGS_KEY];
-        if (global && typeof global === 'object' && !Array.isArray(global)) {
+        if (是非空对象(global)) {
             const 迁移前 = klona(global);
             const 设置 = Settings.parse(migrateSettings(global));
             // **迁移改过东西就落盘一次**（2026-11-19，同 getSettings 那条）：
@@ -434,10 +498,37 @@ function loadSettings(host: 设置宿主) {
     // 3. 兼容更早版本: 设置存在酒馆助手脚本变量里(含接口地址/密钥), 迁移到全局变量后清空脚本变量
     try {
         const old = host.vars.get({ type: 'script', script_id: host.vars.scriptId() });
-        if (old && typeof old === 'object' && !Array.isArray(old)) {
-            const migrated = Settings.parse(migrateSettings(old));
+        // ⚠ **判据必须要求"非空"**（2026-11-19 P1）。
+        //
+        //  原来只写 `typeof old === 'object'` —— **`{}` 也通过**。
+        //  后果：空对象被当成"有旧设置"，`Settings.parse({})` 产出**全默认值**，
+        //  `首次落盘` 把它们写进全局 —— `接口预设` 有 `.default({})`，**正好被写成空**。
+        //  用户报「接口预设不见了」，现场是 `彼方_settings.接口预设 = {}`，
+        //  而 `烟火_settings.接口预设` 里 5 套完好 —— 不是酒馆整体丢了，是这一份被覆盖成空。
+        //
+        //  而且它是**自循环**的：迁移完把旧作用域清成 `{}`，`{}` 又通过判据，
+        //  下一次加载会再覆盖一遍。（第三个修复点是"清成 null"，见下面。）
+        if (是非空对象(old)) {
+            // **先合并、再解析**（2026-11-19 P0 修正）。
+            //
+            //  ⚠ 顺序很关键：`Settings.parse(旧数据)` 会把**旧数据里的字段按新 schema 解析**，
+            //    schema 里没有的键被丢掉、缺的键补默认值 —— 于是"哪些字段是旧数据真有的"
+            //    这个信息**在 parse 之后就没了**。
+            //    我第一版先 parse 再合并，结果用例 1/4 里"旧数据带来的新字段"全丢了
+            //    （因为 parse 后它们被默认值填成了空，合并时被判成"迁移空"）。
+            //
+            //  正确顺序：**用原始 old 与全局比对**（那才是"旧数据真有什么"），
+            //  合并完再 parse。
+            const 全局现有 = host.vars.get({ type: 'global' })?.[SETTINGS_KEY];
+            const { 合并: 合并原样, 保留 } = 合并迁移结果(全局现有, old);
+            if (保留.length > 0) {
+                console.warn(`[彼方] 迁移跳过 ${保留.length} 个字段(全局里已有内容, 旧设置里缺失或为空): ${保留.join('、')}`);
+            }
+            const migrated = Settings.parse(migrateSettings(合并原样));
             首次落盘(host, migrated);
-            host.vars.update(() => ({}), { type: 'script' });
+            // ⚠ **不许清成 `{}`** —— `{}` 会再次通过"是对象"的判据，导致反复迁移。
+            //  清成 `null`：任何 `typeof x === 'object'` 判据都不再认它。
+            host.vars.update(() => null as unknown as Record<string, any>, { type: 'script' });
             return migrated;
         }
     }
@@ -517,7 +608,7 @@ function getSettings(host: 设置宿主) {
     globalReadTime = now;
     try {
         const global = host.vars.get({ type: 'global' })?.[SETTINGS_KEY];
-        if (global && typeof global === 'object' && !Array.isArray(global)) {
+        if (是非空对象(global)) {
             // 迁移前的快照 —— 迁移落盘时要拿它当基线，这样"差异"恰好是迁移改动的那部分
             // （而不是整份覆盖，那会冲掉别的窗口刚改的字段）。
             const 迁移前 = klona(global);

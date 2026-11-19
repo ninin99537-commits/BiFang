@@ -39,7 +39,7 @@ export function 模型卡乙() {
 
 export function 彼方假宿主(选项: 假平台选项 = {}) {
   const 最后楼层号 = 选项.最后楼层号 ?? 3;
-  const 存: any = { global: {}, chat: {}, message: {} };
+  const 存: any = { global: {}, chat: {}, message: {}, script: undefined };
   // 造一份新假宿主 = 换一份假全局设置 = 换数据源 —— getSettings 的 500ms 读缓存必须失效。
   // 这是同一个坑第三次咬人(总开关清理[1]→[2]、慢一步[1]→[2]、慢一步[2]→[3]/[4]→[5]/[5]→[6]),
   // 上提到共享 helper: 所有用例一次性免疫, 与生产路径 写回全局() 成功后调 invalidateReadCache() 同一概念。
@@ -51,7 +51,13 @@ export function 彼方假宿主(选项: 假平台选项 = {}) {
   ];
   const 记 = { rawCalls: [] as any[] };
   const 队列 = [...(选项.模型回复 ?? [])];
-  const 变量表 = (arg: any) => (arg?.type === 'global' ? 存.global : arg?.type === 'chat' ? 存.chat : 存.message[arg?.message_id]);
+  const 变量表 = (arg: any) => (arg?.type === 'global'
+    ? 存.global
+    : arg?.type === 'chat'
+      ? 存.chat
+      : arg?.type === 'script'
+        ? 存.script
+        : 存.message[arg?.message_id]);
   const host = {
     vars: {
       get: (arg: any) => 变量表(arg),
@@ -62,6 +68,16 @@ export function 彼方假宿主(选项: 假平台选项 = {}) {
         const 新 = fn(变量表(arg));
         if (arg?.type === 'global') 存.global = 新;
         else if (arg?.type === 'chat') 存.chat = 新;
+        else if (arg?.type === 'script') {
+          // ⚠ **2026-11-19 补**：原来没有这一支 —— `type:'script'` 会落到 `存.message[undefined]`。
+          //  而 `settings.ts` 的第三段迁移（"旧设置存在脚本变量里"）正是靠这一支；
+          //  没有它，那条路径在测试里**根本跑不到**（实测：`vars.get({type:'script'})` 返回 undefined）。
+          //  **一个测不到的迁移路径，等于没测。**
+          if (新 === null)
+            delete 存.script;
+          else
+            存.script = 新;
+        }
         else 存.message[arg.message_id] = 新;
       },
       del: (key: string, arg: any) => {
