@@ -47,6 +47,32 @@
           <span class="bf-set-aside">{{ settings.接口.模型 || '未选模型' }}</span>
         </header>
 
+        <!-- ── 配置预设：放在**最上面**（2026-11-19 需求方 #310 ①）──
+             用户要求「先选预设，再改字段」。
+             原来它在所有接口字段**之后** —— 那意味着要切预设得先滚到底。 -->
+        <h4 class="bf-subgroup-title">配置预设</h4>
+        <div class="bf-set-row bf-set-row-inline">
+          <label class="bf-form-label" for="bf-preset-name">预设名</label>
+          <input
+            id="bf-preset-name"
+            v-model="presetName"
+            class="bf-input"
+            placeholder="如 DeepSeek"
+            @keyup.enter="saveApiPreset"
+          />
+          <button class="bf-btn bf-btn-sm" @click="saveApiPreset">保存当前</button>
+        </div>
+        <div v-if="presetNames.length > 0" class="bf-set-row bf-set-row-inline">
+          <label class="bf-form-label" for="bf-preset-select">已保存</label>
+          <select id="bf-preset-select" v-model="selectedPreset" class="bf-select">
+            <option value="">（选择预设加载）</option>
+            <option v-for="name in presetNames" :key="name" :value="name">{{ name }}</option>
+          </select>
+          <button class="bf-btn bf-btn-sm" @click="loadApiPreset">加载</button>
+          <button class="bf-btn bf-btn-sm" @click="deleteApiPreset">删除</button>
+        </div>
+        <p class="bf-hint">把当前接口配置存成一套，换接口时一键切回。</p>
+
         <div class="bf-set-row">
           <label class="bf-form-label" for="bf-api-url">地址</label>
           <input id="bf-api-url" v-model="settings.接口.地址" class="bf-input" placeholder="https://api.example.com/v1" />
@@ -190,27 +216,6 @@
           <br />代价：变慢、更费 token。
         </p>
 
-        <h4 class="bf-subgroup-title">配置预设</h4>
-        <div class="bf-set-row bf-set-row-inline">
-          <label class="bf-form-label" for="bf-preset-name">预设名</label>
-          <input
-            id="bf-preset-name"
-            v-model="presetName"
-            class="bf-input"
-            placeholder="如 DeepSeek"
-            @keyup.enter="saveApiPreset"
-          />
-          <button class="bf-btn bf-btn-sm" @click="saveApiPreset">保存当前</button>
-        </div>
-        <div v-if="presetNames.length > 0" class="bf-set-row bf-set-row-inline">
-          <label class="bf-form-label" for="bf-preset-select">已保存</label>
-          <select id="bf-preset-select" v-model="selectedPreset" class="bf-select">
-            <option value="">（选择预设加载）</option>
-            <option v-for="name in presetNames" :key="name" :value="name">{{ name }}</option>
-          </select>
-          <button class="bf-btn bf-btn-sm" @click="loadApiPreset">加载</button>
-          <button class="bf-btn bf-btn-sm" @click="deleteApiPreset">删除</button>
-        </div>
         <p class="bf-hint">把当前接口配置存成一套，换接口时一键切回。</p>
       </section>
 
