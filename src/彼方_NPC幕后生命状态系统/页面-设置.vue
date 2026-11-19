@@ -146,6 +146,9 @@
             {{ testing ? '测试中…' : '测试连接' }}
           </button>
         </div>
+        <!-- 白名单①「故障处理」：这是**出错时怎么办**，不是"这个按钮是什么"。
+             删了之后用户点「获取模型列表」→ 404 → 不知道下一步做什么，会以为接口坏了。 -->
+        <p class="bf-hint">拉不到列表不代表接口不能用 —— 没有 /models 端点的接口直接手填模型名，再测一次连接。</p>
 
         <div class="bf-set-pairs">
           <div class="bf-set-row">
@@ -188,6 +191,10 @@
           </span>
           <input v-model="settings.接口.直连" type="checkbox" class="bf-switch" />
         </label>
+        <!-- 白名单②「二选一的差别」：这是**选哪个**的依据，不是"这个开关是什么"。
+             不写，用户不知道选哪个；而选错的后果是请求失败（跨域被拦）。
+             它描述的是"开/关各是什么"，不是重复标题。 -->
+        <p class="bf-hint">关：酒馆服务器转发，无跨域问题。开：浏览器直连，预设、世界书与其他扩展都碰不到请求体。</p>
 
         <label class="bf-switch-row">
           <span class="bf-switch-copy">
@@ -240,7 +247,6 @@
           </span>
           <input v-model="settings.更新.慢一步" type="checkbox" class="bf-switch" />
         </label>
-        <p class="bf-hint">只影响自动更新；点「立即更新」时仍然分析到最新一层。</p>
 
         <div class="bf-set-pairs">
           <div class="bf-set-row">
@@ -259,7 +265,6 @@
             />
           </div>
         </div>
-        <p class="bf-hint">每 N 条回复更新一次；更新时读取最近 N 条 AI 回复。</p>
         </div>
 
         <label class="bf-switch-row">
@@ -269,7 +274,6 @@
           </span>
           <input v-model="settings.更新.自动建档" type="checkbox" class="bf-switch" />
         </label>
-        <p class="bf-hint">关闭后只更新已追踪的人物；手动加到名单里的名字仍会建档。</p>
 
         <label class="bf-switch-row">
           <span class="bf-switch-copy">
@@ -278,7 +282,6 @@
           </span>
           <input v-model="settings.更新.追踪当前角色" type="checkbox" class="bf-switch" />
         </label>
-        <p class="bf-hint">角色写在世界书里时保持关闭。</p>
 
         <label class="bf-switch-row">
           <span class="bf-switch-copy">
@@ -330,8 +333,6 @@
             </button>
           </div>
         </div>
-        <p class="bf-hint">角色卡主世界书随当前发言者变（群聊里每个成员一本）；聊天世界书一场聊天一本。换目标不会删掉另一本里的旧条目。</p>
-
         <h4 class="bf-subgroup-title">读取 · 给彼方接口注入世界书</h4>
         <label class="bf-switch-row">
           <span class="bf-switch-copy">
@@ -340,7 +341,6 @@
           </span>
           <input v-model="settings.更新.注入世界书" type="checkbox" class="bf-switch" />
         </label>
-        <p class="bf-hint">不读全局世界书，只读<b>当前角色卡</b>、<b>聊天</b>与<b>人设（persona）</b>绑定的世界书。</p>
 
         <div class="bf-set-pairs">
           <label class="bf-field-block">
@@ -351,7 +351,6 @@
               rows="3"
               placeholder="角色名 / 人设条目名，如「苏禾」或「人设」"
             ></textarea>
-            <span class="bf-hint">每行一个条目名或关键词，每次都强制注入；匹配不到会静默跳过。</span>
           </label>
           <label class="bf-field-block">
             <span class="bf-form-label">排除条目</span>
@@ -361,7 +360,6 @@
               rows="3"
               placeholder="[mvu_update]"
             ></textarea>
-            <span class="bf-hint">每行一条，条目<b>标题或备注里含这些字就排除</b>（不分大小写），不用写全名——填一条 [mvu_update] 就能一次排掉 [mvu_update]1、[mvu_update]2…</span>
           </label>
         </div>
       </section>
@@ -423,7 +421,6 @@
         </summary>
 
         <div class="bf-set-note">
-          <p class="bf-hint">导出复制成一段文本；导入走同一条保存通道（写快照 + 重同步世界书）。大段删楼（/cut）之后靠它恢复。</p>
           <button class="bf-btn bf-btn-sm" type="button" @click="导出数据">导出并复制</button>
         </div>
 
