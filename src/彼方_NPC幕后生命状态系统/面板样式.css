@@ -2390,6 +2390,23 @@ label.bf-switch-row:hover {
   line-height: 1.65;
   color: var(--bf-muted);
 }
+/* 置灰的开关行（2026-11-19 波3）：工具通道开着时的「预填充」。
+ *
+ * ── 为什么需要它 ──
+ *  那个开关在工具通道下**根本不生效**（`update.ts:61` 有 `&& !工具通道` 门控）。
+ *  原来界面上它看起来完全可用 —— 用户打开它、报错、然后去查为什么没用。
+ *
+ *  `:disabled` 的 `<input>` 本身会变灰，但**整行**（标题 + 说明 + 光标）不变 ——
+ *  那会让人以为"只有开关坏了，这行还能点"。所以整行一起降透明度 + 去掉 hover。 */
+.bf-switch-row.bf-switch-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.bf-switch-row.bf-switch-disabled:hover {
+  /* 盖掉上面 label.bf-switch-row:hover 的高亮 —— 不可用的东西不该有交互反馈 */
+  background: transparent;
+  box-shadow: none;
+}
 .bf-switch {
   position: relative;
   width: 36px;

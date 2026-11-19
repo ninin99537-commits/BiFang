@@ -305,14 +305,34 @@
           <button class="bf-text-btn bf-text-btn-danger" type="button" @click="确认清空生理数据">清空生理数据</button>
         </div>
 
-        <label class="bf-switch-row">
+        <label class="bf-switch-row" :class="{ 'bf-switch-disabled': settings.接口.工具通道 }">
           <span class="bf-switch-copy">
             <b>预填充（prefill）</b>
             <span>追加 assistant 消息，引导直接从 JSON 输出</span>
           </span>
-          <input v-model="settings.更新.预填充" type="checkbox" class="bf-switch" />
+          <input
+            v-model="settings.更新.预填充"
+            type="checkbox"
+            class="bf-switch"
+            :disabled="settings.接口.工具通道"
+          />
         </label>
-        <p class="bf-hint">报错时先关掉它。</p>
+        <!-- ── 为什么工具通道下要置灰（2026-11-19 波3）────────────────────────
+             预填充补的是一条 `assistant: '{'`，让模型接着往下写 JSON；
+             而工具通道要求模型**必须调工具** —— 两者语义互斥。
+             `update.ts:61` 早已写成 `settings.更新.预填充 && !settings.接口.工具通道`,
+             所以**那个开关在工具通道开着时根本不生效**。
+
+             原来界面只在上面的工具通道说明里提了半句「打开期间流式输出和预填充不起作用」，
+             但用户在预填充那一行看不到任何提示 —— 他打开它、报错、然后去查为什么没用。
+
+             ⚠ **不删这个功能**：它默认关闭，且对不用工具通道的模型（DeepSeek/GLM/Qwen）
+                确实有用。删掉是拿别人的功能补一个人的不适。
+                置灰 + 说明 = 对工具通道用户隐身，但没把别人的东西拆掉。 -->
+        <p v-if="settings.接口.工具通道" class="bf-hint">
+          ⚠ <b>工具调用模式下预填充不起作用</b>：它补的 <code>{</code> 与「必须调工具」冲突，所以这一项已被忽略（设置值保留，关掉工具通道后重新生效）。
+        </p>
+        <p v-else class="bf-hint">报错时先关掉它。</p>
       </section>
 
       <!-- 03 世界书 -->
