@@ -52,7 +52,17 @@ assert.ok(!摘要.text.includes('隐秘旧事'), '隐秘旧事的结束原因不
 assert.equal(摘要.overTarget, true, '超出字符目标只标 overTarget');
 assert.equal(摘要.targetCharacters, 500);
 assert.ok(摘要.omittedIds.length > 0, '未选中的完整条目只记 id，不删除');
-console.log('PASS 公开投影只选完整公开条目；超目标完整保留并提示');
+// ── 通过计数（2026-11-19 改：从字面量改成运行时计数）──
+// 为什么：上一批写的是 `结果: ${6} 通过` —— 6 是字面量。加了断言忘更新 → 数字偏小，
+// 而 run.mjs 的自检**只验句式、不验条数**，所以发现不了。
+// **一个编出来的数字，比没有数字更危险 —— 它看起来是统计结果。**
+let 通过 = 0;
+function pass(说明: string) {
+  通过++;
+  console.log('PASS ' + 说明);
+}
+
+pass('公开投影只选完整公开条目；超目标完整保留并提示');
 
 // 已了结记录会长期累积：只注入最近若干条完整结果，其余仍在存档，不裁切、不删除。
 const 多条了结 = {
@@ -65,13 +75,13 @@ assert.ok(限定.text.includes('旧事7') && 限定.text.includes('旧事8'), '�
 assert.ok(!限定.text.includes('旧事1'), '更早结果不注入');
 assert.ok(限定.text.includes('另有 6 条更早的已结束公开事态未列出'), '更早条数如实说明');
 assert.equal((多条了结.已了结 as any[]).length, 8, '未列出的记录仍在存档');
-console.log('PASS 已了结结果按最近整条选择，不注入全部历史也不删除');
+pass('已了结结果按最近整条选择，不注入全部历史也不删除');
 
 const 工作 = 选工作事件(数据 as any, SettingsSchema.parse({}), '公开事件二');
 assert.ok(工作.length <= 6);
 assert.ok(工作.every(事件 => '标题' in 事件 && '描述' in 事件), '工作集返回完整事件对象');
 assert.ok(工作.some(事件 => 事件.标题 === '公开事件二'), '正文提及的事件优先进入工作集');
-console.log('PASS 工作集按完整事件选择，正文提及优先');
+pass('工作集按完整事件选择，正文提及优先');
 
 // 等待中的事不能永久沉底：即使没被正文点名、没到期，也要轮换进工作集复审。
 const 等待世界 = {
@@ -85,7 +95,7 @@ const 等待世界 = {
 const 等待工作集 = 选工作事件(等待世界 as any, SettingsSchema.parse({}), '与等待事件无关的正文');
 assert.equal(等待工作集.length, 6);
 assert.ok(等待工作集.some(e => e.标题.startsWith('等待事')), '等待中的事件也能被复审选中');
-console.log('PASS 等待条件事件按轮换强制复审，不会永久冷藏');
+pass('等待条件事件按轮换强制复审，不会永久冷藏');
 
 const 旧 = {
   ...数据, 事件: [], 已了结: [],
@@ -102,7 +112,7 @@ assert.equal(更新.已失效伏笔?.[0]?.前情?.length, long.length);
 assert.equal(更新.已失效伏笔?.[0]?.结束原因, long);
 assert.equal(更新.已过期节令?.[0]?.概况, long);
 assert.equal(更新.已过期节令?.[0]?.概况?.length, long.length);
-console.log('PASS 失效伏笔与过期节令完整归档，不截断');
+pass('失效伏笔与过期节令完整归档，不截断');
 
 const 书: any[] = [{ uid: 1, name: '【烟火】世界动向', comment: '', content: '旧投影', enabled: true, extra: { yanhuo: true } }];
 let 仍当前 = false;
@@ -122,10 +132,8 @@ assert.equal(书[0].content, '旧投影', '已切换聊天的晚到结果不得�
 const 再同步 = await syncWorldbookEntry(数据 as any, true, settings, () => 仍当前);
 assert.equal(再同步.状态, '已同步');
 assert.ok(书[0].content.includes(marker), '允许写入时完整内容进入主世界书');
-console.log('PASS 主世界书同步核对归属；旧聊天晚到结果不覆盖当前内容');
+pass('主世界书同步核对归属；旧聊天晚到结果不覆盖当前内容');
 
-// ── 汇总行（2026-11-19 补）──
-// 为什么必须有: run.mjs 靠这行把本文件的通过数计入 TOTAL。
-// 没有它 = 这个文件的断言数**从来没进过账**（run.mjs 的自检现在会把这种情况报出来）。
-// 失败时 node:assert 会抛错 → 进程非零退出 → run.mjs 的 code!==0 能抓到，所以这里只报通过数。
-console.log(`结果: ${6} 通过, 0 失败`);
+// ── 汇总行（运行时计数，2026-11-19）──
+// 失败靠 node:assert 抛错（进程非零退出 → run.mjs 的 code!==0 能抓到），所以这里只报通过数。
+console.log(`结果: ${通过} 通过, 0 失败`);
