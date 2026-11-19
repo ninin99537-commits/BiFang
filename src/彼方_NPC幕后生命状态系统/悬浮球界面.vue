@@ -1639,7 +1639,6 @@ provide(仪表盘面板键, 建仪表盘面板({
   openAddDialog,
   removeNpc,
   openNpc,
-  manualUpdate,
   reload,
   clearAll,
   clearing,
