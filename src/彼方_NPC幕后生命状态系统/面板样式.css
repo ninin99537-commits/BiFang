@@ -1682,6 +1682,20 @@
   font-size: 12.5px;
   color: var(--bf-secondary);
 }
+/* 请求形态(2026-11-19 波1): `2 条消息 + 工具说明 14513 字`
+ *
+ * 为什么单独一行、字号更小、颜色更淡:
+ *  它是**解释**「为什么字数这么多」，不是主要信息。与上面那行数字并列会抢注意力。
+ *  `bf-log-meta` 是 4 列网格（每格约 1/4 宽），这句最长约 22 个字 ——
+ *  不换行会溢出，所以这里显式 block + 允许换行。 */
+.bf-log-shape {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--bf-muted);
+  overflow-wrap: anywhere;
+}
 /* 四标签合一代码检视窗(§4.4 第 3 条) */
 .bf-code-box {
   margin: 0 0 20px;
