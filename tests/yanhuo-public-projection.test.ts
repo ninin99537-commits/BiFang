@@ -123,3 +123,9 @@ const 再同步 = await syncWorldbookEntry(数据 as any, true, settings, () => 
 assert.equal(再同步.状态, '已同步');
 assert.ok(书[0].content.includes(marker), '允许写入时完整内容进入主世界书');
 console.log('PASS 主世界书同步核对归属；旧聊天晚到结果不覆盖当前内容');
+
+// ── 汇总行（2026-11-19 补）──
+// 为什么必须有: run.mjs 靠这行把本文件的通过数计入 TOTAL。
+// 没有它 = 这个文件的断言数**从来没进过账**（run.mjs 的自检现在会把这种情况报出来）。
+// 失败时 node:assert 会抛错 → 进程非零退出 → run.mjs 的 code!==0 能抓到，所以这里只报通过数。
+console.log(`结果: ${6} 通过, 0 失败`);

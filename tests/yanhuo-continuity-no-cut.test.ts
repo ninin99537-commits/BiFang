@@ -61,3 +61,9 @@ const metric={值:'103.8',趋势:'下降' as const,说明:long};
 const metrics=validateAndNormalize({世界:{时间:time},事件:[],指标:{物价:{值:'103.8',趋势:'平稳'}}},{...data,事件:[],指标:{物价:metric}});
 assert.equal(metrics.指标.物价.趋势,'下降');
 console.log('PASS 同值指标不凭空改趋势');
+
+// ── 汇总行（2026-11-19 补）──
+// 为什么必须有: run.mjs 靠这行把本文件的通过数计入 TOTAL。
+// 没有它 = 这个文件的断言数**从来没进过账**（run.mjs 的自检现在会把这种情况报出来）。
+// 失败时 node:assert 会抛错 → 进程非零退出 → run.mjs 的 code!==0 能抓到，所以这里只报通过数。
+console.log(`结果: ${9} 通过, 0 失败`);
