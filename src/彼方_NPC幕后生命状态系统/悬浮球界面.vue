@@ -1662,10 +1662,11 @@ provide(仪表盘面板键, 建仪表盘面板({
   openAddDialog,
   removeNpc,
   openNpc,
-  manualUpdate,
   reload,
   clearAll,
   clearing,
+  // 本轮有变化人数（2026-11-19）：页面模板要显示它，但它算在壳里（要用 stats + 卡的「最后更新」）
+  本轮有变化人数,
 }));
 
 provide(日志面板键, 建日志面板({

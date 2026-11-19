@@ -28,10 +28,24 @@ export type 仪表盘面板 = {
   removeNpc: (名: string) => void;
   openNpc: (名: string) => void;
   /** 手动更新 / 重载 / 清空(两段确认) */
-  manualUpdate: () => void;
   reload: () => void;
   clearAll: () => void;
   clearing: Ref<boolean>;
+  /**
+   * 本轮有变化的人数（2026-11-19）。
+   *
+   * ── 为什么它必须在这里 ──
+   *  `页面-仪表盘.vue` 的模板里有 `{{ `本轮 ${本轮有变化人数} 人有变化` }}`，
+   *  而这个名字原来只定义在**壳**（`悬浮球界面.vue`）里，页面没解构 ——
+   *  于是模板引用了一个页面作用域里不存在的名字。
+   *
+   *  **判据抓到了它**（`bifang-panel-contract` 的「模板名字都能解析」），
+   *  而那个判据**一直在报错，只是被 `run.mjs` 的正则吞掉了**（见 run.mjs 那批修复）。
+   *
+   *  ⚠ `manualUpdate` 从本类型里**删掉了**：页面完全不用它（那个按钮在壳上），
+   *    留着会让「解构 == 类型键」这条判据要求页面解构一个它不用的名字。
+   */
+  本轮有变化人数: ComputedRef<number>;
 };
 export function 建仪表盘面板(源: {
   数据: Ref<彼方数据>;
@@ -42,10 +56,11 @@ export function 建仪表盘面板(源: {
   openAddDialog: () => void;
   removeNpc: (名: string) => void;
   openNpc: (名: string) => void;
-  manualUpdate: () => void;
   reload: () => void;
   clearAll: () => void;
   clearing: Ref<boolean>;
+  /** 本轮有变化的人数 —— 页面模板要显示它，所以必须由面板给出 */
+  本轮有变化人数: ComputedRef<number>;
 }): 仪表盘面板 {
   const 数据 = 源.数据;
   const npcEntries = computed(() => Object.entries(数据.value.NPC ?? {}) as Array<[string, NpcStateCard]>);
@@ -72,10 +87,10 @@ export function 建仪表盘面板(源: {
     openAddDialog: 源.openAddDialog,
     removeNpc: 源.removeNpc,
     openNpc: 源.openNpc,
-    manualUpdate: 源.manualUpdate,
     reload: 源.reload,
     clearAll: 源.clearAll,
     clearing: 源.clearing,
+    本轮有变化人数: 源.本轮有变化人数,
   };
 }
 

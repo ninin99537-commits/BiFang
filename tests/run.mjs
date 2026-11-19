@@ -21,7 +21,7 @@
 //
 // 用例里 import 的是**真实源码**(src/ 下的原文件), 不是复制品:
 // 打包器只是去掉类型、把 `?raw` 还原成文本, 没有替换任何逻辑。
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -40,6 +40,56 @@ if (files.length === 0) {
 
 let failed = 0;
 let 跳过打包 = 0;
+let 断言通过总数 = 0;
+let 断言失败总数 = 0;
+
+// ── 机读汇总(复盘 C6: 计数口径只此一家) ──
+//
+// 以前三方各数各的: 数 `PASS` 行的实现得到 5372, 数"结果:"行的验收得到 4667 —— 因为
+// 用例有两种句式: 129 个文件每条断言打 `  PASS  ` / `  FAIL  `, 另 26 个成功时**什么都不打**
+// (只 pass++), 只在末行报 "结果: N 通过, M 失败"。数标记行的口径天生看不见后者的通过数。
+//
+// 现在由 run.mjs 统一计数: 接管子的同时**实时转发**输出(现场直播不丢), 子进程退出后解析
+// 它输出的**末行汇总**(两种句式都含"通过/断言/失败 + 数字"), 全部跑完输出一行 TOTAL。
+// 此后交付书 / 判定书只准引用 TOTAL 行, 不再各自数行。
+//
+// ⚠ **2026-11-19 修：句式的量词必须吃掉**（`3 项失败` 曾让整个套件被静默吞掉）。
+//
+//  ── 原来错在哪 ──
+//  正则写的是 `/(\d+)\s*失败/` —— 要求数字与"失败"之间**只有空白**。
+//  而 `bifang-panel-contract.test.ts` 的末行是：
+//      `3 项失败 (36 项通过)`
+//  **数字和"失败"之间有一个「项」字**，`\s*` 匹配不到 → 两个正则都返回 null →
+//  整个套件的 3 条失败被当成"没有汇总行"静默跳过。
+//
+//  于是 `TOTAL failed=0` 而那个套件**明明有 3 条 FAIL**。
+//  **这是计数器的假绿 —— 比被测代码出错更危险，因为它让所有"全绿"结论都不可信。**
+//
+//  ── 修法 ──
+//  把量词吃进去：`(\d+)\s*[项个条]?\s*(?:通过|断言|失败)`。
+//  **两种句式都要兼容**，因为仓库里确实并存：
+//      `结果: 51 通过, 0 失败`        ← 多数文件
+//      `3 项失败 (36 项通过)`         ← bifang-panel-contract
+function 解析末行汇总(输出) {
+  const 行们 = 输出.split('\n').map(s => s.trimEnd()).filter(s => s.trim() !== '');
+  // 从末行往前找几行（有些文件的汇总行后面还跟一句"全部通过"之类）
+  for (let i = 行们.length - 1; i >= 0 && i >= 行们.length - 4; i--) {
+    const 通过 = 行们[i].match(/(\d+)\s*[项个条]?\s*(?:通过|断言)/);
+    const 失败 = 行们[i].match(/(\d+)\s*[项个条]?\s*失败/);
+    if (通过 || 失败) return { pass: 通过 ? Number(通过[1]) : 0, fail: 失败 ? Number(失败[1]) : 0 };
+  }
+  return null;
+}
+
+/** 跑一个用例产物: stdout 接管子(实时转发 + 捕获解析), stderr/stdin 保持直连。 */
+function 跑用例(outfile) {
+  return new Promise(resolve => {
+    const child = spawn(process.execPath, [outfile], { stdio: ['inherit', 'pipe', 'inherit'], cwd: ROOT });
+    let out = '';
+    child.stdout.on('data', d => { process.stdout.write(d); out += d; });
+    child.on('close', code => resolve({ code, out }));
+  });
+}
 
 /**
  * `src/` 全部文件的内容指纹（**一次进程内只算一次** —— 147 个用例不该各算一遍）。
@@ -137,8 +187,13 @@ for (const name of files) {
     failed++;
     continue;
   }
-  const result = spawnSync(process.execPath, [outfile], { stdio: 'inherit', cwd: ROOT });
-  if (result.status !== 0)
+  const { code, out } = await 跑用例(outfile);
+  const 汇总 = 解析末行汇总(out);
+  if (汇总) {
+    断言通过总数 += 汇总.pass;
+    断言失败总数 += 汇总.fail;
+  }
+  if (code !== 0)
     failed++;
 }
 
@@ -159,4 +214,6 @@ if (导入检查.status !== 0)
 console.log(failed === 0
   ? `\n全部通过: ${files.length} 个用例文件${跳过打包 > 0 ? `（其中 ${跳过打包} 个指纹未变、跳过重打包）` : ''}`
   : `\n有 ${failed} 项失败(共 ${files.length} 个用例文件)`);
+// 机读汇总: 全员只引用这一行(复盘 C6 / 复盘三方共识 P0-3)。failed=断言级失败, fileFailed=文件级失败(含打包失败与两项检查)。
+console.log(`TOTAL files=${files.length} asserts=${断言通过总数} failed=${断言失败总数} fileFailed=${failed} skipped=${跳过打包}`);
 process.exit(failed === 0 ? 0 : 1);

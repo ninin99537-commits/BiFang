@@ -115,10 +115,16 @@ function 无法解析的名字(text: string): string[] {
   const 可疑 = new Set<string>();
   for (const expr of 表达式片段(template)) {
     // 去掉字符串字面量，免得文案里的词被当成标识符
-    const clean = expr
+    let clean = expr
       .replace(/'(?:[^'\\]|\\.)*'/g, "''")
       .replace(/"(?:[^"\\]|\\.)*"/g, '""')
       .replace(/`(?:[^`\\]|\\.)*`/g, '``');
+    // ⚠ **去掉 TS 类型断言**（2026-11-19）：`($event.target as HTMLInputElement).value`
+    //  是**合法的 Vue 模板语法**（Vue 3 + TS 支持模板里的 `as`）。
+    //  不去掉的话，`as` / `HTMLInputElement` / `HTMLSelectElement` 会被当成"未解析的名字"——
+    //  **那是判据的假阳性，不是代码的问题。**
+    //  `bifang-panel-contract` 曾因此长期报 3 条失败（而它又被 run.mjs 的正则吞掉，两边一起假绿）。
+    clean = clean.replace(/\bas\s+[A-Za-z_$][\w$.<>[\]]*/g, '');
     for (const m of clean.matchAll(/(?<![.\w$\u4e00-\u9fa5])([A-Za-z_$\u4e00-\u9fa5][\w$\u4e00-\u9fa5]*)/g)) {
       const id = m[1];
       if (内置.has(id) || 可用.has(id))
