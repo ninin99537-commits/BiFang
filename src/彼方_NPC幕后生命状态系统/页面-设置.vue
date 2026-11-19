@@ -71,7 +71,6 @@
           <button class="bf-btn bf-btn-sm" @click="loadApiPreset">加载</button>
           <button class="bf-btn bf-btn-sm" @click="deleteApiPreset">删除</button>
         </div>
-        <p class="bf-hint">把当前接口配置存成一套，换接口时一键切回。</p>
 
         <div class="bf-set-row">
           <label class="bf-form-label" for="bf-api-url">地址</label>
@@ -147,7 +146,6 @@
             {{ testing ? '测试中…' : '测试连接' }}
           </button>
         </div>
-        <p class="bf-hint">拉不到列表不代表接口不能用 —— 没有 /models 端点的接口直接手填模型名，再测一次连接。</p>
 
         <div class="bf-set-pairs">
           <div class="bf-set-row">
@@ -190,7 +188,6 @@
           </span>
           <input v-model="settings.接口.直连" type="checkbox" class="bf-switch" />
         </label>
-        <p class="bf-hint">关：酒馆服务器转发，无跨域问题。开：浏览器直连，预设、世界书与其他扩展都碰不到请求体。</p>
 
         <label class="bf-switch-row">
           <span class="bf-switch-copy">
@@ -199,10 +196,6 @@
           </span>
           <input v-model="settings.接口.工具通道" type="checkbox" class="bf-switch" />
         </label>
-        <p class="bf-hint">
-          让 AI 填一张表：连剧情内容也一起放进表里，对话只留一句指令。
-          <br />打开期间「流式输出」不起作用。
-        </p>
 
         <label class="bf-switch-row">
           <span class="bf-switch-copy">
@@ -211,12 +204,6 @@
           </span>
           <input v-model="settings.接口.请求打散" type="checkbox" class="bf-switch" />
         </label>
-        <p class="bf-hint">
-          每次请求开头加一小段随机字符，让每次请求都不一样。
-          <br />代价：变慢、更费 token。
-        </p>
-
-        <p class="bf-hint">把当前接口配置存成一套，换接口时一键切回。</p>
       </section>
 
       <!-- 02 幕后更新 -->
