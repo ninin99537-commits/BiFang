@@ -520,6 +520,43 @@ console.log('\n[字数] UI 的字数必须取自真实内容，不许拿"说明�
 }
 
 // ─────────────────────────────────────────────────────────────
+console.log('\n[id] 用户条目 id 必须唯一，且不依赖模块级状态');
+{
+  // 需求方 2026-11-19 裁定: 换 `crypto.randomUUID()`。
+  //
+  // **为什么这不是"概率低所以无所谓"**: `删除条目` 用 `filter(id !== ...)` ——
+  // id 相同的两条会被一起删掉。那是**数据丢失**, 不是显示问题。
+  // 所以判据不是"撞的概率多低", 而是"结构上还会不会撞"。
+  const 源码 = 去注释(readFileSync(path.join(彼方目录, '页面-拼装.vue'), 'utf8'));
+  ok('[id] 用 crypto.randomUUID', /randomUUID/.test(源码));
+  ok('[id] 没有模块级的自增计数器(重挂会归零)', !/^\s*let\s+条目序号/m.test(源码),
+    (源码.match(/let\s+条目序号.*/g) || []).join(' | '));
+  ok('[id] 不再用裸 Date.now() 当 id 主体', !/const id = `用户-\$\{Date\.now\(\)/u.test(源码));
+
+  // 运行时自证: 连造 200 个 id, 必须全部不同。
+  // 这条比"看源码有没有 randomUUID"更强 —— 它验的是**行为**。
+  const 造 = (源码.match(/function 新条目id\(\)[\s\S]*?\n\}/) || [''])[0];
+  ok('[id] 能取出 新条目id 的实现(否则下面的行为断言测的是空气)', 造.length > 0);
+  if (造.length > 0) {
+    // 用 Function 在测试里重放这段实现 —— 它只依赖 globalThis 与 Date/Math。
+    // **要先把 TS 语法剥掉**（`(): string` 的返回类型、`as any` 的断言），
+    // 因为 `new Function` 吃的是 JS。第一版没剥，直接 SyntaxError。
+    const js实现 = 造
+      .replace(/\)\s*:\s*string\s*\{/, ') {')
+      .replace(/\s+as\s+any/g, '');
+    const 工厂 = new Function(`${js实现}; return 新条目id;`) as () => () => string;
+    const 新条目id = 工厂();
+    const 已见 = new Set<string>();
+    for (let i = 0; i < 200; i++)
+      已见.add(新条目id());
+    eq('[id] 连造 200 个 id 全部不同', 已见.size, 200);
+    ok('[id] id 带 用户- 前缀', [...已见].every(x => x.startsWith('用户-')));
+  }
+  // 自证: 旧的"时间戳 + 模块级自增"写法会被上面第 2 条抓到
+  ok('[id/自证] 旧的模块级计数器写法会被抓到', /^\s*let\s+条目序号/m.test('let 条目序号 = 0;\nfunction f(){}'));
+}
+
+// ─────────────────────────────────────────────────────────────
 console.log('\n[默认] 不引用、不关闭时, 列表产出与实发一致(I3 的结构面)');
 {
   const 造输入 = (额外: Record<string, any> = {}) => ({

@@ -113,15 +113,30 @@ function 切换(项: 列表项) {
 }
 
 /** 用户条目增删改 */
-/** 自增序号：防"同毫秒创建两条"时 id 相撞（需求方 2026-11-19 点名）。
- *  `Date.now()` 单独用的话，同一毫秒内连点两次「新增条目」会生成同一个 id，
- *  于是两条条目共用一个 id —— 删一条会把两条都删掉（`filter(id !== ...)`）。
- *  加一个进程内自增后缀就够了，不需要 uuid（这里只是本会话内的临时标识）。 */
-let 条目序号 = 0;
+/** 新条目的 id 用 `crypto.randomUUID()`（需求方 2026-11-19 裁定）。
+ *
+ *  ── 为什么不是 `Date.now()` 加自增后缀 ──
+ *  两个原因，第二个是决定性的:
+ *    ① 自增序号是**模块级变量**，页面重挂会归零 → 新条目可能拿到与旧条目相同的 id
+ *    ② id 相同的后果不只是"撞" —— `删除条目` 用 `filter(id !== ...)`，
+ *       **删一条会把两条都删掉**。那是数据丢失，不是显示问题。
+ *
+ *  所以不"算同毫秒概率多低"，而是把整类问题消掉：uuid 不依赖时间、不依赖进程内状态、
+ *  重挂不归零。浏览器环境原生有（酒馆是 Chromium/Firefox 现代版本）。
+ *
+ *  兜底：极老的浏览器没有 `randomUUID` 时退回时间戳 + 随机串 —— 仍然比纯时间戳强。
+ */
+function 新条目id(): string {
+  const 原生 = (globalThis as any).crypto?.randomUUID;
+  if (typeof 原生 === 'function')
+    return `用户-${原生.call((globalThis as any).crypto)}`;
+  // 兜底: 时间戳 + 两段随机。碰撞概率远低于纯时间戳。
+  const 随机 = () => Math.random().toString(36).slice(2, 10);
+  return `用户-${Date.now().toString(36)}-${随机()}-${随机()}`;
+}
 function 新增条目() {
   const 条目们 = settings.value.提示词?.条目 ?? [];
-  条目序号 += 1;
-  const id = `用户-${Date.now().toString(36)}-${条目序号}`;
+  const id = 新条目id();
   条目们.push({ id, role: 'system', content: '', 启用: true });
   settings.value.提示词.条目 = 条目们;
   // 新条目追加到顺序末尾
