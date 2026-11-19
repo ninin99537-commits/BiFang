@@ -349,7 +349,7 @@
           </span>
           <input v-model="settings.更新.注入世界书" type="checkbox" class="bf-switch" />
         </label>
-        <p class="bf-hint">不读全局世界书，只读当前角色卡与聊天绑定的世界书。</p>
+        <p class="bf-hint">不读全局世界书，只读<b>当前角色卡</b>、<b>聊天</b>与<b>人设（persona）</b>绑定的世界书。</p>
 
         <div class="bf-set-pairs">
           <label class="bf-field-block">
