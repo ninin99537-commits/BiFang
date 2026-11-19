@@ -18,6 +18,7 @@ import path from 'node:path';
 import { createPinia, setActivePinia } from 'pinia';
 import lodash from 'lodash';
 import { buildUpdateMessages } from '../src/彼方_NPC幕后生命状态系统/prompts';
+import { 默认模板 } from '../src/彼方_NPC幕后生命状态系统/提示词模板';
 import { 零件表 } from '../src/彼方_NPC幕后生命状态系统/零件表';
 
 (globalThis as any)._ = lodash;
@@ -91,10 +92,10 @@ console.log('\n[U1] 零件位置 那条旧搬迁路径已删除（2026-11-19 收
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[U4] 手写占位符段仍然是唯一的路（D13 只许 system）');
+console.log('\n[U4] 模板里写占位符 = 唯一的路（D13 只许 system）');
 {
-  // 旧路径删了，但「引用即搬迁」这条能力没变 —— 用户手写 `{{彼方:场景判断}}`。
-  // C5 规定 D13 只能被 system 段引用；这条判据长在 扫零件引用 里，与旧路径无关。
+  // 2026-11-19 模板化收口：锚点路径已删，写占位符的唯一方式是**模板里写**。
+  // C5（D13 只许 system 引用）这条判据现在要在模板路径下成立。
   const 原I = console.info;
   const 原T = console.table;
   const 原W = console.warn;
@@ -103,13 +104,17 @@ console.log('\n[U4] 手写占位符段仍然是唯一的路（D13 只许 system�
   console.warn = () => {};
   let 跑;
   try {
-    跑 = (role: string) => buildUpdateMessages({
+    跑 = (role: 'system' | 'user') => buildUpdateMessages({
       reply: '剧情', replyCount: 1, context: '玩家走进广场', timeJump: '', tracked: ['甲'], inSceneHint: [],
       currentCards: { 甲: { 当前在做: 'x' } }, autoTrackEnabled: true, physioEnabled: false,
       恋爱对象名单: [], 预填充: false, worldbook: '', currentStoryTime: '',
       storyTimeHint: '', storySpan: '', recentTrace: '', playerName: 'P', playerDescription: '',
       展开宏: (t: string) => t,
-      自定义段: [{ 锚点: '最前', role, content: '标记-A:{{彼方:场景判断}}', 启用: true }],
+      // 用户把场景判断占位符写在自己的段里，role 由他选
+      模板: [
+        { id: 'a', role, content: '标记-A:{{彼方:场景判断}}' },
+        { id: 'b', role: 'user', content: '剧情' },
+      ],
     } as any);
   }
   finally {
@@ -117,19 +122,21 @@ console.log('\n[U4] 手写占位符段仍然是唯一的路（D13 只许 system�
     console.table = 原T;
     console.warn = 原W;
   }
+  // system 段引用 → 展开
   const 系统 = 跑('system');
-  // 判据要看**它落在哪条消息**，不是"有没有出现"：
-  // 引用被忽略时，D13 仍会出现在它的默认位置（独立的 system 消息）——
-  // 所以"有没有出现"两种情况下都是 true，那样断言等于没测（第一版就这么假绿了）。
   const 系统那条 = 系统.messages.find(m => String(m.content).includes('标记-A'));
-  ok('[U4] system 段引用场景判断 → 它进那条 system',
+  ok('[U4] system 段引用场景判断 → 它展开在那条 system',
     !!系统那条 && String(系统那条.content).includes('玩家走进广场'),
     JSON.stringify(系统.messages.map(m => m.role + ':' + String(m.content).slice(0, 25))));
+  // user 段引用 → 不展开（C5：D13 只许 system）
   const 用户 = 跑('user');
   const 用户那条 = 用户.messages.find(m => String(m.content).includes('标记-A'));
-  ok('[U4] user 段引用场景判断 → 那条 user 里没有它（引用被忽略）',
-    !!用户那条 && !String(用户那条.content).includes('玩家走进广场'),
-    JSON.stringify(用户那条 ? String(用户那条.content).slice(0, 120) : '(没找到那条消息)'));
+  // **展开为空 → 整行消失 → 整段只剩空 → 整段不出现**（渲染规则 ② + 段规则）。
+  // 所以判据是"没有一条消息含那段内容"，而不是"找到那条 user 且它不含"。
+  ok('[U4] user 段引用场景判断 → 不展开（C5 只许 system）',
+    !用户.messages.some(m => String(m.content).includes('玩家走进广场'))
+    && !用户.messages.some(m => String(m.content).includes('标记-A')),
+    JSON.stringify(用户.messages.map(m => m.role + ':' + String(m.content).slice(0, 30))));
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -185,14 +192,16 @@ console.log('\n[U3c] 变异锁: 故意造一个"第二套拼装"的假实现, U3
   // ① 负样本 A: 假预览组件里写了第二套拼装 → 必须被抓
   const 假预览 = {
     名: '页面-拼装.vue',
-    源码: `const 结果 = buildUpdateMessages({ reply: 'x' });`,
+    源码: `const 结果 = buildUpdateMessages({
+  模板: 默认模板, reply: 'x' });`,
   };
   eq('[U3c] 第二套拼装被抓住', 扫描([假预览]), ['页面-拼装.vue']);
 
   // ② 负样本 B: 同样的调用写在白名单文件里 → 不该被抓(证明不是"见名就报")
   const 合法 = {
     名: '更新输入.ts',
-    源码: `const 结果 = buildUpdateMessages({ reply: 'x' });`,
+    源码: `const 结果 = buildUpdateMessages({
+  模板: 默认模板, reply: 'x' });`,
   };
   eq('[U3c] 白名单文件里的调用不报', 扫描([合法]), []);
 

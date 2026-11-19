@@ -26,6 +26,7 @@
 import { createPinia, setActivePinia } from 'pinia';
 import lodash from 'lodash';
 import { buildUpdateMessages } from '../src/彼方_NPC幕后生命状态系统/prompts';
+import { 默认模板 } from '../src/彼方_NPC幕后生命状态系统/提示词模板';
 import { chatCompletion } from '../src/彼方_NPC幕后生命状态系统/api';
 import { 彼方假宿主 } from './helpers/彼方假宿主';
 
@@ -78,6 +79,7 @@ function 造输入(额外: Record<string, any> = {}) {
     playerName: '主角',
     playerDescription: '',
     展开宏: (t: string) => t,
+    模板: 默认模板,
     ...额外,
   };
 }
@@ -90,31 +92,31 @@ function 建(额外: Record<string, any> = {}) {
 const TAIL = '现在, 按上述全部规则开始执行任务。';
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[E] 五个锚点位置语义');
+console.log('\n[E] 段顺序 = 消息顺序（模板即全部）');
 {
-  const 段 = (锚点: string, content: string) => ({ 锚点, role: 'system', content, 启用: true });
-  const 伪 = 建({
-    自定义段: [
-      段('最前', 'ANCHOR_FIRST'),
-      段('主提示词之后', 'ANCHOR_AFTER_MAIN'),
-      段('任务之前', 'ANCHOR_BEFORE_TASK'),
-      段('任务之后', 'ANCHOR_AFTER_TASK'),
-      段('最后', 'ANCHOR_LAST'),
-    ],
-  });
+  // ⚠ 2026-11-19 模板化收口：**五个锚点（`自定义段`）已不再被拼装读取**。
+  //   这个用例原来测"5 个锚点各自落在第几条消息"。那个维度不存在了。
+  //
+  //   它守的性质换成了：**段列表的顺序就是消息顺序**（一段 = 一条消息）。
+  //   这是段列表形态最核心的一条 —— 用户拖顺序就是改消息顺序。
+  const 段 = (role: 'system' | 'user' | 'assistant', content: string) => ({ id: content, role, content });
+  const 模板 = [
+    段('system', 'SEG_FIRST'),
+    段('system', 'SEG_SECOND'),
+    段('user', 'SEG_THIRD'),
+    段('assistant', 'SEG_FOURTH'),
+    段('user', 'SEG_LAST'),
+  ];
+  const 伪 = 建({ 模板 });
   const 位置 = (标记: string) => 伪.findIndex(m => String(m.content).includes(标记));
-  const 首 = 位置('ANCHOR_FIRST');
-  const 主后 = 位置('ANCHOR_AFTER_MAIN');
-  const 任前 = 位置('ANCHOR_BEFORE_TASK');
-  const 任后 = 位置('ANCHOR_AFTER_TASK');
-  const 最后 = 位置('ANCHOR_LAST');
-  ok('[E] 五个锚点都出现了', [首, 主后, 任前, 任后, 最后].every(i => i >= 0), JSON.stringify([首, 主后, 任前, 任后, 最后]));
-  ok('[E] 最前 在最前面', 首 === 0, `位置 ${首}`);
-  ok('[E] 主提示词之后 在任务之前之前', 主后 < 任前, `${主后} < ${任前}`);
-  ok('[E] 任务之前 在任务之后之前', 任前 < 任后, `${任前} < ${任后}`);
-  ok('[E] 顺序: 最前 < 主后 < 任前 < 任后 < 最后', 首 < 主后 && 主后 < 任前 && 任前 < 任后 && 任后 < 最后, JSON.stringify([首, 主后, 任前, 任后, 最后]));
-  // 末条仍是 user(锚点段是 system, 但 TAIL_KICKOFF 会补 user)
-  eq('[E] 用户段全是 system 时, 末条被补成 user', 伪[伪.length - 1].role, 'user');
+  const 序 = ['SEG_FIRST', 'SEG_SECOND', 'SEG_THIRD', 'SEG_FOURTH', 'SEG_LAST'].map(位置);
+  ok('[E] 五段都出现了', 序.every(i => i >= 0), JSON.stringify(序));
+  eq('[E] 顺序与段列表一致', 序, [0, 1, 2, 3, 4]);
+  eq('[E] 第 1 条 role 跟段走', 伪[0].role, 'system');
+  eq('[E] 第 3 条 role 跟段走', 伪[2].role, 'user');
+  eq('[E] 第 4 条 role 跟段走', 伪[3].role, 'assistant');
+  // 末条不是 user 时补 TAIL_KICKOFF
+  eq('[E] 末条是 user 时不补', 伪[伪.length - 1].content.includes('SEG_LAST'), true);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -122,11 +124,16 @@ console.log('\n[F] 与预填充的交互: 末条仍是 user');
 {
   const 伪 = 建({ 预填充: true });
   eq('[F] 开预填充后末条仍是 user', 伪[伪.length - 1].role, 'user');
-  // 预填充由共用层在末条 user 之后追加 assistant '{', 与现状同一条路径
   ok('[F] 末条是 user 才轮得到预填充', 伪[伪.length - 1].role === 'user');
 
-  // 用户在「最后」插 assistant 段 → 末条变 assistant → TAIL_KICKOFF 补 user
-  const 末assistant = 建({ 自定义段: [{ 锚点: '最后', role: 'assistant', content: '尾注' }] });
+  // 用户的最后一段是 assistant → 末条变 assistant → TAIL_KICKOFF 补 user
+  const 末assistant = 建({
+    模板: [
+      { id: 'a', role: 'system', content: '规则' },
+      { id: 'b', role: 'user', content: '剧情' },
+      { id: 'c', role: 'assistant', content: '尾注' },
+    ],
+  });
   eq('[F] 末条是 assistant 时补了 TAIL_KICKOFF', 末assistant[末assistant.length - 1].content, TAIL);
   eq('[F] 补的是 user', 末assistant[末assistant.length - 1].role, 'user');
 }
@@ -151,7 +158,10 @@ console.log('\n[G] 全进工具: 内容进工具说明, messages 只剩身份句
   // 但都在工具说明里
   ok('[G] 规则在工具说明里', String(出.工具说明 ?? '').includes('核心原则'));
   ok('[G] 剧情在工具说明里', String(出.工具说明 ?? '').includes('这是一段剧情正文'));
-  ok('[G] 场景判断在工具说明里', String(出.工具说明 ?? '').includes('主角走进广场'));
+  // ⚠ 2026-11-19：默认模板里**已删掉场景判断段**（用户裁定「感觉可以删」），
+  //   所以全进工具时工具说明里也不会有它 —— 那正是"默认不引用"的直接后果。
+  ok('[G] 场景判断不在工具说明里（默认模板已删掉那段）',
+     !String(出.工具说明 ?? '').includes('主角走进广场'));
   // 末条 user 是收尾指令, **不含任何规则内容**(它是技术要求, 不是伪装残留)
   eq('[G] 末条 user 就是 TAIL_KICKOFF', 段[段.length - 1].content, TAIL);
 }
@@ -182,66 +192,93 @@ console.log('\n[H] 四组合都不崩(工具通道 × 请求打散)');
 // ─────────────────────────────────────────────────────────────
 console.log('\n[J] 末条非 user 时补 TAIL_KICKOFF');
 {
-  // 关掉数据零件(任务正文变空) + 「最后」插 system → 末条是 system
-  const 关 = 建({ 自定义段: [{ 锚点: '最后', role: 'system', content: '尾部系统提示' }] });
+  // 末条是 system → 补
+  const 关 = 建({
+    模板: [
+      { id: 'a', role: 'user', content: '剧情' },
+      { id: 'b', role: 'system', content: '尾部系统提示' },
+    ],
+  });
   eq('[J] 末条是 system 时补了 TAIL_KICKOFF', 关[关.length - 1].content, TAIL);
   eq('[J] 补的是 user', 关[关.length - 1].role, 'user');
   eq('[J] 补之前末条确实是 system', 关[关.length - 2].role, 'system');
   eq('[J] 补之前末条内容正常', 关[关.length - 2].content, '尾部系统提示');
 
   // 末条是 assistant → 也补
-  const 关assistant = 建({ 自定义段: [{ 锚点: '最后', role: 'assistant', content: '尾注' }] });
+  const 关assistant = 建({
+    模板: [
+      { id: 'a', role: 'user', content: '剧情' },
+      { id: 'b', role: 'assistant', content: '尾注' },
+    ],
+  });
   eq('[J] 末条是 assistant 时仍补', 关assistant[关assistant.length - 1].role, 'user');
 
-  // 末条本来就是 user → 不补(不多加一条)
-  const 关user = 建({ 自定义段: [{ 锚点: '最后', role: 'user', content: '尾部用户提示' }] });
+  // 末条本来就是 user → 不补（不多加一条）
+  const 关user = 建({
+    模板: [
+      { id: 'a', role: 'system', content: '规则' },
+      { id: 'b', role: 'user', content: '尾部用户提示' },
+    ],
+  });
   eq('[J] 末条是 user 时不补', 关user[关user.length - 1].content, '尾部用户提示');
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[K] 锚点插 assistant → 合并(不改角色/不加消息/不丢内容)');
+console.log('\n[K] 连续 assistant 段被合并(不改角色/不加消息/不丢内容)');
 {
+  // 一段 = 一条消息，但**相邻 assistant 仍要合并** ——
+  // 那是供应商兼容性要求（连续两条 assistant 有些模型会拒绝），与"段=消息"不冲突：
+  // 段决定"用户想要几条"，合并相邻 assistant 是"发出去前必须做的整形"。
   const 两条 = 建({
-    自定义段: [
-      { 锚点: '任务之后', role: 'assistant', content: 'AA', 启用: true },
-      { 锚点: '最后', role: 'assistant', content: 'BB', 启用: true },
+    模板: [
+      { id: 'a', role: 'system', content: '规则' },
+      { id: 'b', role: 'assistant', content: 'AA' },
+      { id: 'c', role: 'assistant', content: 'BB' },
+      { id: 'd', role: 'user', content: '剧情' },
     ],
   });
-  // 两条连续 assistant 必须被合成一条
   const 连续 = 两条.filter((m: any, i: number) => i > 0 && 两条[i - 1].role === m.role && m.role === 'assistant');
   eq('[K] 没有连续两条 assistant', 连续.length, 0);
-  // 内容一个字不丢
   const 全文 = 两条.map((m: any) => String(m.content)).join('\n');
   ok('[K] AA 还在', 全文.includes('AA'));
   ok('[K] BB 还在', 全文.includes('BB'));
-  // 合并后仍是 assistant(没被改成别的角色)
   ok('[K] 合并后那条仍是 assistant', 两条.some((m: any) => m.role === 'assistant' && m.content.includes('AA') && m.content.includes('BB')));
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[L] 全入口扫一遍: 5 个锚点 × assistant, 都不许有连续 assistant');
+console.log('\n[L] 各种位置的 assistant 段都不产生连续 assistant');
 {
-  const 锚点们 = ['最前', '主提示词之后', '任务之前', '任务之后', '最后'];
-  for (const 锚点 of 锚点们) {
-    const 段 = 建({ 自定义段: [{ 锚点, role: 'assistant', content: `AT-${锚点}`, 启用: true }] });
+  // 把 assistant 段放在段列表的各个位置，都不许出现连续 assistant
+  for (const 位 of [0, 1, 2, 3]) {
+    const 模板 = [
+      { id: 's1', role: 'system' as const, content: '规则' },
+      { id: 'u1', role: 'user' as const, content: '剧情' },
+      { id: 'a1', role: 'assistant' as const, content: 'AT' },
+      { id: 'u2', role: 'user' as const, content: '结尾' },
+    ];
+    // 把 assistant 挪到指定位
+    const [移] = 模板.splice(2, 1);
+    模板.splice(位, 0, 移);
+    const 段 = 建({ 模板 });
     const 连续 = 段.filter((m: any, i: number) => i > 0 && 段[i - 1].role === 'assistant' && m.role === 'assistant');
-    eq(`[L] 锚点「${锚点}」插 assistant 后没有连续 assistant`, 连续.length, 0);
-    ok(`[L] 锚点「${锚点}」的内容没丢`, 段.some((m: any) => String(m.content).includes(`AT-${锚点}`)));
+    eq(`[L] assistant 在第 ${位} 段时不产生连续 assistant`, 连续.length, 0);
+    ok(`[L] assistant 的内容没丢（第 ${位} 段）`, 段.some((m: any) => String(m.content).includes('AT')));
   }
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[M] 全进工具时五个锚点全留在 messages(防静默丢用户段)');
+console.log('\n[M] 全进工具时所有内容都进工具说明（不静默丢段）');
 {
-  const 锚点们 = ['最前', '主提示词之后', '任务之前', '任务之后', '最后'];
-  const 段 = 建({
-    规则进工具: true,
-    自定义段: 锚点们.map(锚点 => ({ 锚点, role: 'system', content: `KEEP-${锚点}`, 启用: true })),
-  });
-  const 全文 = 段.map((m: any) => String(m.content)).join('\n');
-  for (const 锚点 of 锚点们) {
-    ok(`[M] 锚点「${锚点}」的段还在 messages 里`, 全文.includes(`KEEP-${锚点}`));
-  }
+  const 模板 = [
+    { id: 'a', role: 'system' as const, content: 'KEEP-SYS' },
+    { id: 'b', role: 'user' as const, content: 'KEEP-USER' },
+  ];
+  const 出 = buildUpdateMessages(造输入({ 规则进工具: true, 模板 }) as any);
+  const 工具 = String(出.工具说明 ?? '');
+  ok('[M] 系统段的内容在工具说明里', 工具.includes('KEEP-SYS'));
+  ok('[M] 用户段的内容也在工具说明里', 工具.includes('KEEP-USER'));
+  // 身份句仍留在 messages（否则第一条就没了）
+  ok('[M] messages 里仍有身份句', 出.messages.length > 0 && String(出.messages[0].content).length > 0);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -255,7 +292,13 @@ console.log('\n[N] 伪装已移除: 内置内容里不再有确认句');
     ok(`[N] 内置内容里没有确认句「${句}」`, !全文.includes(句), 句);
   }
   // 自证: 这个断言抓得住 —— 若用户自己写一句, 它就在(证明判据不是永远为真)
-  const 自写 = 建({ 自定义段: [{ 锚点: '最后', role: 'assistant', content: '明白。', 启用: true }] });
+  const 自写 = 建({
+    模板: [
+      { id: 'a', role: 'system', content: '规则' },
+      { id: 'b', role: 'assistant', content: '明白。' },
+      { id: 'c', role: 'user', content: '剧情' },
+    ],
+  });
   ok('[N/自证] 用户自己写「明白。」时它确实在(判据不是永远为真)',
     自写.some((m: any) => String(m.content).includes('明白。')));
 }

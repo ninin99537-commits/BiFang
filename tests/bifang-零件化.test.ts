@@ -18,13 +18,16 @@
 import { createPinia, setActivePinia } from 'pinia';
 import lodash from 'lodash';
 import { buildUpdateMessages } from '../src/彼方_NPC幕后生命状态系统/prompts';
+import { 默认模板, type 提示词模板 } from '../src/彼方_NPC幕后生命状态系统/提示词模板';
 import { 零件表, 扫占位符, 切规则零件, 清单摘要, 是默认配置 } from '../src/彼方_NPC幕后生命状态系统/零件表';
 import { 校验全部, type 拼装结果 } from './helpers/彼方-零件不变量';
 import 提示词源码 from '../src/彼方_NPC幕后生命状态系统/prompts.ts?raw';
 // I3 的基准。**2026-11-19 重采过一次**：用户裁定「现在的伪装可以去掉了」，
 // 那是一次**有意的行为变更**，旧快照（含伪装）不再是基准。
 // 现在这份是"去掉伪装之后、零件化之前"的产物 —— 零件化必须与它逐字节一致。
-import 快照文本 from './fixtures/bifang-prompt-去伪装后.json?raw';
+// ⚠ 2026-11-19 换基准（第三次）：默认模板里删掉了「场景判断」段（用户裁定「感觉可以删」）。
+// 那是**有意的行为变更**，旧基准（含场景判断）不再是基准。
+import 快照文本 from './fixtures/bifang-prompt-模板化后.json?raw';
 
 (globalThis as any)._ = lodash;
 setActivePinia(createPinia());
@@ -76,6 +79,7 @@ function 造输入(额外: Record<string, any> = {}) {
     playerName: '主角',
     playerDescription: '',
     展开宏: (t: string) => t,
+    模板: 默认模板,
     ...额外,
   };
 }
@@ -147,18 +151,29 @@ console.log('\n[I3/自证] 负样本: 只要有一个零件被关掉, 上面的�
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[I1] 不重复: 零件被引用后从默认位置移除');
+console.log('\n[I1] 不重复: 模板里的占位符只展开一次');
 {
+  // ⚠ 2026-11-19 模板化收口：**锚点路径（`自定义段`）已不再被拼装读取** ——
+  //   模板是唯一路径。所以这条判据从"锚点引用了零件"改成"**模板里写了占位符**"。
+  //
+  // 它守的性质没变：**同一个零件在产物里只能出现一次**（I1）。
+  // 变的只是"怎么表达'我要这个世界书'"：从锚点段 → 模板里写 `{{彼方:世界书}}`。
+  const 模板引用世界书: 提示词模板 = [
+    { id: 'a', role: 'system', content: '开头:{{彼方:世界书}}' },
+    ...默认模板.slice(1),
+  ];
   const 引用世界书 = buildUpdateMessages(
     造输入({
       worldbook: 'WORLDBOOK-内容-标记',
-      自定义段: [{ 锚点: '最前', role: 'system', content: '开头:{{彼方:世界书}}', 启用: true }],
+      模板: 模板引用世界书,
     }) as any,
   );
   const 全文 = 引用世界书.messages.map(m => m.content).join('\n');
   const 次数 = 全文.split('WORLDBOOK-内容-标记').length - 1;
-  eq('[I1] 世界书只出现一次(默认位置已被移除)', 次数, 1);
-  ok('[I1] 它出现在「最前」锚点那条里', 引用世界书.messages[0].content.includes('WORLDBOOK-内容-标记'));
+  eq('[I1] 世界书只出现一次', 次数, 1);
+  ok('[I1] 它出现在第 1 段（写占位符的那段）',
+     引用世界书.messages[0].content.includes('WORLDBOOK-内容-标记'),
+     JSON.stringify(引用世界书.messages.map(m => m.content.slice(0, 25))));
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -222,19 +237,30 @@ console.log('\n[C5] 场景判断只许 system 段引用');
   const 喊过: string[] = [];
   console.warn = (...args: any[]) => 喊过.push(args.join(' '));
   try {
-    const r = buildUpdateMessages(
-      造输入({
-        context: '玩家走进广场',
-        自定义段: [{ 锚点: '最前', role: 'user', content: '{{彼方:场景判断}}', 启用: true }],
-      }) as any,
-    );
+    // ⚠ 2026-11-19 模板化收口：**锚点路径已删**，写占位符的唯一方式是模板。
+    //   C5 这条判据现在长在 `段列表变消息` 里（见 提示词模板.ts 的 `只展开一次`）。
+    const 模板 = [
+      { id: 'a', role: 'system' as const, content: '规则' },
+      { id: 'b', role: 'user' as const, content: '{{彼方:场景判断}}' },
+      { id: 'c', role: 'user' as const, content: '剧情' },
+    ];
+    const r = buildUpdateMessages(造输入({ context: '玩家走进广场', 模板 }) as any);
     const 全文 = r.messages.map(m => m.content).join('\n');
     // 场景判断是 system 段 —— 若它出现在任何 **user** 消息里, 说明 user 段引用被错误展开了
     const 进了user段 = r.messages.some(m => m.role === 'user' && m.content.includes('玩家走进广场'));
     ok('[C5] user 段引用场景判断 → 没有展开进 user 消息', !进了user段);
-    // 它仍在默认位置(被拒绝的引用不该顺手把它删掉)
-    ok('[C5] 被拒绝后仍在默认位置(system 段里)', 全文.includes('玩家走进广场'));
-    ok('[C5] warn 说明了原因', 喊过.some(s => s.includes('只能被 system')), 喊过.join(' | '));
+    // 它**也不在**默认位置了 —— 默认模板里已经删掉场景判断段（#232）
+    ok('[C5] 默认模板里没有场景判断段，所以它整体不出现', !全文.includes('玩家走进广场'),
+       JSON.stringify(r.messages.map(m => m.role + ':' + m.content.slice(0, 20))));
+
+    // 自证：同样的模板但 role 是 system → 它展开
+    const 系统模板 = [
+      { id: 'a', role: 'system' as const, content: '{{彼方:场景判断}}' },
+      { id: 'b', role: 'user' as const, content: '剧情' },
+    ];
+    const r2 = buildUpdateMessages(造输入({ context: '玩家走进广场', 模板: 系统模板 }) as any);
+    ok('[C5/自证] system 段引用时它展开',
+       r2.messages.some(m => String(m.content).includes('玩家走进广场')));
   }
   finally {
     console.warn = 原;
@@ -351,79 +377,55 @@ console.log('\n[V1-第二批] 被关闭(有内容) 与 被关闭(空) 必须分�
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[L] 跨锚点"首处": 5 个锚点两两穷举(不再只测一种)');
+console.log('\n[L] 跨段"首处": 模板里同一个占位符写两处，只有第一处展开');
 {
-  const 锚点们 = ['最前', '主提示词之后', '任务之前', '任务之后', '最后'];
-  // 全扫写法: 每对锚点都验一次 —— 按锚点表顺序在前的那一处生效, 另一处被忽略。
-  // 注意"哪一处生效"的判据是**锚点表顺序**, 不是参数顺序: `扫零件引用` 按锚点表遍历,
-  // 而锚点表就是消息里的实际先后。所以传参 (甲, 乙) 与 (乙, 甲) 结果应当一致。
-  let 组合数 = 0;
-  for (const 甲 of 锚点们) {
-    for (const 乙 of 锚点们) {
-      if (甲 === 乙)
+  // ⚠ 2026-11-19 模板化收口：**锚点路径已删除**（`自定义段` 不再被拼装读取）。
+  //
+  // 这个用例原来穷举 5 个锚点两两组合（20 对）。现在"写两处"的表达方式变成
+  // **模板里两段各写一次同一个占位符** —— 守的性质没变：
+  //   **同一个零件在产物里只能展开一次**（C4 首处生效），其余处变成空串。
+  //
+  // 为什么保留穷举：它是"顺序无关"的证明 —— 谁在前谁生效，与传参顺序无关。
+  const 组合数 = 20;
+  let 跑过 = 0;
+  // 用 20 种"两段顺序"组合（5 个位置里取两个，交换顺序 = 40，这里取 20 对）
+  const 位置们 = [0, 1, 2, 3, 4];
+  for (let a = 0; a < 位置们.length; a++) {
+    for (let b = 0; b < 位置们.length; b++) {
+      if (a === b)
         continue;
-      组合数++;
+      跑过++;
+      const 前 = Math.min(a, b);
+      const 后 = Math.max(a, b);
+      // 造 5 段：前 与 后 各写一次占位符，其余段是普通文字
+      const 段们: 提示词模板 = 位置们.map(i => ({
+        id: `s${i}`,
+        role: i === 4 ? 'user' : 'system',
+        content: i === 前 || i === 后 ? `${i}:{{彼方:世界书}}` : `${i}:普通`,
+      }));
       const 原W = console.warn;
       console.warn = () => {};
       let r;
       try {
-        r = buildUpdateMessages(
-          造输入({
-            worldbook: 'WB-唯一标记',
-            自定义段: [
-              { 锚点: 甲, role: 'system', content: `${甲}:{{彼方:世界书}}`, 启用: true },
-              { 锚点: 乙, role: 'system', content: `${乙}:{{彼方:世界书}}`, 启用: true },
-            ],
-          }) as any,
-        );
+        r = buildUpdateMessages(造输入({ worldbook: 'WB-唯一标记', 模板: 段们 }) as any);
       }
       finally {
         console.warn = 原W;
       }
       const 全文 = r.messages.map(m => m.content).join('\n');
       const 次数 = 全文.split('WB-唯一标记').length - 1;
-      ok(`[L] ${甲}→${乙}: 世界书只展开一次`, 次数 === 1, `实际 ${次数} 次`);
-      // 首处 = 锚点表顺序靠前的那个(与传参顺序无关)
-      const 该有 = 锚点们.indexOf(甲) < 锚点们.indexOf(乙) ? 甲 : 乙;
-      const 不该有 = 该有 === 甲 ? 乙 : 甲;
-      // 断言写法: 找到"以该锚点名开头"的那条消息, 它必须含标记。
-      // **不能**写成 `includes(`${该有}:WB-唯一标记`)` —— 展开后锚点名与标记之间
-      // 隔着世界书段的标题(约 200 字), 那种拼法永远不匹配(第一批的 L 组就错在这)。
-      const 该锚点的消息 = r.messages.find(m => m.content.startsWith(`${该有}:`));
-      ok(
-        `[L] ${甲}→${乙}: 展开在「${该有}」(锚点表靠前的那个)`,
-        !!该锚点的消息 && 该锚点的消息.content.includes('WB-唯一标记'),
-        `找不到以「${该有}:」开头的消息, 或它不含标记`,
-      );
-      const 不该锚点的消息 = r.messages.find(m => m.content.startsWith(`${不该有}:`));
-      ok(
-        `[L] ${甲}→${乙}: 「${不该有}」那处的占位符被忽略(只剩前缀)`,
-        !不该锚点的消息 || !不该锚点的消息.content.includes('WB-唯一标记'),
-      );
+      ok(`[L] 段${前}/段${后}: 世界书只展开一次`, 次数 === 1, `实际 ${次数} 次`);
+      // 首处 = 靠前的那一段
+      const 该有 = r.messages.find(m => m.content.startsWith(`${前}:`));
+      ok(`[L] 段${前}/段${后}: 展开在靠前那段`,
+         !!该有 && 该有.content.includes('WB-唯一标记'),
+         `找不到以「${前}:」开头的消息，或它不含标记`);
+      const 不该有 = r.messages.find(m => m.content.startsWith(`${后}:`));
+      ok(`[L] 段${前}/段${后}: 靠后那处的占位符被忽略`,
+         !不该有 || !不该有.content.includes('WB-唯一标记'));
     }
   }
-  eq('[L] 穷举了 5×4=20 对锚点组合', 组合数, 20);
-  // **这条是 [L] 的核心发现**: 锚点表顺序**最后一个**的锚点, 在任何两两组合里
-  // 都不可能成为"首处"(因为它后面没有别的锚点了)。这不是缺陷 —— 它说明
-  // "首处"的定义域是"锚点表里靠前的那个", 天然把最后一个排除在外。
-  // 写下来是为了让后来人知道 20 对不是"每个锚点各当 4 次首处"。
-  {
-    const 首处次数 = new Map<string, number>();
-    for (const 甲 of 锚点们) {
-      for (const 乙 of 锚点们) {
-        if (甲 === 乙)
-          continue;
-        const 该有 = 锚点们.indexOf(甲) < 锚点们.indexOf(乙) ? 甲 : 乙;
-        首处次数.set(该有, (首处次数.get(该有) ?? 0) + 1);
-      }
-    }
-    eq('[L] 锚点表最后一个(「最后」)永远不可能是"首处"', 首处次数.get('最后') ?? 0, 0);
-    eq('[L] 锚点表第一个(「最前」)在 8 对里当首处', 首处次数.get('最前'), 8);
-    // 自证: 前 4 个锚点都当过首处(不是只有"最前"一个)
-    ok('[L] 前 4 个锚点都当过"首处"',
-      ['最前', '主提示词之后', '任务之前', '任务之后'].every(名 => (首处次数.get(名) ?? 0) > 0),
-      JSON.stringify([...首处次数.entries()]));
-  }
+  eq('[L] 穷举了 20 种两段组合', 跑过, 组合数);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -717,7 +719,9 @@ console.log('\n[切散] 零件被切散在两处时, 清单必须指认, 不许�
   }
 }
 {
-  eq('[零件表] 零件数 17', 零件表.length, 17);
+  // 2026-11-19 模板化：从 17 变成 19 —— 新增 `D14-生理` / `D14-恋爱` 两个零件
+  // （D14 尾部的两个条件切片，需求方 #217 ① 要求它们有正式位置）。
+  eq('[零件表] 零件数 19（17 + 生理任务 + 恋爱任务）', 零件表.length, 19);
   const 重号 = 零件表.map(件 => 件.代号).filter((代号, i, 全) => 全.indexOf(代号) !== i);
   eq('[零件表] 代号不重复', 重号, []);
   const 重名 = 零件表.map(件 => 件.名).filter((名, i, 全) => 全.indexOf(名) !== i);

@@ -21,6 +21,7 @@ import {
     type 列表项, type 用户条目,
 } from '../src/彼方_NPC幕后生命状态系统/条目列表';
 import { buildUpdateMessages } from '../src/彼方_NPC幕后生命状态系统/prompts';
+import { 默认模板 } from '../src/彼方_NPC幕后生命状态系统/提示词模板';
 
 (globalThis as any)._ = lodash;
 setActivePinia(createPinia());
@@ -177,6 +178,7 @@ console.log('\n[C18] 块划分: 内置项按语义块、用户条目按 role');
     预填充: false, worldbook: '', currentStoryTime: '2026-01-01 20:00',
     storyTimeHint: '2026-01-02 12:30', storySpan: '约 0.7 天', recentTrace: '',
     playerName: '主角', playerDescription: '', 展开宏: (t: string) => t,
+    模板: 默认模板,
     ...额外,
   });
   const 实发role = (额外: Record<string, any>) => {
@@ -195,8 +197,16 @@ console.log('\n[C18] 块划分: 内置项按语义块、用户条目按 role');
 
   // ① 无场景: system, user
   eq('[C18] 无场景时实发是 system,user', 实发role({}), ['system', 'user']);
-  // ② 有场景: system, system, user —— **两条 system 不能合并**
-  eq('[C18] 有场景时实发是 system,system,user(场景判断独立一条)', 实发role({ context: '广场' }), ['system', 'system', 'user']);
+  // ② **默认模板里已没有场景判断段**（2026-11-19 用户裁定「感觉可以删」）。
+  //    所以给了 context 也不多一条 —— 那正是"默认不引用"的直接后果。
+  eq('[C18] 默认模板删掉场景判断后，给 context 也不多一条', 实发role({ context: '广场' }), ['system', 'user']);
+  // 自证：用户自己把场景判断加回模板时，它才出现（而且是独立一条 system）
+  const 加回场景: any[] = [
+    { id: 'a', role: 'system', content: 默认模板[0].content },
+    { id: 'b', role: 'system', content: '{{彼方:场景判断}}' },
+    { id: 'c', role: 'user', content: 默认模板[1].content },
+  ];
+  eq('[C18/自证] 加回场景判断后是 system,system,user', 实发role({ context: '广场', 模板: 加回场景 }), ['system', 'system', 'user']);
 
   // ③ 块划分本身：三个语义块
   const 内置 = 造内置列表(取内容);
@@ -410,25 +420,13 @@ console.log('\n[留痕] 查块兜底必须 warn，不许静默');
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[并集] 双来源引用: 锚点段 + 用户条目各引用同一个零件');
+console.log('\n[并集] 同一个占位符在模板里写两处，只展开一次');
 {
-  // 验收 2026-11-19 点名的缺口: 并集**没有直接证明**。
-  // 随机 200 组只造锚点段（旧 API），条目列表测试没与锚点段混用，
-  // `[I1]` 世界书只来自单一来源 —— 所以"并集"这件事从来没有一条用例证明过。
-  //
-  // **结构封死了是一回事，有直接证明是另一回事**:
-  //   结构防的是"现在没写错", 用例防的是"以后有人重构时写错"。
-  const 造输入 = (额外: Record<string, any> = {}) => ({
-    reply: '剧情正文', replyCount: 1, context: '', timeJump: '',
-    tracked: ['甲'], inSceneHint: [],
-    currentCards: { 甲: { 当前在做: '做饭', 身份锚点: '面包师' } },
-    autoTrackEnabled: true, physioEnabled: false, 恋爱对象名单: [], 自定义段: [],
-    预填充: false, worldbook: 'WB-并集标记', currentStoryTime: '2026-01-01 20:00',
-    storyTimeHint: '2026-01-02 12:30', storySpan: '约 0.7 天', recentTrace: '',
-    playerName: '主角', playerDescription: '', 展开宏: (t: string) => t,
-    ...额外,
-  });
-  const 跑 = (额外: Record<string, any>) => {
+  // ⚠ 2026-11-19 模板化收口：**锚点路径 + 条目路径都已不再被拼装读取**。
+  //   这个用例原来是"锚点段 + 用户条目各引用同一个零件"（两条路并存时的并集）。
+  //   那两条路都删了，所以改成守**同一条性质**在模板路径下的形态：
+  //   **同一个零件在产物里至多出现一次**（I1）—— 而"写两处"现在只能靠模板。
+  const 跑 = (模板: any[]) => {
     const 原I = console.info;
     const 原T = console.table;
     const 原W = console.warn;
@@ -437,7 +435,16 @@ console.log('\n[并集] 双来源引用: 锚点段 + 用户条目各引用同一
     console.table = () => {};
     console.warn = (...a: any[]) => 警告们.push(a.join(' '));
     try {
-      const r = buildUpdateMessages(造输入(额外) as any);
+      const r = buildUpdateMessages({
+        reply: '剧情正文', replyCount: 1, context: '', timeJump: '',
+        tracked: ['甲'], inSceneHint: [],
+        currentCards: { 甲: { 当前在做: '做饭', 身份锚点: '面包师' } },
+        autoTrackEnabled: true, physioEnabled: false, 恋爱对象名单: [], 自定义段: [],
+        预填充: false, worldbook: 'WB-并集标记', currentStoryTime: '2026-01-01 20:00',
+        storyTimeHint: '2026-01-02 12:30', storySpan: '约 0.7 天', recentTrace: '',
+        playerName: '主角', playerDescription: '', 展开宏: (t: string) => t,
+        模板,
+      } as any);
       return { r, 警告们 };
     }
     finally {
@@ -447,61 +454,49 @@ console.log('\n[并集] 双来源引用: 锚点段 + 用户条目各引用同一
     }
   };
 
-  // 场景: 锚点段引用世界书 + 用户条目也引用世界书
-  const { r, 警告们 } = 跑({
-    自定义段: [{ 锚点: '最前', role: 'system', content: '锚点侧:{{彼方:世界书}}', 启用: true }],
-    条目: [{ id: 'u1', role: 'system', content: '条目侧:{{彼方:世界书}}' }],
-  });
+  // 模板里两段各写一次世界书
+  const { r } = 跑([
+    { id: 'a', role: 'system', content: '第一处:{{彼方:世界书}}' },
+    { id: 'b', role: 'system', content: '第二处:{{彼方:世界书}}' },
+    { id: 'c', role: 'user', content: '剧情' },
+  ]);
   const 全文 = [...r.messages.map(m => m.content), r.工具说明 ?? ''].join('\n');
 
   // ① 世界书恰好出现 1 次
   const 次数 = 全文.split('WB-并集标记').length - 1;
-  eq('[并集] 世界书恰好出现 1 次(两侧各引用一次也不重复)', 次数, 1);
+  eq('[并集] 世界书恰好出现 1 次（写两处也不重复）', 次数, 1);
 
-  // ② 在**先声明的**那一侧展开。
-  //    顺序定义: **锚点段先扫**（`扫零件引用` 在 `解析位置` 之前跑），
-  //    所以锚点侧拿"首处"。这是既有实现的顺序，写下来是因为它是个约定。
+  // ② 在**靠前**那一段展开（C4 首处生效）
   //
-  //    ⚠ 断言**不能**写成 `全文.includes('锚点侧:WB-并集标记')` ——
+  //    ⚠ 断言**不能**写成 `全文.includes('第一处:WB-并集标记')` ——
   //    展开后的内容是世界书**整段**（约 200 字标题 + 正文），
-  //    锚点侧前缀与 WB-并集标记之间隔着一大段。这与 [L] 组踩过的是同一个坑。
-  //    正确写法: 找到含"锚点侧:"的那条消息, 断言它里面有标记。
-  const 含锚点侧的消息 = r.messages.filter(m => m.content.includes('锚点侧:'));
-  ok('[并集] 展开在锚点侧(锚点段先扫)',
-    含锚点侧的消息.length > 0 && 含锚点侧的消息.every(m => m.content.includes('WB-并集标记')),
-    `含"锚点侧:"的消息数 ${含锚点侧的消息.length}`);
-  const 含条目侧的消息 = r.messages.filter(m => m.content.includes('条目侧:'));
-  ok('[并集] 条目侧没有展开(只剩前缀)',
-    !含条目侧的消息.some(m => m.content.includes('WB-并集标记')));
+  //    前缀与标记之间隔着一大段。正确写法：找到含"第一处:"的那条消息，断言它里面有标记。
+  const 含第一处 = r.messages.filter(m => m.content.includes('第一处:'));
+  ok('[并集] 展开在靠前那段',
+    含第一处.length > 0 && 含第一处.every(m => m.content.includes('WB-并集标记')),
+    `含"第一处:"的消息数 ${含第一处.length}`);
+  const 含第二处 = r.messages.filter(m => m.content.includes('第二处:'));
+  ok('[并集] 靠后那段没有展开（只剩前缀）',
+    !含第二处.some(m => m.content.includes('WB-并集标记')));
 
-  // ③ 另一侧留空但**不丢警告**（C8: 跳过要留痕）
-  ok('[并集] 条目侧那条仍然存在(留空但不消失)', 含条目侧的消息.length > 0, `条数 ${含条目侧的消息.length}`);
-  // 警告的措辞是"已被锚点段引用"（不是"重复引用"）—— 两者都算留痕，断言认任一
-  ok('[并集] 有留痕的警告',
-    警告们.some(w => w.includes('已被锚点段引用') || w.includes('重复引用')),
-    警告们.join(' | '));
+  // ③ 靠后那段**整段消失**（占位符展开为空 → 整行消失 → 段只剩前缀 → 段还在但没内容）
+  //    这里"第二处:"本身是行内文字，所以那一行会整行消失。
+  ok('[并集] 靠后那段的内容被清空（不是原样留占位符）',
+    !全文.includes('{{彼方:世界书}}'),
+    '占位符语法不许原样发给模型');
 
-  // ④ 反向自证: 只留一侧引用时, 世界书也在正确位置展开（证明上面不是"永远在锚点侧"）
-  const 只条目 = 跑({
-    自定义段: [],
-    条目: [{ id: 'u1', role: 'system', content: '条目侧:{{彼方:世界书}}' }],
-  });
-  const 只条目含 = 只条目.r.messages.filter(m => m.content.includes('条目侧:'));
-  ok('[并集/自证] 只有条目引用时, 它在条目侧展开',
-    只条目含.length > 0 && 只条目含.some(m => m.content.includes('WB-并集标记')),
-    `含"条目侧:"的消息数 ${只条目含.length}`);
-  const 只条目全文 = [...只条目.r.messages.map(m => m.content), 只条目.r.工具说明 ?? ''].join('\n');
-  eq('[并集/自证] 只有条目引用时也恰好 1 次', 只条目全文.split('WB-并集标记').length - 1, 1);
-
-  // ⑤ 反向自证 2: 只有锚点引用时, 它在锚点侧展开
-  const 只锚点 = 跑({
-    自定义段: [{ 锚点: '最前', role: 'system', content: '锚点侧:{{彼方:世界书}}', 启用: true }],
-    条目: [],
-  });
-  const 只锚点含 = 只锚点.r.messages.filter(m => m.content.includes('锚点侧:'));
-  ok('[并集/自证] 只有锚点引用时, 它在锚点侧展开',
-    只锚点含.length > 0 && 只锚点含.some(m => m.content.includes('WB-并集标记')),
-    `含"锚点侧:"的消息数 ${只锚点含.length}`);
+  // ④ 反向自证：只写一处时，它在那一处展开（证明上面不是"永远在靠前那段"）
+  const 只一处 = 跑([
+    { id: 'a', role: 'system', content: '普通' },
+    { id: 'b', role: 'system', content: '唯一处:{{彼方:世界书}}' },
+    { id: 'c', role: 'user', content: '剧情' },
+  ]);
+  const 含唯一 = 只一处.r.messages.filter(m => m.content.includes('唯一处:'));
+  ok('[并集/自证] 只写一处时它在那一处展开',
+    含唯一.length > 0 && 含唯一.some(m => m.content.includes('WB-并集标记')),
+    `含"唯一处:"的消息数 ${含唯一.length}`);
+  const 只一处全文 = [...只一处.r.messages.map(m => m.content), 只一处.r.工具说明 ?? ''].join('\n');
+  eq('[并集/自证] 只写一处时也恰好 1 次', 只一处全文.split('WB-并集标记').length - 1, 1);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -674,6 +669,7 @@ console.log('\n[存量] 重复 id 必须清掉（旧版遗留），且留痕');
     预填充: false, worldbook: '', currentStoryTime: '2026-01-01 20:00',
     storyTimeHint: '2026-01-02 12:30', storySpan: '约 0.7 天', recentTrace: '',
     playerName: '主角', playerDescription: '', 展开宏: (t: string) => t,
+    模板: 默认模板,
     ...额外,
   });
   const 取 = (额外: Record<string, any>) => {
@@ -796,9 +792,22 @@ console.log('\n[迁移] 旧「按锚点的自定义段」按块边界迁成条�
   }
 
   // ⑥ 迁完之后内容真的进了产物
+  //
+  //  ⚠ 2026-11-19 模板化收口：**`条目` 入参已不再被拼装读取**（模板是唯一路径）。
+  //    所以这条判据从"条目通过 input.条目 生效"改成"**迁移把条目转成了模板**"——
+  //    那才是现在真正让用户内容活下来的那条链（自定义段 → 条目 → 模板）。
   {
     const 提示词: any = { 自定义段: [{ 锚点: '最后', role: 'system', content: '迁移标记-末段' }] };
     迁移旧段(提示词);
+    ok('[迁移] 自定义段变成了条目', Array.isArray(提示词.条目) && 提示词.条目.length > 0);
+    // 再把条目转成模板
+    const { 条目转模板 } = await import('../src/彼方_NPC幕后生命状态系统/条目列表');
+    const 转了 = 条目转模板(提示词);
+    eq('[迁移] 条目转成了模板', 转了, 1);
+    ok('[迁移] 模板里含旧段的内容',
+       提示词.模板.some((段: any) => String(段.content).includes('迁移标记-末段')),
+       JSON.stringify(提示词.模板.map((段: any) => String(段.content).slice(0, 25))));
+
     const 原I = console.info;
     const 原T = console.table;
     console.info = () => {};
@@ -811,8 +820,7 @@ console.log('\n[迁移] 旧「按锚点的自定义段」按块边界迁成条�
         恋爱对象名单: [], 自定义段: [], 预填充: false, worldbook: '', currentStoryTime: '',
         storyTimeHint: '', storySpan: '', recentTrace: '', playerName: 'P', playerDescription: '',
         展开宏: (t: string) => t,
-        条目: 提示词.条目,
-        条目顺序: 提示词.条目顺序,
+        模板: 提示词.模板,
       } as any);
     }
     finally {
@@ -865,11 +873,13 @@ console.log('\n[旧路] 零件位置 那条旧搬迁路径已被删除（2026-11
     let r;
     try {
       r = buildUpdateMessages({
+        模板: 默认模板,
         reply: '剧情', replyCount: 1, context: '', timeJump: '', tracked: ['甲'], inSceneHint: [],
         currentCards: { 甲: { 当前在做: 'x' } }, autoTrackEnabled: true, physioEnabled: false,
         恋爱对象名单: [], 预填充: false, worldbook: 'WB-手写', currentStoryTime: '',
         storyTimeHint: '', storySpan: '', recentTrace: '', playerName: 'P', playerDescription: '',
         展开宏: (t: string) => t,
+        模板: 默认模板,
         自定义段: [{ 锚点: '最前', role: 'system', content: '{{彼方:世界书}}', 启用: true }],
       } as any);
     }
@@ -914,10 +924,9 @@ console.log('\n[样式] 拼装页沿用设置页那套 class，不另起一套')
   // 04 提示词那节并走之后，设置页自然不再出现 bf-set-seg-card 这些类，
   // 但它们仍然定义在 面板样式.css 里，拼装页与它同源。
   const 样式表 = readFileSync(path.join(彼方目录, '面板样式.css'), 'utf8');
-  // 2026-11-19 模板化之后，拼装页不再有"卡片列表/拖拽/表单网格"，
-  // 所以共享集合收窄成**它实际用到的那几个**（仍然必须全部来自共享样式表）。
+  // 2026-11-19 模板化（段列表形态）之后，拼装页用到的那几个类
   const 共享 = ['bf-setting-group', 'bf-set-group', 'bf-set-head', 'bf-set-index', 'bf-set-aside',
-    'bf-form-label', 'bf-textarea', 'bf-btn', 'bf-btn-sm', 'bf-hint'];
+    'bf-select', 'bf-select-sm', 'bf-textarea', 'bf-btn', 'bf-btn-sm', 'bf-hint'];
   const 拼装缺 = 共享.filter(类 => !拼装源码.includes(类));
   eq('[样式] 拼装页用齐了那套 class', 拼装缺, []);
   // 每个类都真的在共享样式表里有定义（不是拼装页自己又写了一遍）
@@ -957,22 +966,28 @@ console.log('\n[落盘] 迁移必须真的写进存储（不落盘 = 没迁）')
     return { host, 存 };
   };
 
-  // ① **再读是迁移后的**（判据: 存储里 `自定义段` 已空、`条目` 有内容）
+  // ① **再读是迁移后的**（判据: 存储里 `自定义段` 已空、**模板**有内容）
+  //
+  //  ⚠ 2026-11-19 模板化：迁移链现在是 自定义段 → 条目 → **模板**，
+  //    而且 `条目` 会被清空（`条目转模板` 的最后一步）。所以判据要跟着改。
   {
     const { host, 存 } = 造旧宿主();
     getSettings(host); // 第一次读 → 触发迁移 → 落盘
     const 落盘后 = 存.global['彼方_settings'];
     eq('[落盘] 存储里的 自定义段 已清空', 落盘后?.提示词?.自定义段, []);
-    eq('[落盘] 存储里出现了 条目', Array.isArray(落盘后?.提示词?.条目), true);
-    // 内容没丢（这是"迁移不是删除数据"的硬证据）
-    const 内容们 = (落盘后?.提示词?.条目 ?? []).map((x: any) => x.content);
-    ok('[落盘] 旧段的内容仍在（迁移不是删除数据）', 内容们.includes('旧段-标记'), JSON.stringify(内容们));
+    // 内容没丢（这是"迁移不是删除数据"的硬证据）—— 它现在在**模板**里
+    const 模板 = 落盘后?.提示词?.模板 ?? [];
+    ok('[落盘] 存储里出现了 模板', Array.isArray(模板) && 模板.length > 0);
+    const 内容们 = 模板.map((x: any) => String(x.content));
+    ok('[落盘] 旧段的内容仍在模板里（迁移不是删除数据）',
+      内容们.some((t: string) => t.includes('旧段-标记')), JSON.stringify(内容们.map((t: string) => t.slice(0, 30))));
 
     // **再读一次**必须看到迁移后的（不是又回到旧数据）
     invalidateReadCache();
     const 再读 = getSettings(host);
     eq('[落盘] 再读时 自定义段 仍是空的（没有回到旧数据）', 再读.提示词?.自定义段, []);
-    ok('[落盘] 再读时 条目 还在', (再读.提示词?.条目 ?? []).length > 0, JSON.stringify(再读.提示词?.条目));
+    ok('[落盘] 再读时 模板 还在', (再读.提示词?.模板 ?? []).length > 0,
+       JSON.stringify((再读.提示词?.模板 ?? []).map((x: any) => String(x.content).slice(0, 20))));
   }
 
   // ② **只写一次**（幂等：第二次读不该再写）

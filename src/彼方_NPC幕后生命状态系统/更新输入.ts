@@ -5,6 +5,7 @@
 
 // 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
 import { buildUpdateMessages } from './prompts';
+import { 默认模板, 校验模板 } from './提示词模板';
 import { 名字出现, 上下文, 最近回复, 正文过滤, 时间提示, 时间跳跃, 追踪NPC } from './聊天取料';
 import { 剧情跨度 } from './剧情时间';
 import { getPersonaTextForNpc, 读取世界书段 } from './worldbook';
@@ -220,7 +221,24 @@ export async function 收集本轮输入(参数: 取料参数) {
             }
         }
     }
+    // **模板**（2026-11-19 收口）：唯一路径，必填。
+    // settings 里没存过（新用户 / 默认）时回退到 `默认模板` ——
+    // 那个常量展开后与改造前的产物逐字节相同（I3 由 tests/bifang-模板.test.ts 守）。
+    const 模板值 = Array.isArray(settings.提示词?.模板) && settings.提示词.模板.length > 0
+        ? settings.提示词.模板
+        : 默认模板;
+    // **兜底校验**（需求方 #230）：段列表里至少要有一段 user。
+    // 没有它，`api.ts` 取到的 `user_input` 是空串 —— 请求发不出去，而用户看不出为什么。
+    // 界面上已经有实时提示（`校验模板`），这里是**最后一道**：
+    // 万一有别的入口（未来的、或用户手改 settings）绕过了界面，这里必须拦住。
+    const 模板问题 = 校验模板(模板值);
+    if (模板问题) {
+        console.warn(`[彼方] ${模板问题} 本次更新已跳过。`);
+        host.toast?.warn?.(`彼方: ${模板问题}`, '彼方');
+        return null;
+    }
     const 拼装结果 = buildUpdateMessages({
+        模板: 模板值,
         reply,
         replyCount: recent.length,
         context,
@@ -242,12 +260,6 @@ export async function 收集本轮输入(参数: 取料参数) {
         // 排序在 prompts.ts 里按 `条目顺序` 重排（见那边的注释）。
         条目: settings.提示词?.条目 ?? [],
         条目顺序: settings.提示词?.条目顺序 ?? [],
-        // **模板**（2026-11-19 模板化）：三段可编辑文本。
-        // 存的是 `{}`（默认）时不传 —— 让拼装走回退到 `默认模板` 的那条路，
-        // 那条路的产物与改造前逐字节相同（I3）。
-        ...(settings.提示词?.模板 && Object.keys(settings.提示词.模板).length > 0
-            ? { 模板: settings.提示词.模板 }
-            : {}),
         预填充: !!settings.更新.预填充,
         // 消息伪装已移除（2026-11-19 用户裁定）—— 这里不再传那个入参，
         // 类型上也删掉了（留着会让后来人以为它还有用）。
