@@ -382,73 +382,27 @@
         </div>
       </section>
 
-      <!-- 04 提示词: 默认收起(写法级调整, 不是每天都动的) -->
+      <!-- 04 提示词: 已并入「拼装」页（2026-11-19）。
+           **不许静默消失** —— 用户进来找不到这一节，会以为功能被删了。
+           所以原位置留一句引导 + 一个直接跳过去的按钮。 -->
       <details class="bf-setting-group bf-set-group">
         <summary class="bf-set-head">
           <span class="bf-set-index" aria-hidden="true">04</span>
           <h3 id="bf-set-prompt">提示词</h3>
-          <span class="bf-set-aside">{{ settings.提示词.自定义段.length }} 段自定义</span>
+          <span class="bf-set-aside">已并入「拼装」</span>
         </summary>
-        <p class="bf-hint">内置提示词固定不动，这里只往它的锚点里插你自己写的段。</p>
-
-        <div class="bf-switch-row">
-          <span class="bf-switch-copy">
-            <b>自定义提示词段</b>
-            <span>破限也不再内置 —— 要的话在这里插一段</span>
-          </span>
-          <button class="bf-btn bf-btn-sm" type="button" @click="添加自定义段">＋ 添加一段</button>
-        </div>
-        <p v-if="!settings.提示词.自定义段.length" class="bf-hint">
-          还没有自定义段，当前请求就是内置提示词本身（不含破限）。
-        </p>
-
-        <div v-for="(seg, index) in settings.提示词.自定义段" :key="index" class="bf-set-seg-card">
-          <div class="bf-form-grid bf-set-seg-grid">
-            <label class="bf-field">
-              <span class="bf-form-label">插入位置</span>
-              <select v-model="seg.锚点" class="bf-select">
-                <option v-for="锚点 in 锚点选项" :key="锚点" :value="锚点">{{ 锚点 }}</option>
-              </select>
-            </label>
-            <label class="bf-field">
-              <span class="bf-form-label">身份（role）</span>
-              <select v-model="seg.role" class="bf-select">
-                <option value="system">system</option>
-                <option value="user">user</option>
-                <option value="assistant">assistant</option>
-              </select>
-            </label>
-          </div>
-          <textarea
-            v-model="seg.content"
-            class="bf-textarea bf-textarea-sm"
-            rows="4"
-            placeholder="这一段的内容（支持酒馆宏：user / char）"
-          ></textarea>
-          <div class="bf-set-seg-foot">
-            <label class="bf-set-inline-toggle">
-              <input v-model="seg.启用" class="bf-switch" type="checkbox" />
-              <span>启用</span>
-            </label>
-            <button class="bf-btn bf-btn-sm bf-btn-danger" type="button" @click="删除自定义段(index)">删除这一段</button>
-          </div>
-        </div>
-
         <p class="bf-hint">
-          锚点＝消息级位置。插在「任务之前」的规则会被后面的内置段覆盖；想要更强的约束就插在「任务之后」或「最后」。
+          自定义提示词段已并入<strong>「拼装」页</strong> —— 那里能看到的更多，也能拖顺序。
         </p>
-        <details class="bf-fold bf-set-fold">
-          <summary>发送顺序：五个锚点落在哪</summary>
-          <pre class="bf-code bf-set-order">① 最前        你的段
-② system      身份句 + 全部更新规则（内置，含生理段：开关开时才有）
-③ 主提示词之后  你的段
-④ system      【最新用户输入·仅供场景判断】（有玩家输入时才有）
-⑤ 任务之前     你的段
-⑥ user        任务正文 ← 最长的那个内置段（正文 / 世界书 / 状态卡 / 台账 / 生理说明 / 恋爱说明 / 仅更新已追踪）
-⑦ 任务之后     你的段（以前破限的位置）
-⑧ 最后        你的段
-（末条若是 assistant 且预填充关着，会自动补一句收尾 user）</pre>
-        </details>
+        <p class="bf-hint">
+          你在旧版写的段会自动迁过去，内容一字不改；迁完之后这一节不再单独管理它们。
+        </p>
+        <div class="bf-set-row">
+          <span class="bf-form-label">去拼装页</span>
+          <button class="bf-btn bf-btn-sm" type="button" @click="emit('去拼装页')">
+            打开「拼装」
+          </button>
+        </div>
       </details>
 
       <!-- 05 标签过滤: 默认收起 -->
@@ -533,6 +487,10 @@
 
 <script setup lang="ts">
 import { use设置面板 } from './设置面板';
+
+/** 04「提示词」已并入「拼装」页（2026-11-19）。
+ *  这里 emit 一个事件让壳切页签 —— 设置页自己不碰路由/页签状态。 */
+const emit = defineEmits<{ 去拼装页: [] }>();
 
 const {
   settings, showKey, modelList, 模型候选开, 选模型, fetchingModels, testing, loadModels, testConnection,
@@ -688,16 +646,11 @@ watch(() => settings.value.调试?.暴露状态, 开 => {
   if (w) delete w.__bfNavDiag;
 });
 
-/** 插入位置: 消息级锚点, 与 prompts.ts 的 锚点表 同序。插不进某条消息的正文内部。 */
-const 锚点选项 = ['最前', '主提示词之后', '任务之前', '任务之后', '最后'];
-function 添加自定义段() {
-  settings.value.提示词.自定义段.push({ 锚点: '任务之后', role: 'system', content: '', 启用: true });
-}
+/** 插入位置: 消息级锚点 —— 这一节已并入「拼装」页（2026-11-19），
+ *  锚点概念只保留在迁移映射里（见 条目列表.ts 的 `迁移旧段`）。
+ *  这里不再有编辑入口，所以不再声明 锚点选项 / 添加 / 删除。 */
 function 确认清空生理数据() {
   if (window.confirm('清空所有 NPC 的生理数据？好感/恋爱等其它字段不受影响，清掉的数据不可恢复。'))
     清空生理数据();
-}
-function 删除自定义段(index: number) {
-  settings.value.提示词.自定义段.splice(index, 1);
 }
 </script>

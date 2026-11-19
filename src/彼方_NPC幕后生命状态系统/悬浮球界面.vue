@@ -79,7 +79,7 @@
         <ConsistencyPage v-else-if="tab === 'consistency'" key="consistency" />
         <PartsPage v-else-if="tab === 'parts'" key="parts" />
         <LogsPage v-else-if="tab === 'logs'" key="logs" />
-        <SettingsPage v-else key="settings" />
+        <SettingsPage v-else key="settings" @去拼装页="tab = 'parts'" />
       </main>
 
       <footer class="bf-rail-foot">

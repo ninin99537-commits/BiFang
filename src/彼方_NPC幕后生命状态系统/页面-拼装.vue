@@ -245,7 +245,7 @@ function 偏离原位(项: 列表项): boolean {
         <p class="bf-page-sub">拖动改顺序、勾选框开关、自己写条目。下面两栏永远同时显示。</p>
       </div>
       <div class="bf-actions">
-        <button class="bf-btn bf-btn-sm" @click="新增条目">＋ 新增条目</button>
+        <button class="bf-btn bf-btn-sm" @click="新增条目">＋ 添加一段</button>
         <button class="bf-btn bf-btn-sm bf-btn-primary" :disabled="预览中" @click="生成预览">
           {{ 预览中 ? '正在取料…' : '生成预览' }}
         </button>
@@ -260,111 +260,134 @@ function 偏离原位(项: 列表项): boolean {
     <!-- 两栏: 左边"内容顺序"，右边"消息形状"。同屏，因为两者从来不一样 -->
     <div class="bf-parts-cols">
       <!-- ── 左栏: 条目列表（内容顺序） ── -->
-      <section class="bf-parts-col">
-        <h3 class="bf-parts-col-title">
-          内容顺序
-          <span class="bf-parts-col-note">拖动这一列改的是<strong>内容先后</strong></span>
-        </h3>
-        <ol class="bf-entry-list">
-          <li
+      <div class="bf-parts-col">
+        <details class="bf-setting-group bf-set-group" open>
+          <summary class="bf-set-head">
+            <span class="bf-set-index" aria-hidden="true">01</span>
+            <h3>内容顺序</h3>
+            <span class="bf-set-aside">{{ 列表.length }} 段</span>
+          </summary>
+          <p class="bf-hint">
+            拖动改的是<strong>内容先后</strong>。内置段只读（勾掉即关闭），你自己写的可以随便改。
+          </p>
+
+          <div
             v-for="(项, i) in 列表"
             :key="项.id"
-            class="bf-entry"
-            :class="{
-              'is-off': 是关闭的(项),
-              'is-user': 项.来源 === '用户',
-              'is-moved': 偏离原位(项),
-            }"
+            class="bf-set-seg-card bf-part-card"
+            :class="{ 'is-off': 是关闭的(项), 'is-user': 项.来源 === '用户' }"
             draggable="true"
             @dragstart="开始拖(项.id)"
             @dragover.prevent
             @drop.prevent="放到(项.id)"
           >
-            <span class="bf-entry-grip" aria-hidden="true">⋮⋮</span>
-            <span class="bf-entry-pos">{{ i + 1 }}</span>
-
-            <!-- 原位记号(C19): 内置项才有；关闭的也显示 -->
-            <span
-              v-if="项.来源 === '内置'"
-              class="bf-entry-origin"
-              :class="{ 'is-drifted': 偏离原位(项) }"
-              :title="偏离原位(项) ? `原位在 ${原位(项)}，已被拖走` : '在原位'"
-            >{{ 原位(项) }}</span>
-            <!-- 用户条目: 不同的视觉标记，不是留白（缺口 3） -->
-            <span v-else class="bf-entry-user-tag" title="你自己写的条目，没有原位">自写</span>
-
-            <span class="bf-entry-name">
-              <template v-if="项.来源 === '内置'">
-                <span class="bf-entry-code">{{ 项.代号 }}</span>{{ 零件表.find(件 => 件.代号 === 项.代号)?.名 }}
-                <span class="bf-entry-block">{{ 零件所在块(项.代号) }}</span>
-              </template>
-              <template v-else>用户条目</template>
-            </span>
-
-            <input
-              type="checkbox"
-              :checked="!是关闭的(项)"
-              :aria-label="`启用 ${项.来源 === '内置' ? 项.代号 : '用户条目'}`"
-              @change="切换(项)"
-            />
-            <!-- 内置项**没有编辑框**（类型上也没有） -->
-            <span v-if="项.来源 === '内置'" class="bf-entry-locked" title="内置内容由代码生成，不能改；想改请自己新增一条">只读</span>
-            <button v-else class="bf-btn bf-btn-xs" @click="删除条目(项.id)">删除</button>
-          </li>
-        </ol>
-
-        <!-- 用户条目的正文编辑（只对用户条目显示） -->
-        <div v-if="(settings.提示词?.条目 ?? []).length > 0" class="bf-entry-editor">
-          <h4 class="bf-entry-editor-title">你的条目</h4>
-          <div v-for="项 in (settings.提示词?.条目 ?? [])" :key="项.id" class="bf-entry-edit">
-            <div class="bf-entry-edit-head">
-              <select
-                :value="项.role ?? 'system'"
-                :aria-label="'身份'"
-                @change="改条目(项.id, 'role', ($event.target as HTMLSelectElement).value)"
-              >
-                <option value="system">system</option>
-                <option value="user">user</option>
-                <option value="assistant">assistant</option>
-              </select>
-              <span class="bf-hint">可用 <code v-pre>{{彼方:世界书}}</code> 这种写法把内置内容嵌进来</span>
+            <div class="bf-form-grid bf-set-seg-grid">
+              <label class="bf-field">
+                <span class="bf-form-label">
+                  <span class="bf-entry-grip" aria-hidden="true">⋮⋮</span>
+                  {{ i + 1 }}.
+                  <template v-if="项.来源 === '内置'">
+                    {{ 零件表.find(件 => 件.代号 === 项.代号)?.名 }}
+                    <span class="bf-parts-code">{{ 项.代号 }}</span>
+                  </template>
+                  <template v-else>你的条目</template>
+                </span>
+                <!-- 内置项：只读 + 原位记号（C19：关闭的也显示） -->
+                <span v-if="项.来源 === '内置'" class="bf-part-meta">
+                  <span
+                    class="bf-entry-origin"
+                    :class="{ 'is-drifted': 偏离原位(项) }"
+                    :title="偏离原位(项) ? `原位在 ${原位(项)}，已被拖走` : '在原位'"
+                  >原位 {{ 原位(项) }}</span>
+                  <span class="bf-entry-block">{{ 零件所在块(项.代号) }}</span>
+                  <span class="bf-entry-locked" title="内置内容由代码生成，不能改；想改请自己新增一条">只读</span>
+                </span>
+                <!-- 用户条目：不同标记（不是留白），且有 role 下拉 -->
+                <span v-else class="bf-part-meta">
+                  <span class="bf-entry-user-tag" title="你自己写的条目，没有原位">自写</span>
+                  <select
+                    class="bf-select bf-select-sm"
+                    :value="项.role ?? 'system'"
+                    aria-label="身份"
+                    @change="改条目(项.id, 'role', ($event.target as HTMLSelectElement).value)"
+                  >
+                    <option value="system">system</option>
+                    <option value="user">user</option>
+                    <option value="assistant">assistant</option>
+                  </select>
+                </span>
+              </label>
             </div>
+
+            <!-- 用户条目的正文（内置项没有编辑框 —— 类型上也没有） -->
             <textarea
-              :value="项.content ?? ''"
+              v-if="项.来源 === '用户'"
+              class="bf-textarea bf-textarea-sm"
               rows="3"
+              :value="项.content ?? ''"
               placeholder="在这里写你的提示词"
               @input="改条目(项.id, 'content', ($event.target as HTMLTextAreaElement).value)"
             ></textarea>
+
+            <div class="bf-set-seg-foot">
+              <label class="bf-set-inline-toggle">
+                <input
+                  class="bf-switch"
+                  type="checkbox"
+                  :checked="!是关闭的(项)"
+                  :aria-label="`启用 ${项.来源 === '内置' ? 项.代号 : '你的条目'}`"
+                  @change="切换(项)"
+                />
+                <span>启用</span>
+              </label>
+              <button
+                v-if="项.来源 === '用户'"
+                class="bf-btn bf-btn-sm bf-btn-danger"
+                type="button"
+                @click="删除条目(项.id)"
+              >
+                删除这一段
+              </button>
+              <span v-else class="bf-hint">关掉它 = 这一段不进提示词</span>
+            </div>
           </div>
-        </div>
-      </section>
+
+          <p class="bf-hint">
+            你的条目里可以写 <code v-pre>{{彼方:世界书}}</code> 这种占位符，把内置内容嵌进你自己的话里。
+          </p>
+        </details>
+      </div>
 
       <!-- ── 右栏: 消息形状 ── -->
-      <section class="bf-parts-col">
-        <h3 class="bf-parts-col-title">
-          消息形状
-          <span class="bf-parts-col-note">实际发出去是<strong>{{ 消息形状.length }} 条消息</strong></span>
-        </h3>
-        <ol class="bf-msg-list">
-          <li v-for="条 in 消息形状" :key="条.序号" class="bf-msg">
-            <span class="bf-msg-no">第 {{ 条.序号 }} 条</span>
-            <span class="bf-msg-role" :class="`role-${条.role}`">{{ 条.role }}</span>
-            <span class="bf-msg-block">{{ 条.块名 }}</span>
-            <span class="bf-msg-contains">{{ 条.含.join('、') }}</span>
-            <span class="bf-msg-size" :title="条.字数 === null ? '还没生成预览，取不到真实字数' : '该条消息的实际字数'">
-              {{ 条.字数 === null ? '—' : `${条.字数} 字` }}
-            </span>
-          </li>
-        </ol>
-        <p class="bf-hint">
-          左栏是<strong>内容先后</strong>，右栏是<strong>发出去的样子</strong>。两者不是一回事：
-          同块的条目会合成一条消息，所以左栏 15 行在右栏只有几行。
-        </p>
-        <p class="bf-hint">
-          字数取自{{ 字数来处 ? ` ${字数来处} 那次预览` : '预览' }}——
-          <strong>没生成预览时显示 —</strong>，因为不点就取不到这一轮的真实内容。
-        </p>
-      </section>
+      <div class="bf-parts-col">
+        <details class="bf-setting-group bf-set-group" open>
+          <summary class="bf-set-head">
+            <span class="bf-set-index" aria-hidden="true">02</span>
+            <h3>消息形状</h3>
+            <span class="bf-set-aside">{{ 消息形状.length }} 条消息</span>
+          </summary>
+          <p class="bf-hint">
+            这是<strong>实际发出去的样子</strong>。左栏是内容先后，右栏是消息 —— 同块的会合成一条，所以左边多行在右边只有几行。
+          </p>
+
+          <ol class="bf-msg-list">
+            <li v-for="条 in 消息形状" :key="条.序号" class="bf-msg">
+              <span class="bf-msg-no">第 {{ 条.序号 }} 条</span>
+              <span class="bf-msg-role" :class="`role-${条.role}`">{{ 条.role }}</span>
+              <span class="bf-msg-block">{{ 条.块名 }}</span>
+              <span class="bf-msg-contains">{{ 条.含.join('、') }}</span>
+              <span class="bf-msg-size" :title="条.字数 === null ? '还没生成预览，取不到真实字数' : '该条消息的实际字数'">
+                {{ 条.字数 === null ? '—' : `${条.字数} 字` }}
+              </span>
+            </li>
+          </ol>
+
+          <p class="bf-hint">
+            字数取自{{ 字数来处 ? ` ${字数来处} 那次预览` : '预览' }}——
+            <strong>没生成预览时显示 —</strong>，因为不点就取不到这一轮的真实内容。
+          </p>
+        </details>
+      </div>
     </div>
 
     <section v-if="预览文本" class="bf-parts-preview">
@@ -378,100 +401,71 @@ function 偏离原位(项: 列表项): boolean {
 </template>
 
 <style scoped>
+/* 这一页的视觉语言**沿用设置页那套**（bf-setting-group / bf-set-head / bf-set-seg-card /
+   bf-form-grid / bf-field / bf-textarea / bf-set-seg-foot / bf-set-inline-toggle），
+   定义在 面板样式.css。这里只写这一页**特有**的排版，不另起一套。
+
+   为什么不另起一套: 设置页那套是全项目统一的；另起一套等于给以后的样式改动制造两个地方。 */
 .bf-parts-cols {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
   gap: 16px;
-  margin-bottom: 12px;
+  align-items: start;
 }
-@media (max-width: 720px) {
+@media (max-width: 900px) {
   .bf-parts-cols {
     grid-template-columns: minmax(0, 1fr);
   }
 }
-.bf-parts-col-title {
-  margin: 0 0 6px;
-  font-size: 12.5px;
-  font-weight: 600;
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-.bf-parts-col-note {
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--bf-text-dim, #8a8a92);
-}
-.bf-entry-list,
-.bf-msg-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.bf-entry {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 6px;
-  border-bottom: 1px solid var(--bf-line, rgba(255, 255, 255, 0.08));
-  font-size: 12.5px;
+/* 卡片：拖拽光标 + 关闭态变淡。其余留白/边框由 bf-set-seg-card 提供。 */
+.bf-part-card {
   cursor: grab;
 }
-.bf-entry.is-off {
+.bf-part-card.is-off {
   opacity: 0.5;
 }
-.bf-entry.is-user {
-  background: rgba(120, 170, 255, 0.06);
+.bf-part-card.is-user {
+  background: rgba(120, 170, 255, 0.05);
+}
+/* 卡片标题那一行的附加信息（原位 / 块名 / 只读 / 自写 / role 下拉） */
+.bf-part-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 6px;
+  flex-wrap: wrap;
 }
 .bf-entry-grip {
+  margin-right: 4px;
   color: var(--bf-text-dim, #8a8a92);
   font-size: 11px;
   letter-spacing: -2px;
 }
-.bf-entry-pos {
-  min-width: 18px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
+.bf-parts-code {
+  margin-left: 5px;
+  font-family: ui-monospace, monospace;
   font-size: 11px;
   color: var(--bf-text-dim, #8a8a92);
 }
 .bf-entry-origin {
-  min-width: 26px;
-  text-align: center;
   font-size: 10.5px;
   font-family: ui-monospace, monospace;
   color: var(--bf-text-dim, #8a8a92);
   border-left: 2px solid currentColor;
-  padding-left: 3px;
+  padding-left: 4px;
 }
 .bf-entry-origin.is-drifted {
   opacity: 0.35;
   font-style: italic;
 }
 .bf-entry-user-tag {
-  min-width: 26px;
-  text-align: center;
   font-size: 10.5px;
-  padding: 0 3px;
+  padding: 0 4px;
   border-radius: 3px;
   background: rgba(120, 170, 255, 0.18);
   color: #9dc0ff;
 }
-.bf-entry-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.bf-entry-code {
-  margin-right: 5px;
-  font-family: ui-monospace, monospace;
-  font-size: 11px;
-  color: var(--bf-text-dim, #8a8a92);
-}
 .bf-entry-block {
-  margin-left: 6px;
   font-size: 10.5px;
   padding: 0 4px;
   border-radius: 3px;
@@ -482,43 +476,28 @@ function 偏离原位(项: 列表项): boolean {
   font-size: 10.5px;
   color: var(--bf-text-dim, #8a8a92);
 }
-.bf-entry-editor {
-  margin-top: 12px;
-}
-.bf-entry-editor-title {
-  margin: 0 0 6px;
-  font-size: 12px;
-  font-weight: 600;
-}
-.bf-entry-edit {
-  margin-bottom: 10px;
-}
-.bf-entry-edit-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
-}
-.bf-entry-edit textarea {
-  width: 100%;
-  box-sizing: border-box;
-  font-size: 12px;
-  font-family: inherit;
-  padding: 6px;
-  border-radius: 4px;
+/* 消息形状列表：与设置页的行距/字号一致 */
+.bf-msg-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 .bf-msg {
   display: flex;
   align-items: baseline;
   gap: 6px;
-  padding: 5px 6px;
+  padding: 6px 0;
   border-bottom: 1px solid var(--bf-line, rgba(255, 255, 255, 0.08));
   font-size: 12px;
+}
+.bf-msg:last-child {
+  border-bottom: 0;
 }
 .bf-msg-no {
   font-variant-numeric: tabular-nums;
   color: var(--bf-text-dim, #8a8a92);
   font-size: 11px;
+  white-space: nowrap;
 }
 .bf-msg-role {
   font-family: ui-monospace, monospace;
@@ -538,6 +517,7 @@ function 偏离原位(项: 列表项): boolean {
 .bf-msg-block {
   font-size: 11px;
   color: var(--bf-text-dim, #8a8a92);
+  white-space: nowrap;
 }
 .bf-msg-contains {
   flex: 1;

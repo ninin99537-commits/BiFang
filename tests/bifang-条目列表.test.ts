@@ -690,5 +690,185 @@ console.log('\n[存量] 重复 id 必须清掉（旧版遗留），且留痕');
   eq('[默认] 条目为空数组时工具说明相同', 空条目.工具说明 ?? null, 无条目.工具说明 ?? null);
 }
 
+// ─────────────────────────────────────────────────────────────
+console.log('\n[迁移] 旧「按锚点的自定义段」按块边界迁成条目，内容一字不改');
+{
+  // 需求方 2026-11-19: 设置页 04 提示词并入「拼装」页，旧段必须搬过去。
+  // **按块边界插**（不是按序号）—— C16 当初拒绝迁移的理由是"按序号会把某一刻的开关状态固化"，
+  // 而块边界与开关无关，所以那个理由现在不成立。
+  const { 迁移旧段 } = await import('../src/彼方_NPC幕后生命状态系统/条目列表');
+
+  // ① 五个锚点各一段，迁完都在，内容一字不改
+  {
+    const 提示词: any = {
+      自定义段: [
+        { 锚点: '最前', role: 'system', content: '【最前段】', 启用: true },
+        { 锚点: '主提示词之后', role: 'user', content: '【规则后段】', 启用: true },
+        { 锚点: '任务之前', role: 'assistant', content: '【任务前段】', 启用: true },
+        { 锚点: '任务之后', role: 'system', content: '【任务后段】', 启用: false },
+        { 锚点: '最后', role: 'system', content: '【最后段】', 启用: true },
+      ],
+    };
+    const 数 = 迁移旧段(提示词);
+    eq('[迁移] 五段全迁过去', 数, 5);
+    eq('[迁移] 条目数 = 5', 提示词.条目.length, 5);
+    // **内容一字不改**（含标点与空格）
+    eq('[迁移] 五段内容逐字保留',
+      [...提示词.条目].map((x: any) => x.content).sort(),
+      ['【最前段】', '【规则后段】', '【任务前段】', '【任务后段】', '【最后段】'].sort());
+    const 按内容 = (s: string) => 提示词.条目.find((x: any) => x.content === s);
+    eq('[迁移] role 原样保留(user)', 按内容('【规则后段】').role, 'user');
+    eq('[迁移] role 原样保留(assistant)', 按内容('【任务前段】').role, 'assistant');
+    eq('[迁移] 启用=false 原样保留', 按内容('【任务后段】').启用, false);
+    eq('[迁移] 启用=true 原样保留', 按内容('【最前段】').启用, true);
+    eq('[迁移] 旧段已清空', 提示词.自定义段, []);
+    ok('[迁移] 每条都有 id', 提示词.条目.every((x: any) => typeof x.id === 'string' && x.id.length > 0));
+    ok('[迁移] id 互不相同', new Set(提示词.条目.map((x: any) => x.id)).size === 5);
+  }
+
+  // ② 位置按**块边界**，不是按序号
+  {
+    const 提示词: any = {
+      自定义段: [
+        { 锚点: '最前', role: 'system', content: 'A' },
+        { 锚点: '主提示词之后', role: 'system', content: 'B' },
+        { 锚点: '任务之前', role: 'system', content: 'C' },
+        { 锚点: '任务之后', role: 'system', content: 'D' },
+        { 锚点: '最后', role: 'system', content: 'E' },
+      ],
+    };
+    迁移旧段(提示词);
+    const 序: string[] = 提示词.条目顺序;
+    const id到内容 = (id: string) => 提示词.条目.find((x: any) => x.id === id)?.content ?? '';
+    const 内容序 = 序.map(id到内容);
+    eq('[迁移] 「最前」在最前', 内容序[0], 'A');
+    const R5位 = 序.indexOf('R5');
+    eq('[迁移] 「主提示词之后」紧跟 R5', 序[R5位 + 1], 提示词.条目.find((x: any) => x.content === 'B')?.id);
+    const D13位 = 序.indexOf('D13');
+    eq('[迁移] 「任务之前」紧跟 D13', 序[D13位 + 1], 提示词.条目.find((x: any) => x.content === 'C')?.id);
+    const D14位 = 序.indexOf('D14');
+    eq('[迁移] 「任务之后」紧跟 D14', 序[D14位 + 1], 提示词.条目.find((x: any) => x.content === 'D')?.id);
+    eq('[迁移] 「最后」在末尾', 内容序[内容序.length - 1], 'E');
+  }
+
+  // ③ 幂等：跑两次不会变两遍
+  {
+    const 提示词: any = { 自定义段: [{ 锚点: '最后', role: 'system', content: 'X' }] };
+    迁移旧段(提示词);
+    const 快照 = JSON.stringify(提示词);
+    eq('[迁移] 第二次跑返回 0（幂等）', 迁移旧段(提示词), 0);
+    eq('[迁移] 第二次跑数据不变', JSON.stringify(提示词), 快照);
+  }
+
+  // ④ 没有旧段时什么都不做
+  {
+    const 提示词: any = { 自定义段: [], 条目: [{ id: 'a', content: 'A' }], 条目顺序: ['a'] };
+    const 快照 = JSON.stringify(提示词);
+    eq('[迁移] 没有旧段 → 0', 迁移旧段(提示词), 0);
+    eq('[迁移] 没有旧段 → 数据不变', JSON.stringify(提示词), 快照);
+  }
+
+  // ⑤ 坏数据不炸
+  {
+    eq('[迁移] null → 0', 迁移旧段(null), 0);
+    eq('[迁移] 自定义段不是数组 → 0', 迁移旧段({ 自定义段: 'nope' }), 0);
+    eq('[迁移] 段里有 null → 不炸', 迁移旧段({ 自定义段: [null] }), 0);
+  }
+
+  // ⑤b 旧的「零件位置」也迁成条目（消掉第二条搬迁路径）
+  {
+    const 提示词: any = { 零件位置: { D2: '最前' }, 自定义段: [] };
+    const 数 = 迁移旧段(提示词);
+    eq('[迁移] 零件位置 也迁了', 数, 1);
+    eq('[迁移] 零件位置 已清空', 提示词.零件位置, {});
+    const 新条目 = 提示词.条目[0];
+    eq('[迁移] 迁成的是只含占位符的条目', 新条目.content, '{{彼方:世界书}}');
+    eq('[迁移] 它的 role 是 system', 新条目.role, 'system');
+    // 位置在最前
+    eq('[迁移] 它在顺序表最前', 提示词.条目顺序[0], 新条目.id);
+    // 不可搬迁的零件被忽略（R6 由自己的开关控制）
+    const 提示词2: any = { 零件位置: { R6: '最前' }, 自定义段: [] };
+    eq('[迁移] 不可搬迁的 R6 不迁', 迁移旧段(提示词2), 0);
+    // 自证: 迁完之后旧路径不再生效（字段已空）
+    eq('[迁移/自证] 迁完后 零件位置 是空对象', 提示词.零件位置, {});
+  }
+
+  // ⑥ 迁完之后内容真的进了产物
+  {
+    const 提示词: any = { 自定义段: [{ 锚点: '最后', role: 'system', content: '迁移标记-末段' }] };
+    迁移旧段(提示词);
+    const 原I = console.info;
+    const 原T = console.table;
+    console.info = () => {};
+    console.table = () => {};
+    let r;
+    try {
+      r = buildUpdateMessages({
+        reply: '剧情', replyCount: 1, context: '', timeJump: '', tracked: ['甲'], inSceneHint: [],
+        currentCards: { 甲: { 当前在做: 'x' } }, autoTrackEnabled: true, physioEnabled: false,
+        恋爱对象名单: [], 自定义段: [], 预填充: false, worldbook: '', currentStoryTime: '',
+        storyTimeHint: '', storySpan: '', recentTrace: '', playerName: 'P', playerDescription: '',
+        展开宏: (t: string) => t,
+        条目: 提示词.条目,
+        条目顺序: 提示词.条目顺序,
+      } as any);
+    }
+    finally {
+      console.info = 原I;
+      console.table = 原T;
+    }
+    ok('[迁移] 迁完的内容确实进了产物', r.messages.some(m => m.content.includes('迁移标记-末段')),
+      JSON.stringify(r.messages.map(m => m.content.slice(0, 20))));
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[并页] 设置页 04 提示词 有引导，不静默消失');
+{
+  // 需求方: **不许静默消失** —— 用户进去找不到那一节，会以为功能被删了。
+  const 设置源码 = readFileSync(path.join(彼方目录, '页面-设置.vue'), 'utf8');
+  ok('[并页] 设置页仍有 04 提示词 这一节', /id="bf-set-prompt"/.test(设置源码));
+  ok('[并页] 有引导文案（指向拼装页）', /已并入/.test(设置源码) && /拼装/.test(设置源码));
+  ok('[并页] 有跳转按钮', /去拼装页/.test(设置源码));
+  // 旧的编辑控件必须真的没了（否则就是两处能改，两个漂移点）
+  ok('[并页] 设置页不再有 添加自定义段', !/添加自定义段/.test(设置源码));
+  // 只查**模板**，不查注释 —— 注释里解释"为什么不再声明锚点选项"是合理的，
+  // 断言查全文会被那句解释误伤（第一版就这么假红了一次）。
+  const 设置模板 = 设置源码.slice(设置源码.indexOf('<template>'), 设置源码.indexOf('<script'));
+  ok('[并页] 设置页模板里不再有 锚点 下拉', !/锚点选项/.test(设置模板), 设置模板.length + ' 字');
+  const 壳源码 = readFileSync(path.join(彼方目录, '悬浮球界面.vue'), 'utf8');
+  ok('[并页] 壳监听了 去拼装页 事件', /@去拼装页/.test(壳源码));
+  // 自证: 若把那一节删了，第一条判据会红
+  ok('[并页/自证] 删掉那一节后判据会红', !/id="bf-set-prompt"/.test('<details><h3>提示词</h3></details>'));
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[样式] 拼装页沿用设置页那套 class，不另起一套');
+{
+  // 需求方: **不要另起一套 class** —— 另起一套等于给以后的样式改动制造两个地方。
+  const 拼装源码 = readFileSync(path.join(彼方目录, '页面-拼装.vue'), 'utf8');
+  // "同一套"的判据是**定义在同一个样式文件里**，不是"设置页也用过" ——
+  // 04 提示词那节并走之后，设置页自然不再出现 bf-set-seg-card 这些类，
+  // 但它们仍然定义在 面板样式.css 里，拼装页与它同源。
+  const 样式表 = readFileSync(path.join(彼方目录, '面板样式.css'), 'utf8');
+  const 共享 = ['bf-setting-group', 'bf-set-group', 'bf-set-head', 'bf-set-index', 'bf-set-aside',
+    'bf-set-seg-card', 'bf-form-grid', 'bf-set-seg-grid', 'bf-field', 'bf-form-label',
+    'bf-textarea', 'bf-textarea-sm', 'bf-set-seg-foot', 'bf-set-inline-toggle',
+    'bf-btn', 'bf-btn-sm', 'bf-btn-danger', 'bf-hint'];
+  const 拼装缺 = 共享.filter(类 => !拼装源码.includes(类));
+  eq('[样式] 拼装页用齐了那套 class', 拼装缺, []);
+  // 每个类都真的在共享样式表里有定义（不是拼装页自己又写了一遍）
+  const 未定义 = 共享.filter(类 => !new RegExp(`\\.${类}[\\s,{:]`).test(样式表));
+  eq('[样式] 这些 class 都定义在 面板样式.css（全项目同一套）', 未定义, []);
+  // 自证: 若某个类没定义，上面那条会红
+  ok('[样式/自证] 未定义的类会被抓到', new RegExp('\\.bf-不存在[\\s,{:]').test(样式表) === false);
+  // 旧的自造 class 不该再被模板用到
+  const 模板 = 拼装源码.slice(拼装源码.indexOf('<template>'), 拼装源码.indexOf('<style'));
+  ok('[样式] 模板里不再用 bf-entry-list（自造清单）', !/bf-entry-list/.test(模板));
+  ok('[样式] 模板里不再用 bf-parts-col-title（自造标题）', !/bf-parts-col-title/.test(模板));
+  // 自证: 若模板里又写回自造 class，上面两条会红
+  ok('[样式/自证] 写回 bf-entry-list 会被抓到', /bf-entry-list/.test('<ol class="bf-entry-list">'));
+}
+
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 process.exit(fail > 0 ? 1 : 0);
