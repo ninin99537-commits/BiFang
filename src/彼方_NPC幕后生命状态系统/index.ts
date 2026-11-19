@@ -3,6 +3,7 @@ import { pinia } from './pinia';
 import { getSettings } from './settings';
 import { useStateStore } from './数据仓';
 import { captureConsole, restoreConsole, useDebugStore } from './日志仓';
+import { useUpdatingStore } from './任务中断';
 import { updateNpcStates } from './update';
 import { 全部AI楼层, 正文过滤 } from './聊天取料';
 import { resetWorldbookCaches } from './worldbook';
@@ -22,6 +23,27 @@ const 脚本按钮名 = '打开彼方';
 setActivePinia(pinia);
 captureConsole();
 function handleChatChanged(host: Host) {
+    // ── F2（2026-11-19 #344）：切聊天时若还在更新，先取消 ──
+    //
+    // ── 不取消会发生什么 ──
+    //  聊天 A 点「手动更新」→ 请求在飞 → 用户切到聊天 B →
+    //  这里重置缓存 + reload + 清日志，但**更新 A 的收尾照常跑**：
+    //      `maybeInjectNpcStates` 会用**聊天 B 的世界书**写入 **A 的状态**
+    //  后果：跨聊天数据污染 + 失败现场被日志清空抹掉。
+    //
+    // ── 为什么是"先取消"而不是"等它跑完" ──
+    //  切聊天本来就是"换场景" —— 让上一场的更新继续跑没有意义，
+    //  而它的产物会落到新场景里。**取消是唯一不会污染的做法。**
+    //
+    // ⚠ **不许静默取消**：用户点了"更新"，结果什么都没发生，他会以为按钮坏了。
+    //    所以这里必须 toast 说清楚。
+    const updating = useUpdatingStore();
+    if (updating.isActive()) {
+        updating.cancel();
+        updating.stop();
+        console.warn('[彼方] 切聊天时有一次更新还没完成，已取消（避免把上一场的状态写进这一场的世界书）');
+        host.toast?.warn?.('上一场聊天还有一次更新没完成，已取消', '彼方');
+    }
     // 切聊天只刷新数据与注入，不再整页重载，避免悬浮球闪烁消失
     resetWorldbookCaches();
     useStateStore().reload(host);

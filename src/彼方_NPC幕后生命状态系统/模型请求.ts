@@ -215,11 +215,57 @@ function isReservedTopLevelKey(name: string) {
 }
 /** 校验 AI 输出的 JSON 结构是否符合预期; 结构错误、"新增 NPC 字段不全"抛错重试, 已有 NPC 缺普通字段只警告(沿用旧值) */
 /**
+ * 模型给出的这个名字**能不能当 NPC 名**（2026-11-19 #340）。
+ *
+ * ── 为什么需要它 ──
+ *  `__proto__` 这类名字是**对象原型的特殊键**：
+ *
+ *      const o = {};
+ *      o['__proto__'] = { 当前在做: 'x' };
+ *      Object.keys(o)   // []          ← 走 setter，**不产生自身属性**
+ *      Object.getPrototypeOf(o)  // { 当前在做: 'x' }   ← 原型被改了
+ *
+ *  于是 `newData.NPC['__proto__'] = 卡` 之后：
+ *  **名单里有它，NPC 里没有它** —— 每轮复现，永不自愈。
+ *  那位 NPC 在面板/世界书里消失，而下一轮 AI 被要求更新一张不存在的卡 → 可能触发格式失败循环。
+ *
+ * ── 为什么是"拦住"而不是"安全地存下来" ──
+ *  这种名字**本来就不该是 NPC 名**。就算用 `Object.defineProperty` 存进去了，
+ *  之后面板/世界书/日志里到处都要拿这个名字做键、做查找 —— 每一处都得防一次。
+ *  而且用户永远不可能给一个角色起名叫 `__proto__`。
+ *
+ *  **拦在入口，比在每个使用点防守便宜得多。**
+ *
+ * ── 为什么只拦 `__proto__` 一个（实测过其余不受影响）──
+ *      constructor    → Object.keys = ["constructor"]      ✅ 正常
+ *      prototype      → Object.keys = ["prototype"]        ✅ 正常
+ *      toString       → Object.keys = ["toString"]         ✅ 正常
+ *      hasOwnProperty → Object.keys = ["hasOwnProperty"]   ✅ 正常
+ *
+ *  只有 `__proto__` 是**访问器属性**（`Object.prototype.__proto__` 的 setter）。
+ *  其余都是普通数据属性，赋值会正常产生自身属性。
+ *
+ *  ⚠ **别写成"所有名字都要转义"** —— 那会把本来正常的路径改坏
+ *  （验收实测：换行/引号/500 字/空格开头/constructor 全部正常）。
+ */
+const 非法NPC名 = new Set(['__proto__']);
+function 是合法NPC名(名: unknown): boolean {
+    const s = String(名 ?? '').trim();
+    if (!s)
+        return false;
+    return !非法NPC名.has(s);
+}
+
+/**
  * 模型输出 → NPC 清单: 顶层每个非保留键就是一个 NPC(卡); 兼容旧格式的「在场NPC」数组。
  *
  * 在这之前"谁是 NPC、叫什么、卡在哪"有三份实现: applyUpdate 一遍、validateParsedFormat 一遍、
  * 「自动建档关闭时哪些名字会被跳过」再一遍(其中 在场NPC 的姓名回退写了两遍)。模型输出形状一变就要改
  * 三处, 迟早漂。现在只有这一份, 三处都遍历它, 各自的策略(是否追踪/算不算新角色)留在调用方。
+ *
+ * **这里是 `__proto__` 型名字的**唯一拦截点**（2026-11-19 #340）**：
+ * 三条路径（applyUpdate / validateParsedFormat / 自动建档跳过名单）都遍历它，
+ * 所以拦在这里 = 三条都拦住。**不要在下游再各写一份。**
  */
 export function 认出NPC(parsed: unknown): Array<{ 名: string; 卡: Record<string, any> }> {
     const 结果: Array<{ 名: string; 卡: Record<string, any> }> = [];
@@ -229,10 +275,23 @@ export function 认出NPC(parsed: unknown): Array<{ 名: string; 卡: Record<str
     // 新格式: NPC 容器里一个个名字; 旧/扁平格式: 顶层键就是名字(排除元数据键)
     const 新格式 = typeof 顶层['NPC'] === 'object' && 顶层['NPC'] !== null && !Array.isArray(顶层['NPC']);
     const 逐个 = 新格式 ? 顶层['NPC'] as Record<string, any> : 顶层;
+    /** 被拦下的名字只喊一次（同一轮里可能重复出现，喊多了是噪音） */
+    const 拦下 = new Set<string>();
+    const 查合法 = (名: string): boolean => {
+        if (是合法NPC名(名))
+            return true;
+        if (!拦下.has(名)) {
+            拦下.add(名);
+            console.warn(`[彼方] 模型给出了一个非法名字「${名}」(${非法NPC名.has(名) ? '对象原型的特殊键，赋值不会产生自身属性' : '名字为空'})，已忽略：不会进名单、不建卡`);
+        }
+        return false;
+    };
     for (const [名, 卡] of Object.entries(逐个)) {
         if (!新格式 && (isReservedTopLevelKey(名) || 名 === '在场NPC'))
             continue;
         if (!卡 || typeof 卡 !== 'object' || Array.isArray(卡))
+            continue;
+        if (!查合法(名))
             continue;
         结果.push({ 名, 卡: 卡 as Record<string, any> });
     }
@@ -250,7 +309,7 @@ export function 认出NPC(parsed: unknown): Array<{ 名: string; 卡: Record<str
                     卡 = 首个[1] as Record<string, any>;
                 }
             }
-            if (名)
+            if (名 && 查合法(名))
                 结果.push({ 名, 卡 });
         }
     }
