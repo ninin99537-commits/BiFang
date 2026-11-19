@@ -1,93 +1,172 @@
-// 彼方 · 拼装页(零件化 v2 UI) —— 批次: 2026-11-19 第五批
+// 彼方 · 拼装页(零件化 v3 UI —— 条目列表) —— 批次: 2026-11-19
 //
-// 这一页做三件事:
-//   ① 表格: 17 个零件的 开关 / 字数 / 去向
-//   ② 可搬位置: 每个零件搬到哪个锚点(等价于写占位符, 但不用懂语法)
-//   ③ 预览: 显示**实际会发出去**的全文
+// 这一页做四件事:
+//   ① 可排序条目列表(内置 15 项 + 用户条目, 同一列表)
+//   ② 原位记号(C19): 内置项有, 拖走后记号留在原处; **关闭的也显示**
+//   ③ 用户条目的视觉标记: 与内置项长得不一样, 不是留白(缺口 3)
+//   ④ 预览: 显示**实际会发出去**的全文 + **内容顺序 → 最终第几条消息**的映射(C21)
 //
-// ── 预览同源(这是本页最重要的一条约束) ──────────────────────────────
-// **预览不自己拼装。** 它调 `收集本轮输入({ 只读: true })` —— 那正是实发用的取料入口,
-// 里面调的是同一个 `buildUpdateMessages`。所以"同一份入参、同一个函数"是结构事实,
-// 不是"我记得保持一致"。
+// ── 本页最重要的一条约束: 别让用户以为"列表 = 消息" ──────────────────
+// 今晚已经在"文案说 A 实际发 B"上栽过两次。列表显示的是**内容顺序**,
+// 而实际发出去的是**消息形状** —— 两者**从来不一样**(内置项会按块合并成 2~3 条消息)。
 //
-// 截断点(需求方 2026-11-19 裁定):
-//   · 含**宏展开**(buildUpdateMessages 内部已展开, host.macros.expand → substitudeMacros)
-//   · 不含**打散标记**(打散在 api.ts 里做, 本页不调它 —— 它天然不含标记)
+// 所以本页**同屏显示两个东西**:
+//   · 左/上: 条目列表(内容顺序)
+//   · 右/下: 消息形状(哪几条消息、每块含哪些条目、最终第几条)
+// 并且预览区明确写"下面是实发的样子"。用户拖完能看到"消息数没变但内容换了位置"。
 //
-// 为什么不能为预览另写一套拼装: 两套会漂, 而漂的那一刻没人知道 —— 11-18 那次
-// "文案说 A、实际发 B"就是这么来的, 只不过这次漂的是预览。
+// ── 预览同源(与上一批同一条铁律) ──────────────────────────────────
+// **预览不自己拼装。** 它调 `收集本轮输入({ 只读: true })` —— 实发用的同一个取料入口,
+// 里面调的是同一个 `buildUpdateMessages`。所以"同一份入参、同一个函数"是结构事实。
+//
+// 截断点(需求方 2026-11-19 裁定): 含宏展开、不含打散标记(打散在 api.ts, 本页不调它)。
 //
 // U3b(结构锁): 本文件**不出现任何 buildUpdateMessages 调用**。
 //   由 tests/bifang-拼装页.test.ts 的 [U3b] 段扫源码断言, [U3c] 段用变异证明那条扫得动。
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { 零件表, 清单摘要 } from './零件表';
+import {
+  默认列表顺序, 造内置列表, 解析位置, 合并成块, 块内用户文本,
+  零件所在块, 原位序号, 规范条目,
+  type 列表项, type 用户条目, type 解析段,
+} from './条目列表';
 import { 收集本轮输入 } from './更新输入';
 import { useDebugStore } from './日志仓';
 import { toastWarning } from './toast';
 import { use设置面板 } from './设置面板';
 import type { Host } from './host';
+
 const props = defineProps<{ host: Host }>();
 const 设置面板 = use设置面板();
 const settings = 设置面板.settings;
 
-/** 可搬的位置(与 settings 里的 零件位置 枚举一致) */
-const 位置选项 = ['默认位置', '最前', '主提示词之后', '任务之前', '任务之后', '最后'] as const;
+/** 内置项的内容由实发时现取 —— 本页只显示"它属于哪块"，不显示内容（内容太长）。
+ *  取一个占位串给 `解析位置` 用（它只需要"这个零件存在"这个事实）。 */
+const 取内容占位 = (代号: string) => `<${代号}>`;
 
-/** 当前零件的关闭集合(读写 settings, 立即生效) */
-function 是关闭的(代号: string): boolean {
-  return (settings.value.提示词?.关闭零件 ?? []).includes(代号);
-}
-function 切换关闭(代号: string) {
-  const 现值: string[] = settings.value.提示词?.关闭零件 ?? [];
-  settings.value.提示词.关闭零件 = 现值.includes(代号)
-    ? 现值.filter(号 => 号 !== 代号)
-    : [...现值, 代号];
-}
+/** 当前列表：内置 15 项 + 用户条目。
+ *  **顺序来自 settings.提示词.条目顺序**（没有就用默认顺序）。
+ *  这一份是本页的"内容顺序"的唯一表示。 */
+const 列表 = computed<列表项[]>(() => {
+  const 内置 = 造内置列表(取内容占位);
+  const 关闭 = new Set<string>(settings.value.提示词?.关闭零件 ?? []);
+  for (const 项 of 内置) {
+    if (关闭.has(项.代号))
+      项.启用 = false;
+  }
+  const 用户们: 用户条目[] = (settings.value.提示词?.条目 ?? []).map((项: any, i: number) => 规范条目(项, i));
+  // 顺序: 若 settings 里存了 条目顺序（含内置代号与用户 id），按它排；否则内置在前、用户在后
+  const 存序: string[] = settings.value.提示词?.条目顺序 ?? [];
+  if (存序.length === 0)
+    return [...内置, ...用户们];
+  const 全部: 列表项[] = [...内置, ...用户们];
+  const 按序 = 存序.map(id => 全部.find(项 => 项.id === id)).filter(Boolean) as 列表项[];
+  // 没在顺序里的（新加的条目）追加到末尾 —— 不许丢
+  const 剩下 = 全部.filter(项 => !存序.includes(项.id));
+  return [...按序, ...剩下];
+});
 
-/** 当前零件搬到的位置('默认位置' = 不搬) */
-function 当前位置(代号: string): string {
-  return (settings.value.提示词?.零件位置 ?? {})[代号] ?? '默认位置';
-}
-function 设置位置(代号: string, 位置: string) {
-  const 表 = { ...(settings.value.提示词?.零件位置 ?? {}) };
-  if (位置 === '默认位置')
-    delete 表[代号];
-  else
-    表[代号] = 位置;
-  settings.value.提示词.零件位置 = 表;
-}
-/** 从 change 事件里取下拉的当前值。
- *  为什么单独一个函数: 模板里不能写 `as HTMLSelectElement`(那是 TS 语法,
- *  Vue 模板编译器不认 —— 会报 "Duplicate attribute / Element is missing end tag",
- *  而 `tsc --noEmit` 抓不到, 只有 webpack 才抓得到)。 */
-function 读下拉值(事件: Event): string {
-  return String((事件.target as HTMLSelectElement | null)?.value ?? '默认位置');
+/** 保存顺序（拖拽后调用） */
+function 保存顺序(新列表: 列表项[]) {
+  settings.value.提示词.条目顺序 = 新列表.map(项 => 项.id);
 }
 
-/** D9(场景判断)只许 system —— 所以它搬位置时不给 user/assistant 选项。
- *  U4 的理由(验收): 给一个必错的选项, 等于把 warn 变成常态流程, 那 warn 就不算 warn 了。
- *  本页所有搬位置都写 role='system'(见 更新输入.ts 的 零件位置转段), 所以这条天然满足;
- *  这里只是把"为什么没有 role 下拉"写清楚。 */
+/** 拖拽：HTML5 draggable。**直接改列表顺序**（C17），不生成占位符条目。 */
+const 拖动中 = ref<string | null>(null);
+function 开始拖(id: string) {
+  拖动中.value = id;
+}
+function 放到(id: string) {
+  const 从 = 拖动中.value;
+  拖动中.value = null;
+  if (!从 || 从 === id)
+    return;
+  const 现 = [...列表.value];
+  const 从位 = 现.findIndex(项 => 项.id === 从);
+  const 到位 = 现.findIndex(项 => 项.id === id);
+  if (从位 < 0 || 到位 < 0)
+    return;
+  const [移动项] = 现.splice(从位, 1);
+  现.splice(到位, 0, 移动项);
+  保存顺序(现);
+}
+
+/** 开关：内置项写 关闭零件；用户条目写自己的 启用 */
+function 是关闭的(项: 列表项): boolean {
+  if (项.来源 === '内置')
+    return (settings.value.提示词?.关闭零件 ?? []).includes(项.代号);
+  return 项.启用 === false;
+}
+function 切换(项: 列表项) {
+  if (项.来源 === '内置') {
+    const 现: string[] = settings.value.提示词?.关闭零件 ?? [];
+    settings.value.提示词.关闭零件 = 现.includes(项.代号)
+      ? 现.filter(号 => 号 !== 项.代号)
+      : [...现, 项.代号];
+    return;
+  }
+  const 条目们 = settings.value.提示词?.条目 ?? [];
+  const i = 条目们.findIndex((x: any) => String(x.id) === 项.id);
+  if (i >= 0)
+    条目们[i].启用 = !(条目们[i].启用 !== false);
+}
+
+/** 用户条目增删改 */
+function 新增条目() {
+  const 条目们 = settings.value.提示词?.条目 ?? [];
+  const id = `用户-${Date.now().toString(36)}`;
+  条目们.push({ id, role: 'system', content: '', 启用: true });
+  settings.value.提示词.条目 = 条目们;
+  // 新条目追加到顺序末尾
+  settings.value.提示词.条目顺序 = [...(settings.value.提示词?.条目顺序 ?? []), id];
+}
+function 删除条目(id: string) {
+  settings.value.提示词.条目 = (settings.value.提示词?.条目 ?? []).filter((x: any) => String(x.id) !== id);
+  settings.value.提示词.条目顺序 = (settings.value.提示词?.条目顺序 ?? []).filter((x: string) => x !== id);
+}
+function 改条目(id: string, 字段: string, 值: any) {
+  const 条目们 = settings.value.提示词?.条目 ?? [];
+  const i = 条目们.findIndex((x: any) => String(x.id) === id);
+  if (i >= 0)
+    条目们[i][字段] = 值;
+}
+
+/** 消息形状（C21 的核心）：把"内容顺序"解析成"块"，再算每块是第几条消息。
+ *  **与实发走同一套**: 解析位置 + 合并成块（不是本页自己想的规则）。 */
+const 消息形状 = computed(() => {
+  const 解析 = 解析位置({ 列表: 列表.value, 关闭零件: settings.value.提示词?.关闭零件 ?? [] });
+  const 块们 = 合并成块(解析.段们);
+  return 块们.map((块, i) => {
+    const 用户文本 = 块内用户文本(块);
+    const 内置代号们 = 块.filter(段 => 段.来源 === '内置').map(段 => 段.代号!);
+    return {
+      序号: i + 1,
+      role: 块[0].role,
+      块名: 内置代号们.length > 0 ? 零件所在块(内置代号们[0]) : '用户条目',
+      含: 内置代号们.length > 0
+        ? 内置代号们.map(代 => 零件表.find(件 => 件.代号 === 代)?.名 ?? 代)
+        : 块.map(段 => `用户条目 #${段.id}`),
+      字数: 内置代号们.length > 0
+        ? 内置代号们.reduce((和, 代) => 和 + (零件表.find(件 => 件.代号 === 代)?.说明.length ?? 0), 0)
+        : 用户文本.length,
+    };
+  });
+});
 
 // ── 预览 ──────────────────────────────────────────────────────
 const 预览中 = ref(false);
 const 预览文本 = ref('');
 const 预览时间 = ref('');
 const 预览错误 = ref('');
-const 预览清单 = ref([]) as import('vue').Ref<any[]>;
 
-/** 生成预览。
- *
- *  **这是本页唯一一处取料调用, 且走的是实发同一个入口。**
- *  `只读: true` 保证它不写日志、不打日志行 —— 预览不该在日志页留下"我更新过"的痕迹。 */
+/** 生成预览。**本页唯一一处取料调用, 走实发同一个入口。** */
 async function 生成预览() {
   if (预览中.value)
     return;
   预览中.value = true;
   预览错误.value = '';
   try {
-    // 与实发**同一份入参形状**: force=true 表示"现在就要"(预览不受"慢一步"影响)
     const 结果 = await 收集本轮输入({
       host: props.host,
       settings: settings.value,
@@ -101,13 +180,11 @@ async function 生成预览() {
       预览文本.value = '';
       return;
     }
-    // 原样显示: messages 按条列, 工具说明单独一块。**不加工、不截断、不重排**。
     const 段们 = (结果.messages ?? []).map((段: any, i: number) =>
       `── 第 ${i + 1} 条 · ${段.role} ──\n${段.content}`);
     if (结果.工具说明)
       段们.push(`── 工具说明 ──\n${结果.工具说明}`);
     预览文本.value = 段们.join('\n\n');
-    预览清单.value = 结果.拼装清单 ?? [];
     预览时间.value = new Date().toLocaleTimeString('zh-CN', { hour12: false });
   }
   catch (error: any) {
@@ -119,23 +196,19 @@ async function 生成预览() {
   }
 }
 
-/** 表格行: 直接来自 V1 拼装清单(不另算字数)。
- *  清单为空(全默认且没预览过)时, 用零件表兜底显示"点预览看实际体量" ——
- *  **不自己估一个数**, 那会造出第二个假账。 */
-const 行们 = computed(() => {
-  if (预览清单.value.length > 0)
-    return 预览清单.value;
-  return 零件表.map(件 => ({
-    代号: 件.代号,
-    名: 件.名,
-    状态: 是关闭的(件.代号) ? '已关闭' : '—',
-    位置: '点「生成预览」看实际去向',
-    字数: null as number | null,
-    备注: 件.承重 ? `承重件(${件.承重})` : '',
-  }));
-});
-
-const 摘要 = computed(() => (预览清单.value.length > 0 ? 清单摘要(预览清单.value) : ''));
+/** 内置项的原位（C19：关闭的也显示） */
+function 原位(项: 列表项): string {
+  if (项.来源 !== '内置')
+    return '';
+  const 号 = 原位序号(项.代号);
+  return 号 === undefined ? '' : `#${号 + 1}`;
+}
+/** 是否被拖离了原位 */
+function 偏离原位(项: 列表项): boolean {
+  if (项.来源 !== '内置')
+    return false;
+  return 默认列表顺序.indexOf(项.代号) !== 列表.value.findIndex(x => x.id === 项.id);
+}
 </script>
 
 <template>
@@ -143,9 +216,10 @@ const 摘要 = computed(() => (预览清单.value.length > 0 ? 清单摘要(预�
     <header class="bf-page-head">
       <div>
         <h2 class="bf-page-title">拼装</h2>
-        <p class="bf-page-sub">每一块内容去了哪里、占多少字。关掉或搬走都会立刻生效。</p>
+        <p class="bf-page-sub">拖动改顺序、勾选框开关、自己写条目。下面两栏永远同时显示。</p>
       </div>
       <div class="bf-actions">
+        <button class="bf-btn bf-btn-sm" @click="新增条目">＋ 新增条目</button>
         <button class="bf-btn bf-btn-sm bf-btn-primary" :disabled="预览中" @click="生成预览">
           {{ 预览中 ? '正在取料…' : '生成预览' }}
         </button>
@@ -157,59 +231,108 @@ const 摘要 = computed(() => (预览清单.value.length > 0 ? 清单摘要(预�
     </p>
     <p v-if="预览错误" class="bf-hint bf-hint-warn" role="alert">{{ 预览错误 }}</p>
 
-    <p v-if="摘要" class="bf-parts-summary">{{ 摘要 }}</p>
+    <!-- 两栏: 左边"内容顺序"，右边"消息形状"。同屏，因为两者从来不一样 -->
+    <div class="bf-parts-cols">
+      <!-- ── 左栏: 条目列表（内容顺序） ── -->
+      <section class="bf-parts-col">
+        <h3 class="bf-parts-col-title">
+          内容顺序
+          <span class="bf-parts-col-note">拖动这一列改的是<strong>内容先后</strong></span>
+        </h3>
+        <ol class="bf-entry-list">
+          <li
+            v-for="(项, i) in 列表"
+            :key="项.id"
+            class="bf-entry"
+            :class="{
+              'is-off': 是关闭的(项),
+              'is-user': 项.来源 === '用户',
+              'is-moved': 偏离原位(项),
+            }"
+            draggable="true"
+            @dragstart="开始拖(项.id)"
+            @dragover.prevent
+            @drop.prevent="放到(项.id)"
+          >
+            <span class="bf-entry-grip" aria-hidden="true">⋮⋮</span>
+            <span class="bf-entry-pos">{{ i + 1 }}</span>
 
-    <table class="bf-parts-table">
-      <thead>
-        <tr>
-          <th scope="col">零件</th>
-          <th scope="col">开启</th>
-          <th scope="col">搬到</th>
-          <th scope="col">字数</th>
-          <th scope="col">去向</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="行 in 行们" :key="行.代号" :class="{ 'is-off': 行.状态 === '已关闭' }">
-          <th scope="row">
-            <span class="bf-parts-code">{{ 行.代号 }}</span>
-            <span class="bf-parts-name">{{ 行.名 }}</span>
-          </th>
-          <td>
+            <!-- 原位记号(C19): 内置项才有；关闭的也显示 -->
+            <span
+              v-if="项.来源 === '内置'"
+              class="bf-entry-origin"
+              :class="{ 'is-drifted': 偏离原位(项) }"
+              :title="偏离原位(项) ? `原位在 ${原位(项)}，已被拖走` : '在原位'"
+            >{{ 原位(项) }}</span>
+            <!-- 用户条目: 不同的视觉标记，不是留白（缺口 3） -->
+            <span v-else class="bf-entry-user-tag" title="你自己写的条目，没有原位">自写</span>
+
+            <span class="bf-entry-name">
+              <template v-if="项.来源 === '内置'">
+                <span class="bf-entry-code">{{ 项.代号 }}</span>{{ 零件表.find(件 => 件.代号 === 项.代号)?.名 }}
+                <span class="bf-entry-block">{{ 零件所在块(项.代号) }}</span>
+              </template>
+              <template v-else>用户条目</template>
+            </span>
+
             <input
               type="checkbox"
-              :checked="!是关闭的(行.代号)"
-              :aria-label="`启用 ${行.名}`"
-              @change="切换关闭(行.代号)"
+              :checked="!是关闭的(项)"
+              :aria-label="`启用 ${项.来源 === '内置' ? 项.代号 : '用户条目'}`"
+              @change="切换(项)"
             />
-          </td>
-          <td>
-            <!-- R6/R7 不可搬迁(由自己的开关控制), 给它们一个禁用的下拉比藏起来更好:
-                 藏起来用户会问"为什么别的有它没有", 禁用 + title 说清原因 -->
-            <select
-              v-if="零件表.find(件 => 件.代号 === 行.代号)?.可搬迁"
-              :value="当前位置(行.代号)"
-              :aria-label="`${行.名} 的位置`"
-              @change="设置位置(行.代号, 读下拉值($event))"
-            >
-              <option v-for="项 in 位置选项" :key="项" :value="项">{{ 项 }}</option>
-            </select>
-            <span v-else class="bf-parts-locked" title="这一块由它自己的开关控制，不能单独搬位置">跟开关走</span>
-          </td>
-          <td class="bf-parts-num">
-            {{ 行.字数 === null ? '—' : 行.字数 }}
-          </td>
-          <td>
-            <span v-if="行.备注" class="bf-parts-note">{{ 行.备注 }}</span>
-            <span v-else>{{ 行.位置 }}</span>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+            <!-- 内置项**没有编辑框**（类型上也没有） -->
+            <span v-if="项.来源 === '内置'" class="bf-entry-locked" title="内置内容由代码生成，不能改；想改请自己新增一条">只读</span>
+            <button v-else class="bf-btn bf-btn-xs" @click="删除条目(项.id)">删除</button>
+          </li>
+        </ol>
 
-    <p class="bf-hint">
-      字数是实际会发出去的量。没点「生成预览」时显示 —，因为不点就取不到这一轮的真实内容。
-    </p>
+        <!-- 用户条目的正文编辑（只对用户条目显示） -->
+        <div v-if="(settings.提示词?.条目 ?? []).length > 0" class="bf-entry-editor">
+          <h4 class="bf-entry-editor-title">你的条目</h4>
+          <div v-for="项 in (settings.提示词?.条目 ?? [])" :key="项.id" class="bf-entry-edit">
+            <div class="bf-entry-edit-head">
+              <select
+                :value="项.role ?? 'system'"
+                :aria-label="'身份'"
+                @change="改条目(项.id, 'role', ($event.target as HTMLSelectElement).value)"
+              >
+                <option value="system">system</option>
+                <option value="user">user</option>
+                <option value="assistant">assistant</option>
+              </select>
+              <span class="bf-hint">可用 <code v-pre>{{彼方:世界书}}</code> 这种写法把内置内容嵌进来</span>
+            </div>
+            <textarea
+              :value="项.content ?? ''"
+              rows="3"
+              placeholder="在这里写你的提示词"
+              @input="改条目(项.id, 'content', ($event.target as HTMLTextAreaElement).value)"
+            ></textarea>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 右栏: 消息形状 ── -->
+      <section class="bf-parts-col">
+        <h3 class="bf-parts-col-title">
+          消息形状
+          <span class="bf-parts-col-note">实际发出去是<strong>{{ 消息形状.length }} 条消息</strong></span>
+        </h3>
+        <ol class="bf-msg-list">
+          <li v-for="条 in 消息形状" :key="条.序号" class="bf-msg">
+            <span class="bf-msg-no">第 {{ 条.序号 }} 条</span>
+            <span class="bf-msg-role" :class="`role-${条.role}`">{{ 条.role }}</span>
+            <span class="bf-msg-block">{{ 条.块名 }}</span>
+            <span class="bf-msg-contains">{{ 条.含.join('、') }}</span>
+          </li>
+        </ol>
+        <p class="bf-hint">
+          左栏是<strong>内容先后</strong>，右栏是<strong>发出去的样子</strong>。两者不是一回事：
+          同块的条目会合成一条消息，所以左栏 15 行在右栏只有几行。
+        </p>
+      </section>
+    </div>
 
     <section v-if="预览文本" class="bf-parts-preview">
       <header class="bf-parts-preview-head">
@@ -222,54 +345,173 @@ const 摘要 = computed(() => (预览清单.value.length > 0 ? 清单摘要(预�
 </template>
 
 <style scoped>
-.bf-parts-summary {
-  margin: 0 0 8px;
-  font-size: 12px;
-  color: var(--bf-text-dim, #8a8a92);
+.bf-parts-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 16px;
+  margin-bottom: 12px;
 }
-.bf-parts-table {
-  width: 100%;
-  border-collapse: collapse;
+@media (max-width: 720px) {
+  .bf-parts-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.bf-parts-col-title {
+  margin: 0 0 6px;
   font-size: 12.5px;
-}
-.bf-parts-table th,
-.bf-parts-table td {
-  padding: 6px 8px;
-  text-align: left;
-  border-bottom: 1px solid var(--bf-line, rgba(255, 255, 255, 0.08));
-  vertical-align: middle;
-}
-.bf-parts-table thead th {
   font-weight: 600;
-  font-size: 11.5px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.bf-parts-col-note {
+  font-size: 11px;
+  font-weight: 400;
   color: var(--bf-text-dim, #8a8a92);
 }
-.bf-parts-table tbody th {
-  font-weight: 500;
+.bf-entry-list,
+.bf-msg-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.bf-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--bf-line, rgba(255, 255, 255, 0.08));
+  font-size: 12.5px;
+  cursor: grab;
+}
+.bf-entry.is-off {
+  opacity: 0.5;
+}
+.bf-entry.is-user {
+  background: rgba(120, 170, 255, 0.06);
+}
+.bf-entry-grip {
+  color: var(--bf-text-dim, #8a8a92);
+  font-size: 11px;
+  letter-spacing: -2px;
+}
+.bf-entry-pos {
+  min-width: 18px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--bf-text-dim, #8a8a92);
+}
+.bf-entry-origin {
+  min-width: 26px;
+  text-align: center;
+  font-size: 10.5px;
+  font-family: ui-monospace, monospace;
+  color: var(--bf-text-dim, #8a8a92);
+  border-left: 2px solid currentColor;
+  padding-left: 3px;
+}
+.bf-entry-origin.is-drifted {
+  opacity: 0.35;
+  font-style: italic;
+}
+.bf-entry-user-tag {
+  min-width: 26px;
+  text-align: center;
+  font-size: 10.5px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: rgba(120, 170, 255, 0.18);
+  color: #9dc0ff;
+}
+.bf-entry-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
-.bf-parts-table tr.is-off {
-  opacity: 0.55;
-}
-.bf-parts-code {
-  display: inline-block;
-  min-width: 34px;
-  margin-right: 6px;
+.bf-entry-code {
+  margin-right: 5px;
   font-family: ui-monospace, monospace;
   font-size: 11px;
   color: var(--bf-text-dim, #8a8a92);
 }
-.bf-parts-num {
-  text-align: right;
+.bf-entry-block {
+  margin-left: 6px;
+  font-size: 10.5px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--bf-bg-sunken, rgba(0, 0, 0, 0.22));
+  color: var(--bf-text-dim, #8a8a92);
+}
+.bf-entry-locked {
+  font-size: 10.5px;
+  color: var(--bf-text-dim, #8a8a92);
+}
+.bf-entry-editor {
+  margin-top: 12px;
+}
+.bf-entry-editor-title {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.bf-entry-edit {
+  margin-bottom: 10px;
+}
+.bf-entry-edit-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.bf-entry-edit textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 6px;
+  border-radius: 4px;
+}
+.bf-msg {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--bf-line, rgba(255, 255, 255, 0.08));
+  font-size: 12px;
+}
+.bf-msg-no {
   font-variant-numeric: tabular-nums;
+  color: var(--bf-text-dim, #8a8a92);
+  font-size: 11px;
 }
-.bf-parts-locked {
-  font-size: 11.5px;
+.bf-msg-role {
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  padding: 0 4px;
+  border-radius: 3px;
+}
+.bf-msg-role.role-system {
+  background: rgba(120, 170, 255, 0.16);
+}
+.bf-msg-role.role-user {
+  background: rgba(120, 220, 160, 0.16);
+}
+.bf-msg-role.role-assistant {
+  background: rgba(230, 200, 120, 0.16);
+}
+.bf-msg-block {
+  font-size: 11px;
   color: var(--bf-text-dim, #8a8a92);
 }
-.bf-parts-note {
-  font-size: 11.5px;
-  color: var(--bf-text-dim, #8a8a92);
+.bf-msg-contains {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .bf-hint-warn {
   color: var(--bf-warn, #e0a030);
