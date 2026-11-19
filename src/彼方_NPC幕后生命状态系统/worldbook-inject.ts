@@ -1,7 +1,7 @@
 import type { Host } from './host';
 // 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
 import { buildInjectionPrompt } from './prompts';
-import { BIFANG_WORLDBOOK_ENTRY_NAME, isBifangEntry, sanitizeBifangEntryName } from './彼方条目';
+import { BIFANG_WORLDBOOK_ENTRY_NAME, isBifangEntryDeletable, sanitizeBifangEntryName } from './彼方条目';
 import { useMainPromptStore } from './日志仓';
 import type { 彼方数据 } from './快照';
 import type { 世界书写入目标 } from './settings';
@@ -75,7 +75,7 @@ function 报告世界书失败(host: Pick<Host, 'toast'>, error: unknown): void 
 async function syncNpcStatesWorldbook(host: Pick<Host, 'worldbook'>, data: 彼方数据, 目标: 世界书写入目标, 未回票?: Record<string, string[]>, 生理监测 = true) {
     if (目标 === '关闭') {
         for (const name of 已有世界书(host))
-            await host.worldbook.remove(name, isBifangEntry);
+            await host.worldbook.remove(name, isBifangEntryDeletable);
         return;
     }
     const wbName = await 目标世界书(host, 目标);
@@ -91,17 +91,21 @@ async function syncNpcStatesWorldbook(host: Pick<Host, 'worldbook'>, data: 彼�
     }
     const npcEntries = Object.entries(data.NPC ?? {});
     if (npcEntries.length === 0) {
-        await host.worldbook.remove(wbName, isBifangEntry);
+        await host.worldbook.remove(wbName, isBifangEntryDeletable);
         return;
     }
     const content = buildInjectionPrompt(npcEntries, 未回票, String(data?.剧情时间 ?? ''), 生理监测);
     // 日志页「彼方写入世界书的内容」记录: 与写入条目的内容完全一致(同一个渲染函数),
     // 主AI 以及任何读取该世界书的环节读到的就是这一段
     useMainPromptStore().record(content);
-    const existing = (await host.worldbook.entries(wbName)).find(isBifangEntry);
+    // ⚠ **写入端也用严格判据**（2026-11-19 #325）：
+    //  这里做的是"找到自己那条 → 覆盖它的内容"。若用宽松判据，
+    //  用户一条正文以 `[彼方 · 幕后NPC状态]` 开头的条目会被**整段内容覆盖掉** ——
+    //  那比删掉更糟（删了还能重建，覆盖了原文就没了）。
+    const existing = (await host.worldbook.entries(wbName)).find(isBifangEntryDeletable);
     if (existing) {
         // 保留其它字段, 只刷新内容; 确保防递归开启; 名字若命中 ACU 屏蔽词则改回安全名
-        await host.worldbook.update(wbName, wb => wb.map(entry => isBifangEntry(entry)
+        await host.worldbook.update(wbName, wb => wb.map(entry => isBifangEntryDeletable(entry)
             ? {
                 ...entry,
                 name: sanitizeBifangEntryName(entry.name || BIFANG_WORLDBOOK_ENTRY_NAME),

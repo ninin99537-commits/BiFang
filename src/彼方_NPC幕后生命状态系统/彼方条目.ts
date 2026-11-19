@@ -40,8 +40,14 @@ const BIFANG_WORLDBOOK_ENTRY_NAME = '【彼方】NPC幕后生活';
 /** 数据库脚本(ACU)剧情推进的"条目屏蔽"关键词：命中则条目不进剧情推进上下文 */
 const ACU_BLOCKED_KEYWORDS = ['规则', '思维链', 'cot', 'MVU', 'mvu', '变量', '状态', 'Status', 'Rule', 'rule', '检定', '判断', '叙事', '文风', 'InitVar', '格式'];
 
-/** 这条世界书条目是不是彼方自己写的。
- * 名字与备注都会因用户/插件操作而变, 正文开头是最强特征, 所以四样一起看。 */
+/** 这条世界书条目是不是彼方自己写的（**读取端用**：宽松，宁可多排除）。
+ *
+ *  四样信号任一命中就算：正文开头 / 名字 / 备注 / 标记。
+ *  为什么这里可以宽松：它只决定"读世界书时要不要跳过自己上一轮的输出" ——
+ *  误判的后果是**少读一段**，可逆、不影响用户数据。
+ *
+ *  ⚠ **不要把它用在删除上**（见 `isBifangEntryDeletable`）：正文前缀是文本启发式，
+ *  用户自己写一条正文以 `[彼方 · 幕后NPC状态]` 开头的条目就会被误删。 */
 function isBifangEntry(entry: 世界书条目形状 | null | undefined): boolean {
     if (!entry)
         return false;
@@ -51,11 +57,40 @@ function isBifangEntry(entry: 世界书条目形状 | null | undefined): boolean
         || entry.comment === BIFANG_WORLDBOOK_ENTRY_NAME
         || entry.extra?.bifang === true;
 }
+
+/** 这条条目**可以被删掉**吗（**删除端专用**：严格，宁可少删）。
+ *
+ *  ── 为什么必须与 `isBifangEntry` 分开（2026-11-19 #325）──
+ *  `isBifangEntry` 认「正文以 `[彼方 · 幕后NPC状态]` 开头」——
+ *  那是**文本启发式，有误伤面**：用户自己写一条笔记，正文第一个字就是那个字符串，
+ *  删条目时会被当成彼方的删掉。实测（`bifang-probe-prefix-hurt.mjs`）：
+ *
+ *      用户：正文以真实前缀开头  → isBifangEntry = true   ★ 会被误删
+ *
+ *  **删除是不可逆的，所以这里只认"用户改不掉的结构化标记" + 精确名称匹配。**
+ *
+ *  ── 三条判据，都不含"正文前缀" ──
+ *  ① `extra.bifang === true` —— 结构化标记，名字和正文改了它也不变（**主判据**）
+ *  ② 名字**精确等于** `【彼方】NPC幕后生活` —— 过渡用（早期版本可能没带标记；
+ *     精确等于不会误伤，用户不会恰好把自己的条目起成这个名字）
+ *  ③ 备注**精确等于**同名 —— 同上（酒馆把改名的条目把原名放 comment）
+ *
+ *  ⚠ 已知代价：一条**只有正文前缀、既没标记也没原名**的条目会删不掉。
+ *    实测这个代价几乎不存在 —— `extra: { bifang: true }` 从最初提交（`c9c84cc`）
+ *    就写在 `create` 分支上，而 `update` 分支用 `...entry` 展开会保留它。
+ *    所以"存量老条目没标记"这件事没有发生过。 */
+function isBifangEntryDeletable(entry: 世界书条目形状 | null | undefined): boolean {
+    if (!entry)
+        return false;
+    return entry.extra?.bifang === true
+        || entry.name === BIFANG_WORLDBOOK_ENTRY_NAME
+        || entry.comment === BIFANG_WORLDBOOK_ENTRY_NAME;
+}
 /** 若条目名命中 ACU 屏蔽词(如旧名"…幕后NPC状态"含"状态"), 改回安全条目名, 否则保留用户自定义名 */
 function sanitizeBifangEntryName(currentName: unknown): string {
     const name = String(currentName || '').trim();
     return ACU_BLOCKED_KEYWORDS.some(keyword => name.includes(keyword)) ? BIFANG_WORLDBOOK_ENTRY_NAME : name;
 }
 
-export { ACU_BLOCKED_KEYWORDS, BIFANG_WORLDBOOK_ENTRY_NAME, isBifangEntry, sanitizeBifangEntryName };
+export { ACU_BLOCKED_KEYWORDS, BIFANG_WORLDBOOK_ENTRY_NAME, isBifangEntry, isBifangEntryDeletable, sanitizeBifangEntryName };
 export type { 世界书条目形状 };
