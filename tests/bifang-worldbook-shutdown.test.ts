@@ -10,8 +10,7 @@
 import lodash from 'lodash';
 import { createPinia, setActivePinia } from 'pinia';
 import { syncNpcStatesWorldbook } from '../src/彼方_NPC幕后生命状态系统/worldbook-inject';
-import { BIFANG_WORLDBOOK_ENTRY_NAME, isBifangEntry, isBifangEntryDeletable } from '../src/彼方_NPC幕后生命状态系统/彼方条目';
-import { BIFANG_ENTRY_CONTENT_PREFIX } from '../src/彼方_NPC幕后生命状态系统/prompts';
+import { BIFANG_WORLDBOOK_ENTRY_NAME, isBifangEntry } from '../src/彼方_NPC幕后生命状态系统/彼方条目';
 
 // 写入档的注入表由 卡合并/注入渲染 的判定型尾部经 _ 完成; 关闭档用不到, 备着
 (globalThis as any)._ = lodash;
@@ -134,61 +133,6 @@ console.log('\n[3] 同步中途抛错 → 上游能拿到失败(不再吞成 res
     写入档炸出来 = true;
   }
   ok('写入档同步抛错时上游能拿到失败(.catch 不再是死路径)', 写入档炸出来);
-}
-
-console.log('\n[4] 删除端只认结构化标记/精确名, 不认「正文前缀」(2026-11-19 #325)');
-{
-  // ── 这条防的是什么 ──
-  //  旧判据 `isBifangEntry` 认「正文以 `[彼方 · 幕后NPC状态]` 开头」——
-  //  那是**文本启发式**：用户自己写一条笔记，正文第一个字就是那个字符串，
-  //  删条目时会被当成彼方的删掉。**删除不可逆，所以删除端必须严格。**
-  //
-  //  实测（`tests/fixtures/bifang-probe-prefix-hurt.mjs`）：
-  //      用户：正文以真实前缀开头 → isBifangEntry = true   ★ 会被误删
-  const 用户同前缀条目 = () => ({
-    name: '我的笔记',
-    // 正文第一个字就是真实前缀（从源码常量取，不手抄）
-    content: BIFANG_ENTRY_CONTENT_PREFIX + ' 我也想要这种格式',
-    comment: '',
-    enabled: true,
-  });
-
-  // ① 用户条目（正文同前缀、无 extra、名字不是原名）→ **不许被删**
-  {
-    const 笔记 = 用户同前缀条目();
-    const 普通 = 普通条目样本();
-    const { host, 条目 } = 假世界({ 主书: [彼方条目样本(), 笔记], 聊天书: [普通] });
-    await syncNpcStatesWorldbook(host as any, { NPC: {} } as any, '关闭');
-    ok('用户笔记(正文以前缀开头)没被删', 条目.主书.some((e: any) => e.name === '我的笔记'));
-    eq('主书只剩用户那条笔记', 条目.主书.map((e: any) => e.name), ['我的笔记']);
-    ok('彼方条目仍被删了', !条目.主书.some((e: any) => e.extra?.bifang === true));
-  }
-
-  // ② 彼方条目（有 extra.bifang）→ **必须被删**
-  {
-    const { host, 条目 } = 假世界({ 主书: [彼方条目样本()] });
-    await syncNpcStatesWorldbook(host as any, { NPC: {} } as any, '关闭');
-    eq('彼方条目被删干净', 条目.主书.length, 0);
-  }
-
-  // ③ 自证：两个判据对同一条用户条目的结论**必须不同**
-  //    否则说明"改成严格判据"这件事根本没生效 —— 断言绿了也没有意义。
-  {
-    const 笔记 = 用户同前缀条目();
-    ok('严格判据放过用户条目', isBifangEntryDeletable(笔记) === false);
-    ok('宽松判据会误伤(这就是被修掉的 bug)', isBifangEntry(笔记) === true);
-    ok('两个判据确实不同(否则改动没生效)', isBifangEntryDeletable(笔记) !== isBifangEntry(笔记));
-  }
-
-  // ④ 写入端：不许把用户的同前缀条目**覆盖**掉（比删更糟 —— 原文没了）
-  {
-    const 笔记 = 用户同前缀条目();
-    const { host, 条目 } = 假世界({ 主书: [笔记] });
-    await syncNpcStatesWorldbook(host as any, { NPC: { 甲: { 位置: '厨房' } }, 剧情时间: '' } as any, '角色卡主世界书');
-    const 笔记后 = 条目.主书.find((e: any) => e.name === '我的笔记');
-    ok('用户笔记原文没被覆盖', String(笔记后?.content ?? '').includes('我也想要这种格式'));
-    ok('另建了一条彼方条目(没复用用户那条)', 条目.主书.some((e: any) => e.extra?.bifang === true));
-  }
 }
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);

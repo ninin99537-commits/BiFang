@@ -77,17 +77,7 @@ const world = (text: string) => ({ ...存档.emptyData(), 世界: { 时间: '203
   assert.equal(存档.loadData().小结, '最后一份好状态');
   assert.ok(p.floorVars['A:3:0']?.烟火, '新索引未成功前不得裁掉旧快照');
 }
-// ── 通过计数（2026-11-19 改：从字面量改成运行时计数）──
-// 为什么：上一批写的是 `结果: ${6} 通过` —— 6 是字面量。加了断言忘更新 → 数字偏小，
-// 而 run.mjs 的自检**只验句式、不验条数**，所以发现不了。
-// **一个编出来的数字，比没有数字更危险 —— 它看起来是统计结果。**
-let 通过 = 0;
-function pass(说明: string) {
-  通过++;
-  console.log('PASS ' + 说明);
-}
-
-pass('索引失败保留上次可读状态');
+console.log('PASS 索引失败保留上次可读状态');
 
 {
   const p = platform();
@@ -97,7 +87,7 @@ pass('索引失败保留上次可读状态');
   assert.equal(存档.writeStateSnapshot(world('未提交候选'), 3, 3, false), false);
   assert.equal(存档.loadData().小结, '好状态', '回滚写失败仍不得读取未提交候选');
 }
-pass('同层失败候选不能顶掉最后好版本');
+console.log('PASS 同层失败候选不能顶掉最后好版本');
 
 {
   const p = platform();
@@ -112,7 +102,7 @@ pass('同层失败候选不能顶掉最后好版本');
   p.switchSwipe(0); p.messages.A[3] = '用户编辑后的完整正文';
   assert.equal(存档.归属仍有效(origin), false);
 }
-pass('聊天、swipe、正文归属守卫');
+console.log('PASS 聊天、swipe、正文归属守卫');
 
 {
   const p = platform();
@@ -125,7 +115,7 @@ pass('聊天、swipe、正文归属守卫');
   assert.equal(base.锚点楼层, -1);
   assert.deepEqual(p.floorVars, saved, '准备重推不删除旧快照');
 }
-pass('修订号阻止旧响应，重推准备不破坏好状态');
+console.log('PASS 修订号阻止旧响应，重推准备不破坏好状态');
 
 {
   const p = platform();
@@ -140,7 +130,7 @@ pass('修订号阻止旧响应，重推准备不破坏好状态');
   p.chats.A.烟火.快照楼层.push(3);
   assert.notEqual(存档.loadData().小结, '清空前', '旧swipe也不能跨清空世代复活');
 }
-pass('持久清空截止及跨swipe世代');
+console.log('PASS 持久清空截止及跨swipe世代');
 
 {
   const p = platform();
@@ -158,8 +148,4 @@ pass('持久清空截止及跨swipe世代');
   assert.deepEqual(candidate, original, '失败不推进调用者的游标或清空层');
   assert.deepEqual(p.chats.A, before);
 }
-pass('长内容完整往返与失败不修改调用者');
-
-// ── 汇总行（运行时计数，2026-11-19）──
-// 失败靠 node:assert 抛错（进程非零退出 → run.mjs 的 code!==0 能抓到），所以这里只报通过数。
-console.log(`结果: ${通过} 通过, 0 失败`);
+console.log('PASS 长内容完整往返与失败不修改调用者');
