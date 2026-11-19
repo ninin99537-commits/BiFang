@@ -356,11 +356,14 @@ function loadSettings(host: 设置宿主) {
         const 全部 = host.vars.get({ type: 'global' });
         const global = 全部?.[SETTINGS_KEY];
         if (global && typeof global === 'object' && !Array.isArray(global)) {
+            const 迁移前 = klona(global);
             const 设置 = Settings.parse(migrateSettings(global));
             // **迁移改过东西就落盘一次**（2026-11-19，同 getSettings 那条）：
             // 不落盘 = 没迁（`getVariables()` 返回深拷贝，改的是副本）。
+            // 基线取"迁移前"那一份 —— 这样写回的是**迁移的差异**，不是整份覆盖。
             if (待落盘) {
                 待落盘 = false;
+                记基线(host, 迁移前);
                 写回全局(host, klona(设置));
             }
             // 基线取**迁移+解析之后**这一份(与 store 里那一份一致): 否则 schema 补上的默认值
@@ -474,12 +477,16 @@ function getSettings(host: 设置宿主) {
     try {
         const global = host.vars.get({ type: 'global' })?.[SETTINGS_KEY];
         if (global && typeof global === 'object' && !Array.isArray(global)) {
+            // 迁移前的快照 —— 迁移落盘时要拿它当基线，这样"差异"恰好是迁移改动的那部分
+            // （而不是整份覆盖，那会冲掉别的窗口刚改的字段）。
+            const 迁移前 = klona(global);
             globalReadCache = Settings.parse(migrateSettings(global)); // 与 loadSettings 同一套迁移, 否则旧键在这里读不成新值
             // **迁移改过东西就落盘一次**（2026-11-19）。
             // 不落盘 = 没迁：`getVariables()` 返回深拷贝，改的是副本；
             // 下次读到的还是旧数据，再迁一遍再丢掉（用户永远停在旧路径上）。
             if (待落盘) {
                 待落盘 = false;
+                记基线(host, 迁移前);
                 写回全局(host, klona(globalReadCache));
             }
             // 成功读到真实远端 = 拿到了一条新基线(2026-11-12): 外层脚本只走这条读路径,

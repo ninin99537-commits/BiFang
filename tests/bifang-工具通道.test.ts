@@ -180,7 +180,7 @@ console.log('\n[C] 请求构造与开关矩阵 (§13.4 / §11.1)');
     // 所以**上下文进 tools 是正确的**, 不再断言"工具说明里没有正文"(那是 §12.1 的旧形态)。
     // 注意: 这条用例直接调 chatCompletion(绕过 buildUpdateMessages), 走的是"没拿到 工具说明"
     // 的兜底分支 —— 所以只能断言"内容进了表", 不能断言"表里有规则正文"(规则由 prompts.ts 产出)。
-    // 真实路径的断言在 bifang-消息伪装.test.ts 的 [G]。
+    // 真实路径的断言在 bifang-messages结构.test.ts 的 [G]。
     if (工具)
       ok('[C] 工具说明里带着本轮内容(兜底路径)', JSON.stringify(请求.tools).includes('系统指令'), JSON.stringify(请求.tools).slice(0, 200));
     // P2-7: 标记绝不进 tools(这条与形态无关, 一直有效)

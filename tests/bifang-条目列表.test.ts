@@ -842,10 +842,19 @@ console.log('\n[旧路] 临时双路的三个条件（需求方 2026-11-19 裁�
   const 注释段 = 源码.slice(源码.indexOf('把面板里配的「零件位置」'), 源码.indexOf('export function 零件位置转段'));
   ok('[旧路] 注释里有「删除条件」', /删除条件/.test(注释段));
   // 验收给的可执行版本: "存量用户里不再有 零件位置 非空的设置后，下一版删"
-  ok('[旧路] 删除条件是可执行的（写了"下一版删"与观察判据）',
-    /下一版删/.test(注释段) && /来自旧设置迁移/.test(注释段), 注释段.slice(0, 200));
+  ok('[旧路] 删除条件是可执行的（写了"下一版删"）', /下一版删/.test(注释段), 注释段.slice(0, 200));
   ok('[旧路] 删除条件写明要一起删哪些东西',
     /零件位置/.test(注释段) && /零件位置转段|本函数/.test(注释段));
+
+  // ②b **删除条件也写进了 CHANGELOG**（注释没人读，那里才是做版本时看得见的）
+  const 日志 = readFileSync(path.join(彼方目录, 'CHANGELOG.md'), 'utf8');
+  ok('[旧路] CHANGELOG 有待办一节', /待办[\s\S]{0,20}下一版要删/.test(日志));
+  ok('[旧路] CHANGELOG 写了触发条件（"下一版删" + 观察判据）',
+    /下一版删/.test(日志) && /来自旧设置迁移/.test(日志));
+  ok('[旧路] CHANGELOG 列了要一起删的三处',
+    /零件位置转段/.test(日志) && /零件位置/.test(日志) && /迁移旧段/.test(日志));
+  // 自证: 若把那一节删了，第一条会红
+  ok('[旧路/自证] 没有那一节时判据会红', !/待办[\s\S]{0,20}下一版要删/.test('# 更新日志\n\n## 2026-11-14'));
 
   // ③ **走旧路径的结果要在 V1 清单里标出来**
   ok('[旧路] 段上带 来自旧设置 标记', /来自旧设置:\s*true/.test(函数段));
@@ -1001,6 +1010,91 @@ console.log('\n[样式] 拼装页沿用设置页那套 class，不另起一套')
   ok('[样式] 模板里不再用 bf-parts-col-title（自造标题）', !/bf-parts-col-title/.test(模板));
   // 自证: 若模板里又写回自造 class，上面两条会红
   ok('[样式/自证] 写回 bf-entry-list 会被抓到', /bf-entry-list/.test('<ol class="bf-entry-list">'));
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[落盘] 迁移必须真的写进存储（不落盘 = 没迁）');
+{
+  // ── 为什么这两条必须单独测（验收 2026-11-19 登记的缺口）──
+  //  迁移改的是 `getVariables()` 返回的**深拷贝**（酒馆助手 variables.ts 里 `klona`）。
+  //  所以"改完不落盘"就等于**什么都没做** —— 下次读到的还是旧数据，再迁一遍再丢掉。
+  //  这是我自己写断言时才发现的 bug（此前只看到 warn 刷屏那个表象）。
+  //
+  //  它守的是**数据正确性关键路径**：写两次不致命（幂等），但"再读还是旧的"就是没迁成功。
+  const { getSettings, invalidateReadCache } = await import('../src/彼方_NPC幕后生命状态系统/settings');
+  const { 彼方假宿主 } = await import('./helpers/彼方假宿主');
+
+  /** 造一个带旧数据的假宿主：`自定义段` 里有一段，`零件位置` 里搬了一个零件 */
+  const 造旧宿主 = () => {
+    const { host, 存 } = 彼方假宿主({ 模型回复: [] });
+    存.global['彼方_settings'] = {
+      提示词: {
+        自定义段: [{ 锚点: '最后', role: 'system', content: '旧段-标记' }],
+        零件位置: { D2: '最前' },
+      },
+    };
+    invalidateReadCache();
+    return { host, 存 };
+  };
+
+  // ① **再读是迁移后的**（判据: 存储里 `自定义段` 已空、`条目` 有内容）
+  {
+    const { host, 存 } = 造旧宿主();
+    getSettings(host); // 第一次读 → 触发迁移 → 落盘
+    const 落盘后 = 存.global['彼方_settings'];
+    eq('[落盘] 存储里的 自定义段 已清空', 落盘后?.提示词?.自定义段, []);
+    eq('[落盘] 存储里出现了 条目', Array.isArray(落盘后?.提示词?.条目), true);
+    eq('[落盘] 存储里的 零件位置 已清空', 落盘后?.提示词?.零件位置, {});
+    // 内容没丢（这是"迁移不是删除数据"的硬证据）
+    const 内容们 = (落盘后?.提示词?.条目 ?? []).map((x: any) => x.content);
+    ok('[落盘] 旧段的内容仍在（迁移不是删除数据）', 内容们.includes('旧段-标记'), JSON.stringify(内容们));
+    ok('[落盘] 零件位置的搬迁意图仍在（变成占位符条目）',
+      内容们.includes('{{彼方:世界书}}'), JSON.stringify(内容们));
+
+    // **再读一次**必须看到迁移后的（不是又回到旧数据）
+    invalidateReadCache();
+    const 再读 = getSettings(host);
+    eq('[落盘] 再读时 自定义段 仍是空的（没有回到旧数据）', 再读.提示词?.自定义段, []);
+    ok('[落盘] 再读时 条目 还在', (再读.提示词?.条目 ?? []).length > 0, JSON.stringify(再读.提示词?.条目));
+  }
+
+  // ② **只写一次**（幂等：第二次读不该再写）
+  //    判据用**副作用**：给存储里的对象套一层记录，看 `update` 被调了几次。
+  {
+    const { host } = 造旧宿主();
+    let 写入次数 = 0;
+    const 原update = host.vars.update;
+    host.vars.update = (fn: any, arg: any) => {
+      if (arg?.type === 'global')
+        写入次数++;
+      return 原update(fn, arg);
+    };
+    getSettings(host);
+    const 首次 = 写入次数;
+    ok('[落盘] 首次读触发了写入', 首次 >= 1, `写入 ${首次} 次`);
+    // 第二次读：数据已是迁移后的，没有可迁的 → 不该再写
+    invalidateReadCache();
+    getSettings(host);
+    eq('[落盘] 第二次读不再写（迁移是幂等的）', 写入次数, 首次);
+    // 自证: 若每次都写，上面会红
+    ok('[落盘/自证] 若每次读都写，断言会红', 首次 + 1 !== 首次);
+  }
+
+  // ③ 没有旧数据时**一次都不写**（别在纯读路径上制造写流量）
+  {
+    const { host, 存 } = 彼方假宿主({ 模型回复: [] });
+    存.global['彼方_settings'] = { 提示词: { 自定义段: [], 零件位置: {} } };
+    invalidateReadCache();
+    let 写入次数 = 0;
+    const 原update = host.vars.update;
+    host.vars.update = (fn: any, arg: any) => {
+      if (arg?.type === 'global')
+        写入次数++;
+      return 原update(fn, arg);
+    };
+    getSettings(host);
+    eq('[落盘] 没有旧数据时不写', 写入次数, 0);
+  }
 }
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);

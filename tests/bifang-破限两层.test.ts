@@ -79,7 +79,7 @@ console.log('\n[A] 第 5 层 · 写入通道分级: 工具说明里带, 且不�
   // 注意层次: `出.工具说明` 只是**上下文**; 分级文案由 `建工具定义()` 拼进去。
   // 所以要测"实际发给模型的 description" = 建工具定义(出.工具说明)[0].function.description。
   // (第一版直接在 出.工具说明 里找, 找错了层次。)
-  const 出 = buildUpdateMessages(造输入({ 消息伪装: true, 规则进工具: true }) as any);
+  const 出 = buildUpdateMessages(造输入({ 规则进工具: true }) as any);
   const 说明 = String(建工具定义(String(出.工具说明 ?? ''))[0].function.description);
   ok('[A] 实际工具说明里有"写入通道说明"', 说明.includes('写入通道说明'), 说明.slice(0, 200));
   ok('[A] 提到了工具名 update_npc_state', 说明.includes('update_npc_state'));
@@ -92,7 +92,7 @@ console.log('\n[A] 第 5 层 · 写入通道分级: 工具说明里带, 且不�
   ok('[A] messages 里没有"隔离沙箱通道"', !全部消息.includes('隔离沙箱通道'));
 
   // ③ 不进表(工具通道关)时, messages 里也不该出现它 —— 这层只在工具模式有意义
-  const 关 = buildUpdateMessages(造输入({ 消息伪装: true, 规则进工具: false }) as any);
+  const 关 = buildUpdateMessages(造输入({ 规则进工具: false }) as any);
   ok('[A] 工具通道关时 messages 里没有分级文案', !JSON.stringify(关.messages).includes('写入通道说明'));
   eq('[A] 工具通道关时没有工具说明', 关.工具说明, undefined);
 
@@ -129,12 +129,12 @@ console.log('\n[C] 第 4 层 · 登记归档: 开关关/开 换身份句');
 {
   // 关(默认): 原身份句开头
   // 注意: 非伪装形态下 messages[0] = 身份句 + 全部规则, 所以只能断言**开头**
-  const 关 = buildUpdateMessages(造输入({ 消息伪装: false, 登记归档: false }) as any);
+  const 关 = buildUpdateMessages(造输入({ 登记归档: false }) as any);
   const 关全文 = String(关.messages[0].content);
   ok('[C] 关时以原身份句开头', 关全文.startsWith('你是「彼方 / Elsewhere」'), 关全文.slice(0, 40));
 
   // 开: 登记归档身份句开头
-  const 开 = buildUpdateMessages(造输入({ 消息伪装: false, 登记归档: true }) as any);
+  const 开 = buildUpdateMessages(造输入({ 登记归档: true }) as any);
   const 开全文 = String(开.messages[0].content);
   ok('[C] 开时以登记归档身份句开头', 开全文.startsWith('你是一个档案写入进程'), 开全文.slice(0, 40));
   ok('[C] 开时不再有"彼方 / Elsewhere"', !开全文.startsWith('你是「彼方 / Elsewhere」'));
@@ -161,8 +161,8 @@ console.log('\n[C] 第 4 层 · 登记归档: 开关关/开 换身份句');
 // ─────────────────────────────────────────────────────────────
 console.log('\n[D] 第 4 层 · 只换身份句, 规则正文一个字不改');
 {
-  const 关 = buildUpdateMessages(造输入({ 消息伪装: false, 登记归档: false }) as any);
-  const 开 = buildUpdateMessages(造输入({ 消息伪装: false, 登记归档: true }) as any);
+  const 关 = buildUpdateMessages(造输入({ 登记归档: false }) as any);
+  const 开 = buildUpdateMessages(造输入({ 登记归档: true }) as any);
   const 关全文 = String(关.messages[0].content);
   const 开全文 = String(开.messages[0].content);
 
@@ -208,7 +208,7 @@ console.log('\n[F] 第 4 层 · 默认关 + 与其余开关互不影响');
   // 四组合(工具 × 登记归档)都不崩, 且身份句各自正确
   for (const 工具 of [false, true]) {
     for (const 登记 of [false, true]) {
-      const 出 = buildUpdateMessages(造输入({ 消息伪装: true, 规则进工具: 工具, 登记归档: 登记 }) as any);
+      const 出 = buildUpdateMessages(造输入({ 规则进工具: 工具, 登记归档: 登记 }) as any);
       const 身份 = String(出.messages[0].content);
       const 期望前缀 = 登记 ? '你是一个档案写入进程' : '你是「彼方 / Elsewhere」';
       ok(`[F] 工具=${+工具} 登记=${+登记}: 身份句正确`, 身份.startsWith(期望前缀), 身份.slice(0, 30));
