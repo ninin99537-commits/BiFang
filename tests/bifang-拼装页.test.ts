@@ -1,0 +1,237 @@
+// 彼方 · 拼装页(零件化 v2 UI) —— 批次: 2026-11-19 第五批
+//
+// 这个用例守的是**一条约束**: 预览必须与实际发出的东西同源。
+//
+// 为什么这条比 UI 本身重要:
+//   如果"预览"是另算一遍、而"实际发送"走拼装函数 —— 两者会漂, 而漂的那一刻没人知道。
+//   11-18 那次"文案说 A、实际发 B"就是这么来的, 只不过这次漂的是预览。
+//
+// 三道锁(验收 U3a/U3b/U3c):
+//   U3a 结果锁: 预览与实发在**同一截断点**取料, 断言一致。
+//   U3b 结构锁: 全项目只许 prompts.ts 定义拼装; 预览组件里出现第二处拼装调用 = 不合格。
+//   U3c 变异锁: 故意造一个"第二套拼装"的假实现, 断言 U3b 能把它抓出来。
+//              **没有这条, U3b 就是一条没人验证过的正则。**
+//
+// 参照写法: tests/人设工坊-形态.test.ts 的 `去注释` + 源码扫描(不新发明)。
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import path from 'node:path';
+import { createPinia, setActivePinia } from 'pinia';
+import lodash from 'lodash';
+import { 零件位置转段 } from '../src/彼方_NPC幕后生命状态系统/更新输入';
+import { 零件表 } from '../src/彼方_NPC幕后生命状态系统/零件表';
+
+(globalThis as any)._ = lodash;
+setActivePinia(createPinia());
+
+// 用例由 tests/run.mjs 以项目根为 cwd 启动, 所以用 process.cwd()
+// (不要用 import.meta.url 上溯: 产物在 tests/.build/ 下)
+const ROOT = process.cwd();
+const 彼方目录 = path.join(ROOT, 'src', '彼方_NPC幕后生命状态系统');
+
+let pass = 0;
+let fail = 0;
+function ok(名: string, 条件: boolean, 备注?: string) {
+  if (条件) {
+    pass++;
+  }
+  else {
+    fail++;
+    console.log(`  FAIL ${名}${备注 ? `  (${备注})` : ''}`);
+  }
+}
+function eq(名: string, 实际: any, 期望: any) {
+  const a = JSON.stringify(实际);
+  const b = JSON.stringify(期望);
+  if (a === b) {
+    pass++;
+  }
+  else {
+    fail++;
+    console.log(`  FAIL ${名}\n      期望 ${b}\n      实际 ${a}`);
+  }
+}
+
+/** 去掉注释, 只留代码。
+ *  为什么需要: 组件注释里会**解释这条约束**(写"不许在这里调 buildUpdateMessages"),
+ *  那段说明文字不该被当成"代码里出现了第二处拼装"。测试必须能区分"解释坑"与"踩坑"。 */
+function 去注释(源码: string): string {
+  return 源码
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+
+/** 递归列出目录下所有源文件(ts/vue) */
+function 列源文件(目录: string): string[] {
+  const 结果: string[] = [];
+  for (const 名 of readdirSync(目录)) {
+    const 全 = path.join(目录, 名);
+    if (statSync(全).isDirectory())
+      结果.push(...列源文件(全));
+    else if (/\.(ts|vue)$/.test(名))
+      结果.push(全);
+  }
+  return 结果;
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[U1] 两个新字段的默认值必须让产物逐字节不变');
+{
+  // 判据不是"我写了 default([])", 而是"默认值真的产出空的东西"。
+  // 直接调转换函数: 默认值 → 空段数组 → 拼装结果与不传时完全一致。
+  eq('[U1] 零件位置 默认 {} → 不产生任何段', 零件位置转段({}), []);
+  // 负样本自证: 非空位置表**必须**产生段(否则上面那条等于没测)
+  const 有 = 零件位置转段({ D2: '最前' });
+  eq('[U1/自证] 非空位置表会产生 1 段', 有.length, 1);
+  eq('[U1/自证] 段的 role 是 system', 有[0].role, 'system');
+  ok('[U1/自证] 段里写的是该零件的占位符', 有[0].content === '{{彼方:世界书}}', 有[0].content);
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[U4] D9(场景判断) 搬位置时 role 必须是 system(C5 要求)');
+{
+  const 段 = 零件位置转段({ D13: '最前' });
+  eq('[U4] D13 能搬', 段.length, 1);
+  eq('[U4] D13 的 role 固定 system(不给 user/assistant 选项)', 段[0].role, 'system');
+  // 自证: 所有零件搬位置都是 system —— 因为 UI 里没有 role 下拉
+  const 全部 = 零件位置转段({ D1: '最前', D2: '任务之前', R5: '最后' });
+  ok('[U4] 任何零件搬位置都是 system', 全部.every(s => s.role === 'system'), JSON.stringify(全部.map(s => s.role)));
+  // 不可搬迁的零件被忽略(不是报错, 而是不产生段)
+  eq('[U4] 不可搬迁的 R6 被忽略', 零件位置转段({ R6: '最前' }).length, 0);
+  eq('[U4] 不存在的代号被忽略', 零件位置转段({ 'NOPE': '最前' }).length, 0);
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[U3b] 结构锁: 拼装只能定义在 prompts.ts, 预览组件里不许有第二处调用');
+{
+  // **拼装函数名只许出现在这些文件里**(定义 + 实发取料 + 测试)。
+  // 判据: 扫全部源文件, 出现 `buildUpdateMessages(` 调用(不是注释里提到)的文件
+  //       必须在白名单里。预览组件(页面-拼装.vue)不在白名单里 = 合格。
+  const 白名单 = new Set([
+    'prompts.ts', // 定义处
+    '更新输入.ts', // 实发取料(唯一调用点)
+  ]);
+  const 违规: string[] = [];
+  for (const 文件 of 列源文件(path.join(ROOT, 'src'))) {
+    const 代码 = 去注释(readFileSync(文件, 'utf8'));
+    if (!/buildUpdateMessages\s*\(/.test(代码))
+      continue;
+    const 名 = path.basename(文件);
+    if (!白名单.has(名))
+      违规.push(path.relative(ROOT, 文件));
+  }
+  eq('[U3b] 只有白名单里的文件调用拼装', 违规, []);
+
+  // 预览组件单独再查一遍 —— 它是这一批新增的, 必须**明确**没有调用
+  const 预览源 = 去注释(readFileSync(path.join(彼方目录, '页面-拼装.vue'), 'utf8'));
+  ok('[U3b] 预览组件里没有 buildUpdateMessages 调用', !/buildUpdateMessages\s*\(/.test(预览源));
+  // 自证: 预览组件确实走了实发同一个取料入口(否则它只能是自己拼的)
+  ok('[U3b/自证] 预览组件调用的是 收集本轮输入', /收集本轮输入\s*\(/.test(预览源));
+  // 自证: 它要求只读(预览不许写日志)
+  ok('[U3b/自证] 预览组件传了 只读: true', /只读\s*:\s*true/.test(预览源));
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[U3c] 变异锁: 故意造一个"第二套拼装"的假实现, U3b 必须抓出来');
+{
+  // 做法: 把同一段扫描逻辑跑在一个**假文件内容**上, 断言它会报违规。
+  // 为什么不用真文件: 真文件是 src 里的, 改了要还原, 而且会污染工作区
+  // (规矩 §十二 #9: 冻结期间不得写回, 连 mtime 也不行)。
+  // 这里验的是**扫描逻辑本身有效**, 不是"当前代码干净"。
+  const 白名单 = new Set(['prompts.ts', '更新输入.ts']);
+  const 扫描 = (文件们: { 名: string; 源码: string }[]) => {
+    const 违规: string[] = [];
+    for (const { 名, 源码 } of 文件们) {
+      const 代码 = 去注释(源码);
+      if (!/buildUpdateMessages\s*\(/.test(代码))
+        continue;
+      if (!白名单.has(名))
+        违规.push(名);
+    }
+    return 违规;
+  };
+
+  // ① 负样本 A: 假预览组件里写了第二套拼装 → 必须被抓
+  const 假预览 = {
+    名: '页面-拼装.vue',
+    源码: `const 结果 = buildUpdateMessages({ reply: 'x' });`,
+  };
+  eq('[U3c] 第二套拼装被抓住', 扫描([假预览]), ['页面-拼装.vue']);
+
+  // ② 负样本 B: 同样的调用写在白名单文件里 → 不该被抓(证明不是"见名就报")
+  const 合法 = {
+    名: '更新输入.ts',
+    源码: `const 结果 = buildUpdateMessages({ reply: 'x' });`,
+  };
+  eq('[U3c] 白名单文件里的调用不报', 扫描([合法]), []);
+
+  // ③ 负样本 C: 只在**注释里**提到 → 不该被抓(去注释必须生效)
+  const 只提注释 = {
+    名: '页面-拼装.vue',
+    源码: `// 这里不许调 buildUpdateMessages(\n/* 也不许 */ const x = 1;`,
+  };
+  eq('[U3c] 只在注释里提到不算违规', 扫描([只提注释]), []);
+
+  // ④ 自证: 三支的**判定依据**确实不同, 不是同一支跑了两遍。
+  //    ⚠ 不能写成"三支结论两两不同": B 与 C 的结论都是 `[]`(都合格),
+  //    但它们合格的理由完全不同(B 是白名单放行, C 是去注释后压根没有调用)。
+  //    用结论当判据会把正确行为判成失败 —— 我第一版就这么错的。
+  const 假预览结论 = 扫描([假预览]);
+  const 合法结论 = 扫描([合法]);
+  const 注释结论 = 扫描([只提注释]);
+  ok('[U3c/自证] A(真违规) 被抓', 假预览结论.length === 1);
+  ok('[U3c/自证] B(白名单) 放行, 且它的代码里**确实有**调用',
+    /buildUpdateMessages\s*\(/.test(去注释(合法.源码)) && 合法结论.length === 0);
+  ok('[U3c/自证] C(只在注释里) 放行, 且去注释后**确实没有**调用',
+    !/buildUpdateMessages\s*\(/.test(去注释(只提注释.源码)) && 注释结论.length === 0);
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[U3a] 结果锁: 预览与实发走同一个取料入口、同一截断点');
+{
+  // 这条不跑真实取料(那要假平台 + 假模型, 属于 update-pipeline 那类用例),
+  // 而是用**结构断言**钉住三件事:
+  //   ① 预览与实发都调 `收集本轮输入`(同一个入口)
+  //   ② 预览传 只读: true(不写日志), 实发不传(要写)
+  //   ③ 打散在 api.ts, 预览组件**不调** api.ts
+  const 预览源 = 去注释(readFileSync(path.join(彼方目录, '页面-拼装.vue'), 'utf8'));
+  ok('[U3a] 预览调 收集本轮输入', /收集本轮输入\s*\(/.test(预览源));
+  ok('[U3a] 预览不调用 api.ts 的请求出口(否则会带打散标记)',
+    !/from '\.\/api'/.test(预览源), 预览源.match(/from '\.\/[^']+'/g)?.join(' '));
+
+  // 实发侧: 更新输入.ts 里确实调了 收集本轮输入 的上游 —— 它是取料的唯一定义处
+  const 取料源 = 去注释(readFileSync(path.join(彼方目录, '更新输入.ts'), 'utf8'));
+  ok('[U3a] 取料入口定义了 收集本轮输入', /export async function 收集本轮输入/.test(取料源));
+  ok('[U3a] 取料入口里有 只读 分支(预览靠它不写日志)', /只读/.test(取料源));
+  // 自证: 只读分支真的包住了写动作
+  ok('[U3a/自证] 只读时跳过 debugStore.record', /if\s*\(!参数\.只读\)[\s\S]{0,400}debugStore\.record/.test(取料源));
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[页签] 拼装页挂在壳里, 且与其余页同级');
+{
+  const 壳 = 去注释(readFileSync(path.join(彼方目录, '悬浮球界面.vue'), 'utf8'));
+  ok('[页签] tabs 里有 parts', /key:\s*'parts'/.test(壳));
+  ok('[页签] 有 PartsPage 的渲染分支', /PartsPage/.test(壳));
+  ok('[页签] 导入了 页面-拼装.vue', /页面-拼装\.vue/.test(壳));
+  // 自证: 五页之外新加的这一页, 编号没有撞车
+  const keys = [...壳.matchAll(/key:\s*'([a-z]+)'/g)].map(m => m[1]);
+  eq('[页签] 页签 key 不重复', keys.filter((k, i, a) => a.indexOf(k) !== i), []);
+  ok('[页签] 页签数量是 6(原 5 + 拼装)', keys.length >= 6, JSON.stringify(keys));
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[文案] 面板不出现内部术语(W5 规范)');
+{
+  const 预览源 = readFileSync(path.join(彼方目录, '页面-拼装.vue'), 'utf8');
+  // 只查**模板与用户可见文案**, 不查代码注释(注释里解释实现是必要的)
+  const 模板 = 预览源.slice(预览源.indexOf('<template>'), 预览源.indexOf('<style'));
+  const 禁词 = ['tools', 'tool_choice', 'arguments', 'schema', '前缀缓存', '服务端', '降级', '审查', '指纹'];
+  const 命中 = 禁词.filter(词 => 模板.includes(词));
+  eq('[文案] 模板里没有内部术语', 命中, []);
+  // 自证: 这条能拦住 —— 若模板里真写了 tools, 上面会红
+  ok('[文案/自证] 禁词表本身有内容', 禁词.length >= 5);
+}
+
+console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
+process.exit(fail > 0 ? 1 : 0);

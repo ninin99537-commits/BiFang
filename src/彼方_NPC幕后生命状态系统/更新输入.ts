@@ -5,6 +5,7 @@
 
 // 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
 import { buildUpdateMessages } from './prompts';
+import { 零件表 } from './零件表';
 import { 名字出现, 上下文, 最近回复, 正文过滤, 时间提示, 时间跳跃, 追踪NPC } from './聊天取料';
 import { 剧情跨度 } from './剧情时间';
 import { getPersonaTextForNpc, 读取世界书段 } from './worldbook';
@@ -18,7 +19,42 @@ import { 读取台账 } from './事务台账';
 import { 字段分组表 } from './卡字段';
 import { 计算规模 } from './规模';
 
-type 取料参数 = { host: any; settings: any; force: any; timing: any; debugStore: any };
+type 取料参数 = { host: any; settings: any; force: any; timing: any; debugStore: any;
+    /** 只读模式: 不写日志、不打日志行。**预览专用**。
+     *  为什么要有它: 预览的意义是"看实际会发什么", 但它不该因此往日志页塞一条记录 ——
+     *  那会让用户分不清"我更新了一次"和"我预览了一次"。 */
+    只读?: boolean;
+};
+
+/** 把面板里配的「零件位置」(代号 → 锚点名) 翻译成等价的用户自定义段。
+ *
+ *  **为什么翻译成段而不是另开一条通路**: 下游的展开逻辑是 `扫零件引用(用户段们, 已关闭)`,
+ *  它按锚点表顺序扫"段里有没有占位符"。如果给下拉另写一套"直接搬零件"的逻辑, 就会有两处
+ *  实现 —— 而 C4(首处生效)、C5(D9 只许 system)、I1(至多一次)这些判据都长在 `扫零件引用` 里,
+ *  第二套必然漏掉其中几条。翻译成段 = 复用全部既有判据, 只有一处需要维护。
+ *
+ *  **D9(场景判断) 的 role 固定为 system**(U4): C5 规定它只能被 system 段引用。
+ *  这里不提供 user/assistant 选项 —— 给一个必错的选项等于把 warn 变成常态流程,
+ *  那 warn 就不算 warn 了(验收的理由, 我同意)。
+ *
+ *  **空值不产生段**: 位置表为空(默认)时返回空数组, 于是"默认配置产物逐字节不变"(U1/I3)。
+ */
+export function 零件位置转段(位置表: Record<string, string>): { 锚点: string; role: string; content: string; 启用: boolean }[] {
+    const 段们: { 锚点: string; role: string; content: string; 启用: boolean }[] = [];
+    for (const [代号, 锚点] of Object.entries(位置表 ?? {})) {
+        const 零件 = 零件表.find(件 => 件.代号 === 代号);
+        if (!零件 || !零件.可搬迁)
+            continue; // 不可搬迁的零件(生理/恋爱)由自己的开关控制, 忽略
+        段们.push({
+            锚点,
+            // D9 只许 system; 其余零件用 system 也是安全的(它们本来就是规则/数据)
+            role: 'system',
+            content: `{{彼方:${零件.名}}}`,
+            启用: true,
+        });
+    }
+    return 段们;
+}
 export async function 收集本轮输入(参数: 取料参数) {
     const { host, settings, force, timing, debugStore } = 参数;
 
@@ -214,7 +250,7 @@ export async function 收集本轮输入(参数: 取料参数) {
             }
         }
     }
-    const { messages, 工具说明 } = buildUpdateMessages({
+    const 拼装结果 = buildUpdateMessages({
         reply,
         replyCount: recent.length,
         context,
@@ -227,7 +263,14 @@ export async function 收集本轮输入(参数: 取料参数) {
         // 恋爱子系统: 标记即开关——只有被玩家标记为恋爱对象的 NPC 才进恋爱说明段。
         // 没有任何标记时是空数组, 恋爱段输出空串, 提示词与改动前逐字节相同(零成本、零回归)。
         恋爱对象名单: tracked.filter((name: string) => String(currentCards[name]?.['恋爱对象'] ?? '').trim() === '是'),
-        自定义段: settings.提示词?.自定义段 ?? [], // 用户自定义段: 只插锚点, 不改内置提示词
+        // 用户自定义段: 面板里配的"零件位置"先翻译成等价的引用段, 再与手写的段合在一起。
+        // **这是唯一一处翻译**(见 零件位置转段 的注释): 下游仍走 `扫零件引用` 那一套,
+        // 不存在"下拉走一条路、手写占位符走另一条路"的分叉。
+        自定义段: [
+            ...零件位置转段(settings.提示词?.零件位置 ?? {}),
+            ...(settings.提示词?.自定义段 ?? []),
+        ],
+        关闭零件: settings.提示词?.关闭零件 ?? [],
         预填充: !!settings.更新.预填充,
         // 消息伪装(§33): **常驻**, 没有开关。与工具通道**正交** ——
         // 规则进表了, messages 照样是有来有回的短问答(伪装的对象是对话形状, 不是规则段落)。
@@ -255,6 +298,7 @@ export async function 收集本轮输入(参数: 取料参数) {
             }
         },
     });
+    const { messages, 工具说明 } = 拼装结果;
     const 请求体 = messages
         .map(message => `【${message.role === 'system' ? '系统指令' : message.role === 'user' ? '用户' : '助手'}】\n${message.content}`)
         .join('\n\n────────\n\n');
@@ -266,17 +310,26 @@ export async function 收集本轮输入(参数: 取料参数) {
         世界书字数: worldbook.length,
         请求体,
     });
-    debugStore.record({
-        time: Date.now(),
-        model: settings.接口.模型,
-        replyIds: recent.map(message => message.message_id),
-        replyPreview: reply.slice(0, 150),
-        request: 请求体,
-        规模,
-    });
-    console.info(`[彼方] 开始更新幕后NPC状态 (使用最近 ${recent.length} 条回复: #${recent.map(message => message.message_id).join(', #')})`);
+    // **只读模式跳过所有写动作**(U 批需求: 预览不许写日志、不许写缓存落盘、不触碰快照)。
+    // 这里只有两处副作用, 都在下面这个 if 里:
+    //   ① debugStore.record —— 写日志页的数据
+    //   ② console.info —— 往 Console 打一行
+    // 上面那些读动作(loadData / 读取快照序列 / 读取世界书)本来就不写盘, 所以不用包。
+    if (!参数.只读) {
+        debugStore.record({
+            time: Date.now(),
+            model: settings.接口.模型,
+            replyIds: recent.map((message: any) => message.message_id),
+            replyPreview: reply.slice(0, 150),
+            request: 请求体,
+            规模,
+        });
+        console.info(`[彼方] 开始更新幕后NPC状态 (使用最近 ${recent.length} 条回复: #${recent.map((message: any) => message.message_id).join(', #')})`);
+    }
 
-    return { data, messages, 工具说明, playerName, recent, timeJump };
+    // 拼装清单一起交出去: 预览页要显示它, 而它是**这一次拼装的产物**(不是另算的)。
+    // 与 messages/工具说明 同源 —— 这正是 U3a(结果锁)要的。
+    return { data, messages, 工具说明, 拼装清单: 拼装结果.拼装清单, 零件内容: 拼装结果.零件内容, playerName, recent, timeJump, 规模 };
 }
 
 
