@@ -172,7 +172,6 @@ async function 导入JSON(事件: Event) {
         id: typeof 段.id === 'string' && 段.id ? 段.id : 新段id(),
         role,
         content: 段.content,
-        独立: 段.独立 === true,
       };
     });
     存段们(校验后);
@@ -418,11 +417,6 @@ const 清单未出现 = computed(() =>
         </button>
       </div>
 
-      <!-- 场景判断那段给一句极短说明（不进模板）—— 让人看得见"它为什么单独一条" -->
-      <p v-if="段.id === '默认-2'" class="bf-hint bf-tpl-seg-note">
-        单独一条消息，避免并进规则后模型看不见（防全知）。
-      </p>
-
       <textarea
         :ref="el => { 编辑框[段.id] = el as HTMLTextAreaElement | null }"
         class="bf-textarea bf-tpl-area"
@@ -554,9 +548,6 @@ const 清单未出现 = computed(() =>
   min-width: 28px;
   padding-left: 0;
   padding-right: 0;
-}
-.bf-tpl-seg-note {
-  margin: 0 0 6px;
 }
 /* 编辑区：等宽字体（占位符的 `{{彼方:名字}}` 对齐才看得出结构），可纵向拉伸 */
 .bf-tpl-area {
