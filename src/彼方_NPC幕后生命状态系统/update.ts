@@ -2,7 +2,7 @@
 import { chatCompletion } from './api';
 import { getSettings } from './settings';
 import { 报告世界书失败, syncNpcStatesWorldbook } from './worldbook-inject';
-import { writeStateSnapshot, 锚点之后的快照楼层 } from './快照';
+import { writeStateSnapshot, loadData, 锚点之后的快照楼层 } from './快照';
 import { useStateStore } from './数据仓';
 import { useDebugStore } from './日志仓';
 import { useUpdatingStore } from './任务中断';
@@ -96,15 +96,28 @@ async function updateNpcStates(host: Host, force = false) {
         const stateStore = useStateStore();
         // 自动更新路径传 允许覆盖更新快照=false: 锚点之后若已有更新的快照(通常来自手动保存),
         // 这一轮不写入 —— 否则写进去了也会被读侧按最大层号忽略, 变成静默丢弃。
-        if (writeStateSnapshot(host, newData, anchorFloor, anchorFloor, true, null, false)) {
+        const 已落盘 = writeStateSnapshot(host, newData, anchorFloor, anchorFloor, true, null, false);
+        if (已落盘) {
             stateStore.data = { ...newData, 锚点楼层: anchorFloor };
         }
         else {
-            stateStore.data = newData;
+            // ⚠ **没落盘的数据不许提交给界面**（2026-11-19 P1-2）。
+            //
+            //  ── 原来错在哪 ──
+            //  这里原来无条件 `stateStore.data = newData` —— 而 `newData` 是**没存进去的那份**。
+            //  后果有两层：
+            //    ① **抹掉用户刚手动保存的显示**：他在更新期间改了卡并保存，界面却显示回 AI 的结果；
+            //    ② **世界书也用这份同步**（下面那句 syncNpcStatesWorldbook）——
+            //       于是世界书里写的是"没进库的那份"，刷新页面后又变回用户那份，**前后不一致**。
+            //
+            //  ── 为什么"什么都不做"才对 ──
+            //  `stateStore.data` 现在装的是**已落盘的那份**（用户的，或上一次更新的）。
+            //  它比"没落盘的新结果"更接近真相 —— **界面应当显示库里有什么，不是内存里算了什么**。
+            stateStore.data = loadData(host);
             // 写入失败要出声: 玩家最容易误以为"更新完成 = 状态已保存"。
             // 失败有三种原因, 这里按"锚点冲突 / 其余"两档说 —— 两种都要弹, 且**同一次失败只弹一条**:
             //   · 锚点冲突(手动保存过更新的快照): 下面第一条;
-            //   · 楼层不存在 / 写变量抛错: 第二条。这两种 writeStateSnapshot 只在 console 里记,
+            //   · 楼层不存在 / 写变量抛错 / 索引写失败: 第二条。这几种 writeStateSnapshot 只在 console 里记,
             //     玩家看不到 —— 于是"更新成功"的绿字后面藏着一份没存下的状态。
             const 冲突楼层 = 锚点之后的快照楼层(host, anchorFloor);
             const 说明 = 冲突楼层.length > 0
@@ -117,13 +130,24 @@ async function updateNpcStates(host: Host, force = false) {
         }
         // 同步幕后状态到世界书(蓝灯常驻条目), 供主AI与数据库剧情推进读取。
         // 失败必须让玩家看见: 这条链路跑在 AI 更新之后, 玩家最容易误以为"状态更新成功 = 世界书也更新了"。
+        //
+        // ⚠ **只用已落盘的那份同步**（2026-11-19 P1-2）：没落盘的数据进世界书 = 主 AI 读到一份
+        //    刷新后就不存在的东西。没落盘时用 `stateStore.data`（= 库里真实那份）同步，
+        //    这样世界书与库始终一致 —— 它可能"没变化"，但**不会说谎**。
         if (settings.更新.世界书写入 !== '关闭') {
-            syncNpcStatesWorldbook(host, newData, settings.更新.世界书写入, 摘要.未回票, settings.更新.生理监测).catch(error => 报告世界书失败(host, error));
+            syncNpcStatesWorldbook(host, stateStore.data, settings.更新.世界书写入, 已落盘 ? 摘要.未回票 : undefined, settings.更新.生理监测).catch(error => 报告世界书失败(host, error));
         }
         timing.收尾 = Date.now() - finalizeStart;
         const secs = (ms: number) => (ms / 1000).toFixed(1);
         console.info(`[彼方] 本次更新总耗时 ${secs(Date.now() - timing.start)}s = 前置 ${secs(timing.前置)}s + 世界书 ${secs(timing.世界书)}s + 接口请求 ${secs(timing.请求)}s(${timing.请求次数}次) + 解析应用 ${secs(timing.解析应用)}s + 收尾 ${secs(timing.收尾)}s`);
         console.info(`[彼方] 幕后NPC状态更新完成: ${摘要.更新.join('、') || '(本次无重要NPC变化)'}${摘要.移除.length > 0 ? `; 已移除: ${摘要.移除.join('、')}` : ''}`);
+        // ⚠ **没落盘就不许弹成功**（2026-11-19 P1-2）：
+        //  上面已经弹过 warn 说明为什么没存住。再弹一条"已更新 N 个NPC"，
+        //  玩家会以为存住了 —— **那正是这个 bug 最伤人的地方。**
+        if (!已落盘) {
+            console.warn('[彼方] 本轮结果没落盘, 不弹"已更新"提示(已在上面说明原因)');
+            return;
+        }
         toastSuccess(摘要.更新.length > 0
             ? `彼方: 已更新 ${摘要.更新.length} 个NPC的幕后状态${摘要.移除.length > 0 ? `，移除 ${摘要.移除.length} 个NPC` : ''}`
             : 摘要.移除.length > 0
