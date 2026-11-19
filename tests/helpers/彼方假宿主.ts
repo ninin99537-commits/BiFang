@@ -51,6 +51,8 @@ export function 彼方假宿主(选项: 假平台选项 = {}) {
   ];
   const 记 = { rawCalls: [] as any[] };
   const 队列 = [...(选项.模型回复 ?? [])];
+  /** 假世界书：`worldbook.entries/update/create/remove` 都读写这一份（2026-11-19） */
+  const 书: { 条目: any[] } = { 条目: [] };
   const 变量表 = (arg: any) => (arg?.type === 'global'
     ? 存.global
     : arg?.type === 'chat'
@@ -147,10 +149,31 @@ export function 彼方假宿主(选项: 假平台选项 = {}) {
       groupMemberNames: () => [] as string[],
       chatName: () => null,
       getOrCreateChat: async () => '聊天书',
-      entries: async () => [],
-      update: async () => undefined,
-      create: async () => undefined,
-      remove: async () => undefined,
+      /**
+       * ── 2026-11-19：这四个方法原来是 `async () => undefined` ──
+       *
+       * **后果：`syncNpcStatesWorldbook` 的新建 / 更新 / 删除三条分支，
+       * 在假宿主上从来没被执行过。** 调了等于没调，而它不报错。
+       *
+       * 实测暴露：写「发现4/发现5」的探针时，认领分支的写盘一直是 false，
+       * 查了半天以为产品代码有问题 —— 实际是**假宿主没这个能力**。
+       *
+       * > **一个测不到的写入路径，等于没测。** 它比"测试失败"更危险：失败会红，它不会。
+       *
+       * 现在用一本内存世界书（`书.条目`）真实现；用例可以从返回值里拿到 `书` 直接检查。
+       */
+      entries: async (_name?: string) => 书.条目.map((e: any) => ({ ...e })),
+      update: async (_name: string, fn: any) => {
+        // 真平台语义：fn 接收整本条目列表，返回新的整本
+        书.条目 = fn(书.条目.map((e: any) => ({ ...e })));
+      },
+      create: async (_name: string, 新增: any[]) => {
+        书.条目.push(...新增.map((e: any) => ({ ...e })));
+      },
+      remove: async (_name: string, 谓词: any) => {
+        // 真平台语义：谓词命中即删（`removeWorldbookEntries(name, predicate)`）
+        书.条目 = 书.条目.filter((e: any) => !谓词(e));
+      },
     },
     toast: {
       warn: (text: string, header: string) => 存.global['__toast_warn'] = [...(存.global['__toast_warn'] ?? []), { text, header }],
@@ -164,7 +187,7 @@ export function 彼方假宿主(选项: 假平台选项 = {}) {
     接口: { 地址: 'https://fake.local', 模型: 'fake-model', 密钥: '', 直连: false, 流式: false },
     更新: { 读取最近回复数: 3, 注入世界书: false, 自动建档: true, 生理监测: false, 预填充: false, 世界书写入: '关闭' },
   };
-  return { host, 存, 记, 队列, 楼层 };
+  return { host, 存, 记, 队列, 楼层, 书 };
 }
 
 /** 种一份"已有状态"(甲/丙 两人)在楼层 1, 让 loadData 有真快照可读; 返回种子数据 */
