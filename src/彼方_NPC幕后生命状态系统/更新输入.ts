@@ -16,7 +16,7 @@ import { 生成近期轨迹, 轨迹上限 } from './轨迹';
 import { toastWarning } from './toast';
 import { 确保周期长度 } from './生理规则';
 import { 读取台账 } from './事务台账';
-import { 字段分组表 } from './卡字段';
+import { 字段分组表, 不发模型的键 } from './卡字段';
 import { 计算规模 } from './规模';
 
 type 取料参数 = { host: any; settings: any; force: any; timing: any; debugStore: any };
@@ -163,8 +163,13 @@ export async function 收集本轮输入(参数: 取料参数) {
         delete card['累计受孕率'];
         delete card['受孕率记录'];
         delete card['生理结算'];
-        // 「未完成事项变动」是给面板看的逐轮标记, 不是状态字段: 发给模型只会让它照抄或误当事实
-        delete card['未完成事项变动'];
+        // ── 2026-11-20 C10：从 `卡字段.键角色` 派生，不再手写 delete ──
+        //  原来这里只有一行 `delete card['未完成事项变动']`（注释："不是状态字段，
+        //  发给模型只会让它照抄"）。而那个键**并不在快照清理表里** → 每层都存。
+        //  现在它的角色在 `卡字段.ts` 里声明为 `持久化: false`，快照那边也按表派生，
+        //  于是"注释说的"和"代码做的"终于一致了。
+        for (const 键 of 不发模型的键())
+            delete card[键];
         // 事务台账: 旧卡里可能还是旧格式字符串, 发给模型前先规范化成数组——模型只认台账形态
         // (带编号才能只报"状态/结果变了"), 否则它看到一整句字符串, 只能把内容整句重抄一遍。
         // 这里改的是发给模型的**副本**, 不写回旧卡; 真正的入库迁移在 mergeCard 里由 合并台账 完成。

@@ -7,7 +7,7 @@
 // 依赖按实际用到的符号具名导入/默认导入(形态守卫见 tests/no-bundle-artifacts.test.ts)。
 // json5 走默认导入: 原先是从命名空间取 ["default"], 默认导入编译出的取值路径与它完全一致。
 import JSON5 from 'json5';
-import { 建档必填字段, 每次必返字段, 值形态表 } from './卡字段';
+import { 建档必填字段, 每次必返字段, 值形态表, 顶层保留键 } from './卡字段';
 import { PHYSIO_FIELDS } from './生理规则';
 import { parseStoryTime } from './剧情时间';
 import { 去信封 } from '../共用/去信封';
@@ -207,11 +207,17 @@ function stripThinkingFields(text: unknown) {
     }
     return result;
 }
-/** 顶层保留键(非 NPC 名字): 元数据/思考字段/旧格式分组键, 不参与状态卡合并与校验 */
+/** 顶层保留键(非 NPC 名字): 元数据/思考字段/旧格式分组键, 不参与状态卡合并与校验
+ *
+ *  ── 2026-11-20 C10：从 `卡字段.键角色` 派生 ──
+ *  原来这里是六个 `name === '…'` 的字面量（在场NPC/后台互动/移除NPC/剧情时间/受孕事件/恋爱事件/人设参考），
+ *  与 `快照.ts` 的清理表、`轨迹.ts` 的运行时键、`更新输入.ts` 的 delete **四处各写一遍**。
+ *  现在"哪些键是顶层元数据"只在 `卡字段.ts` 里声明一次。
+ *  `THINKING_FIELD_KEYS` 留在本文件：它描述的是**模型的行为**（可能把思考当顶层字段输出），
+ *  不是"彼方的卡字段"，不属于那张表。
+ */
 function isReservedTopLevelKey(name: string) {
-    return name === '在场NPC' || name === '后台互动' || name === '移除NPC'
-        || name === '剧情时间' || name === '受孕事件' || name === '恋爱事件' || name === '人设参考'
-        || THINKING_FIELD_KEYS.includes(name);
+    return 顶层保留键().includes(name) || THINKING_FIELD_KEYS.includes(name);
 }
 /** 校验 AI 输出的 JSON 结构是否符合预期; 结构错误、"新增 NPC 字段不全"抛错重试, 已有 NPC 缺普通字段只警告(沿用旧值) */
 /**

@@ -16,6 +16,8 @@ import type { Host } from './host';
 import type { 幕后事务 } from './事务台账';
 import { 清空日志 } from './日志落盘';
 import { 迁移旧字段名 } from './卡合并';
+// 「哪个键不进快照」只在 卡字段.ts 里声明一次（2026-11-20 C10）
+import { 不进快照的键 } from './卡字段';
 // 楼层快照的索引/有效性/裁剪/清理已抽到共用层（2026-11-20 C1）。
 // **认领（编号重排）留在本文件** —— 那是彼方特有的行为，见 `认领重排快照` 的注释。
 import { 取最新有效 } from '../共用/楼层快照';
@@ -461,19 +463,24 @@ function buildSnapshotPayload(host: 快照宿主, data: 彼方数据, anchorFloo
     if (!message)
         return null;
     // 快照体积控制: 清理每张 NPC 卡的调试/运行时字段, 防止长聊天里快照无限膨胀
-    // - 最后更新: 现实时间戳, 每次更新都变, 对恢复状态无意义
-    // - 人设参考: 每轮更新动态注入的世界书人设(由 update.ts 按 NPC 名字激活), 不该入库
-    // - 恋爱事件: 临时的结构化事件载荷(合并时已被消费删除), 防御性清理, 绝不入库
-    // ⚠️ **「最后剧情时刻」必须保留**(批2·B2): 它是逐 NPC 跨度的唯一基准, 删了就永远算不出
-    //   "这个 NPC 多久没被更新过"。它体积很小(一个 YYYY-MM-DD HH:mm 串), 不进上面的清理名单。
+    //
+    // ── 2026-11-20 C10：从 `卡字段.键角色` 派生，不再手写三行 delete ──
+    //  原来这里写的是 `delete cleaned['最后更新'/'人设参考'/'恋爱事件']` 三行字面量，
+    //  而同一个问题在 `轨迹.ts`（五个键）、`更新输入.ts`（一个键）、
+    //  `模型请求.ts`（六个键）**各答了一遍**，口径互不一致。
+    //  复查查出的「半持久化孤儿」就是这么来的：`未完成事项变动` 注释说"不该入库"，
+    //  但它不在这三行里 → **每层都存**。
+    //
+    //  ⚠️ **「最后剧情时刻」必须保留**(批2·B2): 它是逐 NPC 跨度的唯一基准, 删了就永远算不出
+    //    "这个 NPC 多久没被更新过"。它在 `卡字段` 里声明为 `持久化: true`，所以这里不会删它。
+    const 要清的键 = 不进快照的键();
     const cleanedNpc: Record<string, Record<string, any>> = {};
     for (const [name, card] of Object.entries(data.NPC ?? {})) {
         if (!card || typeof card !== 'object')
             continue;
         const cleaned: Record<string, any> = { ...card };
-        delete cleaned['最后更新'];
-        delete cleaned['人设参考'];
-        delete cleaned['恋爱事件'];
+        for (const 键 of 要清的键)
+            delete cleaned[键];
         cleanedNpc[name] = cleaned;
     }
     return {
