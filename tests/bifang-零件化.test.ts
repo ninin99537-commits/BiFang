@@ -609,7 +609,108 @@ console.log('\n[I1–I10 · 随机 200 组] 性质校验: 随机配置全部过�
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[零件表] 结构自检: 17 个 / 承重件有后果说明 / 切片拼回去 === 原文');
+console.log('\n[V1-第三批] 条件段(R6/R7)必须报真实体量, 不许拿特征串长度充数');
+{
+  // 为什么这条必须存在(需求方 2026-11-19 纠正过我的定性):
+  //   R6/R7 的文字分散在 4 处, 实现手上只有一段**特征串**(12 字)用来判"在不在"。
+  //   拿它当字数就是**假账** —— 实测 R6 真实 5333 字而清单报 12 字, 差 444 倍。
+  //   用户关了 R6, 清单说"省了 12 字"、实际省了 5333 字。
+  //   这与"文案说 A 实际发 B"是同一类, 不是"显示问题"。
+  const 看清单 = (额外: Record<string, any>) => {
+    const 原I = console.info;
+    const 原T = console.table;
+    console.info = () => {};
+    console.table = () => {};
+    try {
+      return buildUpdateMessages(造输入({ 关闭零件: ['D2'], ...额外 }) as any).拼装清单 ?? [];
+    }
+    finally {
+      console.info = 原I;
+      console.table = 原T;
+    }
+  };
+  const 取 = (清单: any[], 号: string) => 清单.find((项: any) => 项.代号 === 号);
+
+  // ① 开着时: 字数必须接近真实差值, 不能是特征串的 12 字
+  const 开 = 看清单({ physioEnabled: true, 恋爱对象名单: ['甲'] });
+  const R6开 = 取(开, 'R6');
+  const R7开 = 取(开, 'R7');
+  ok('[V1] R6 开着时报的字数远大于特征串(12 字)', (R6开?.字数 ?? 0) > 1000, `实际 ${R6开?.字数}`);
+  ok('[V1] R7 开着时报的字数远大于特征串(12 字)', (R7开?.字数 ?? 0) > 500, `实际 ${R7开?.字数}`);
+
+  // ② 字数必须等于**真实差值**: 与"关掉它"的总长差比
+  const 总长 = (额外: Record<string, any>) => {
+    const 原I = console.info;
+    const 原T = console.table;
+    console.info = () => {};
+    console.table = () => {};
+    try {
+      const r = buildUpdateMessages(造输入({ 关闭零件: ['D2'], ...额外 }) as any);
+      return [...r.messages.map(m => m.content), r.工具说明 ?? ''].join('\n').length;
+    }
+    finally {
+      console.info = 原I;
+      console.table = 原T;
+    }
+  };
+  const 生理真实差值 = 总长({ physioEnabled: true }) - 总长({ physioEnabled: false });
+  eq('[V1] R6 报的字数 === 真实差值(有它 - 没它)', R6开?.字数, 生理真实差值);
+  const 恋爱真实差值 = 总长({ 恋爱对象名单: ['甲'] }) - 总长({ 恋爱对象名单: [] });
+  eq('[V1] R7 报的字数 === 真实差值', R7开?.字数, 恋爱真实差值);
+
+  // ③ 关掉时: 备注必须说出"本来省了多少", 且那个数也是真实体量
+  const 关 = 看清单({ physioEnabled: true, 关闭零件: ['D2', 'R6'] });
+  const R6关 = 取(关, 'R6');
+  eq('[V1] 关掉 R6 时备注写的是真实体量', R6关?.备注, `被关闭(${生理真实差值} 字)`);
+
+  // ④ 负样本自证: 这条断言能拦住"拿特征串充数"
+  //    若实现改回用特征串长度, ①②③ 会一起红(特征串是 12 字, 差 500 倍)
+  ok('[V1/自证] 真实体量与特征串长度确实不同(否则这条断言没意义)',
+    生理真实差值 !== 12 && R6开?.字数 !== 12,
+    `真实 ${生理真实差值} vs 特征串 12`);
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[切散] 零件被切散在两处时, 清单必须指认, 不许只报第一处');
+{
+  // 现状: 每个零件都在一处(条件段 R6/R7 例外 —— 它们本来就分散, 用"分散在规则与任务段里"标)
+  // 这条断言防的是**将来**把某个零件切散(比如把 R3 拆成两段分别放两处)。
+  //
+  // 判据: 对每个非条件段的零件, 它在产物里的"出现次数"必须恰好是 1。
+  // 若 > 1, 说明它被切散/重复了 —— 那时清单的"第 N 条"只报第一处, 会误导。
+  const 原I = console.info;
+  const 原T = console.table;
+  console.info = () => {};
+  console.table = () => {};
+  let 结果;
+  try {
+    结果 = buildUpdateMessages(造输入({ 关闭零件: ['D2'] }) as any);
+  }
+  finally {
+    console.info = 原I;
+    console.table = 原T;
+  }
+  const 全文 = [...结果.messages.map(m => m.content), 结果.工具说明 ?? ''].join('\n');
+  const 条件段 = new Set(['R6', 'R7']);
+  const 切散: string[] = [];
+  for (const [代号, 内容] of Object.entries(结果.零件内容 ?? {})) {
+    if (条件段.has(代号) || !String(内容).trim())
+      continue;
+    const 次数 = 全文.split(String(内容)).length - 1;
+    if (次数 > 1)
+      切散.push(`${代号}×${次数}`);
+  }
+  eq('[切散] 没有零件被切散或重复', 切散, []);
+
+  // 条件段的"分散"必须在清单里**显式标出来** —— 不许静默
+  const 清单 = 结果.拼装清单 ?? [];
+  for (const 号 of ['R6', 'R7']) {
+    const 项 = (清单 as any[]).find((x: any) => x.代号 === 号);
+    if (项 && 项.状态 !== '空' && 项.状态 !== '已关闭') {
+      ok(`[切散] ${号} 是条件段, 清单里标了"分散"`, String(项.位置).includes('分散'), String(项.位置));
+    }
+  }
+}
 {
   eq('[零件表] 零件数 17', 零件表.length, 17);
   const 重号 = 零件表.map(件 => 件.代号).filter((代号, i, 全) => 全.indexOf(代号) !== i);
