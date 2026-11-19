@@ -5,7 +5,7 @@ import { BIFANG_WORLDBOOK_ENTRY_NAME, isBifangEntryDeletable, sanitizeBifangEntr
 import { useMainPromptStore } from './日志仓';
 import type { 彼方数据 } from './快照';
 import type { 世界书写入目标 } from './settings';
-import { getSettings } from './settings';
+import { getSettings, 设置读取可信 } from './settings';
 import { loadData } from './快照';
 
 /**
@@ -150,6 +150,22 @@ async function syncNpcStatesWorldbook(host: Pick<Host, 'worldbook'>, data: 彼�
  */
 function maybeInjectNpcStates(host: Host): void {
     const settings = getSettings(host);
+    // ⚠ **读不到设置 ≠ 用户关掉了**（2026-11-19 波2「发现6」）。
+    //
+    //  ── 原来会发生什么 ──
+    //  `getSettings` 读全局失败时返回 store 里那份，而它可能是 `Settings.parse({})` ——
+    //  全默认值，其中 `更新.世界书写入 = '关闭'`。于是这里判出 `目标 = '关闭'`，
+    //  `syncNpcStatesWorldbook` 就把两本世界书里的彼方条目**删掉**。
+    //
+    //  全程**没有任何提示**：同步本身"成功"了，所以 `报告世界书失败` 那条链也不触发。
+    //  用户只看到主 AI 读不到幕后状态了。
+    //
+    //  ── 为什么是"跳过"而不是"用上次的值" ──
+    //  上次的值可能已经过期（用户在这期间真的改了设置）。**猜错了会写错数据。**
+    //  跳过则什么都没发生 —— 下一个触发器（切聊天/删楼/下次更新）会再试一次。
+    //  **不做事比做错事便宜。**
+    if (!设置读取可信())
+        return;
     const data = loadData(host);
     const 目标 = settings.启用幕后 ? settings.更新.世界书写入 : '关闭';
     // 同步失败要报到界面: 这条链路是 fire-and-forget, 吞掉异常等于"关掉了但没清干净"没人知道。

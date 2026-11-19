@@ -1,6 +1,6 @@
 // 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
 import { chatCompletion } from './api';
-import { getSettings } from './settings';
+import { getSettings, 设置读取可信 } from './settings';
 import { 报告世界书失败, syncNpcStatesWorldbook } from './worldbook-inject';
 import { writeStateSnapshot, loadData, 锚点之后的快照楼层 } from './快照';
 import { useStateStore } from './数据仓';
@@ -134,7 +134,11 @@ async function updateNpcStates(host: Host, force = false) {
         // ⚠ **只用已落盘的那份同步**（2026-11-19 P1-2）：没落盘的数据进世界书 = 主 AI 读到一份
         //    刷新后就不存在的东西。没落盘时用 `stateStore.data`（= 库里真实那份）同步，
         //    这样世界书与库始终一致 —— 它可能"没变化"，但**不会说谎**。
-        if (settings.更新.世界书写入 !== '关闭') {
+        // ⚠ **读不到设置 ≠ 用户关掉了**（2026-11-19 波2「发现6」）。
+        //    原来这里只判 `!== '关闭'`：读失败时 `settings` 是默认值（世界书写入='关闭'），
+        //    于是**静默不同步**；更糟的是别的触发器（`maybeInjectNpcStates`）会把同一个默认值
+        //    当成"关闭"去**删条目**。两处都要求"读到了才动"。
+        if (设置读取可信() && settings.更新.世界书写入 !== '关闭') {
             syncNpcStatesWorldbook(host, stateStore.data, settings.更新.世界书写入, 已落盘 ? 摘要.未回票 : undefined, settings.更新.生理监测).catch(error => 报告世界书失败(host, error));
         }
         timing.收尾 = Date.now() - finalizeStart;

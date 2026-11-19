@@ -691,6 +691,27 @@ function invalidateReadCache() {
     globalReadCache = null;
     globalReadTime = 0;
 }
+/**
+ * **最近一次「真实读全局」是否成功**（2026-11-19 波2「发现6」）。
+ *
+ * ── 为什么需要它 ──
+ *  `getSettings` 读失败时只清缓存，然后 `return globalReadCache ?? useSettingsStore().settings` ——
+ *  而 store 里那份可能是 `Settings.parse({})`，也就是**全默认值**，其中 `更新.世界书写入 = '关闭'`。
+ *
+ *  于是调用方拿到的是"一个看起来完全正常的设置对象"，**没法区分**：
+ *    · 用户真的把「写入世界书」关掉了  →  该删条目
+ *    · 全局变量读失败，这只是默认值    →  **不许删**
+ *
+ *  两者走到同一个分支，后果是**静默删掉彼方条目**（同步"成功"，所以错误上报链也不触发）。
+ *
+ * ── 为什么不用 `globalReadCache === null` 判断 ──
+ *  缓存被清有**两种**原因：读失败，和全局被清空（那说明"读到过，只是没有这份数据"，
+ *  这时默认值反而是可信的）。同一个 `null` 两种含义，分不出来。
+ *
+ *  `null` = 还没发生过真实读（只可能出现在进程刚起的极短窗口里）。
+ */
+let 最近一次全局读成功: boolean | null = null;
+
 function getSettings(host: 设置宿主) {
     const now = Date.now();
     if (now - globalReadTime <= 500)
@@ -698,6 +719,9 @@ function getSettings(host: 设置宿主) {
     globalReadTime = now;
     try {
         const global = host.vars.get({ type: 'global' })?.[SETTINGS_KEY];
+        // 读到这一步就算"读成功" —— 全局里没有这一份（新装用户）也算：
+        // 那说明"存储能读、只是还没数据"，此时默认值是真话，不是降级。
+        最近一次全局读成功 = true;
         if (是非空对象(global)) {
             // 迁移前的快照 —— 迁移落盘时要拿它当基线，这样"差异"恰好是迁移改动的那部分
             // （而不是整份覆盖，那会冲掉别的窗口刚改的字段）。
@@ -721,10 +745,30 @@ function getSettings(host: 设置宿主) {
     catch {
         // 全局读取失败 → 同样清缓存: 窗口内不反复摸存储, 窗口外再试
         globalReadCache = null;
+        最近一次全局读成功 = false;
     }
     return globalReadCache ?? useSettingsStore().settings;
 }
 
-export { getSettings, invalidateReadCache, useSettingsStore, 世界书写入目标表 };
+/**
+ * 这份设置**可不可信**（2026-11-19 波2「发现6」）。
+ *
+ * 读失败时 `getSettings` 会返回 store 里那份（可能是全默认值）——
+ * 调用方拿它去判"要不要删派生数据"之前，必须先问一句：
+ *
+ * ```ts
+ * if (!设置读取可信()) {
+ *     // 读不到 ≠ 用户关掉了。**不许删、不许写**，等下次能读到再说。
+ *     return;
+ * }
+ * ```
+ *
+ * 判据：读失败 → `false`；读到过（含"读到但没有这一份"）→ `true`。
+ */
+function 设置读取可信(): boolean {
+    return 最近一次全局读成功 !== false;
+}
+
+export { getSettings, invalidateReadCache, useSettingsStore, 世界书写入目标表, 设置读取可信 };
 export type { 设置宿主, 世界书写入目标 };
 

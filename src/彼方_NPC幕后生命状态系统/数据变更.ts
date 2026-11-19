@@ -9,7 +9,7 @@
 // 依赖走 变更环境: 生产环境(建变更环境)连接真实的 快照.ts / worldbook-inject.ts,
 // 测试里换成假的就能把四种变更各跑一遍, 不需要酒馆。
 import type { Host } from './host';
-import { getSettings } from './settings';
+import { getSettings, 设置读取可信 } from './settings';
 import { CARD_FIELDS, 字段分组表, 扩展编辑字段 } from './卡字段';
 import { 合并 } from './卡合并';
 import type { 空值语义 } from './卡合并';
@@ -49,7 +49,8 @@ export interface 变更环境 {
 
 /** 真实环境: 闸门取当前设置, 其余用 快照.ts / worldbook-inject.ts 的实现; 宿主由边界传入 */
 export function 建变更环境(host: 变更宿主): 变更环境 {
-    const 目标 = getSettings(host).更新.世界书写入;
+    const 设置 = getSettings(host);
+    const 目标 = 设置.更新.世界书写入;
     return {
         世界书写入: 目标,
         // 保存 = 写快照 + 提交给界面: "界面看到的就是刚落盘的那份"这条不变量只在这里维护。
@@ -69,7 +70,15 @@ export function 建变更环境(host: 变更宿主): 变更环境 {
             return 结果;
         },
         // 手改也要带上生理开关: 否则关着生理时, 改个名字就会把生理六列重新写回世界书条目
-        同步世界书: (数据, 写入) => syncNpcStatesWorldbook(host, 数据, 写入 ? 目标 : '关闭', undefined, getSettings(host).更新.生理监测),
+        //
+        // ⚠ **读不到设置 ≠ 用户关掉了**（2026-11-19 波2「发现6」）：
+        //    `写入=false` 会删条目。而读失败时 `世界书写入` 是默认值 '关闭' → 被算成 `写入=false`。
+        //    **删是不可逆的（对用户而言），所以这一支宁可什么都不做。**
+        同步世界书: (数据, 写入) => {
+            if (!设置读取可信())
+                return undefined;
+            return syncNpcStatesWorldbook(host, 数据, 写入 ? 目标 : '关闭', undefined, getSettings(host).更新.生理监测);
+        },
         现在: Date.now,
     };
 }
