@@ -2,8 +2,11 @@
 import { chatCompletion } from './api';
 import { getSettings } from './settings';
 import { 报告世界书失败, syncNpcStatesWorldbook } from './worldbook-inject';
-import { writeStateSnapshot, 锚点之后的快照楼层 } from './快照';
-import { useStateStore } from './数据仓';
+import { 锚点之后的快照楼层 } from './快照';
+// 落盘 + 更新界面走同一个入口（C2）：**先落盘，成功了才更新界面；失败回滚**。
+// 原来这里是 `writeStateSnapshot(...)` + `stateStore.data = newData` 两行手写配对，
+// 失败那一支仍然把没落盘的 `newData` 交给了界面 —— 见 `当前状态.ts` 文件头。
+import { 提交下一份 } from './当前状态';
 import { useDebugStore } from './日志仓';
 import { useUpdatingStore } from './任务中断';
 import { toastError, toastInfo, toastSuccess, toastWarning } from './toast';
@@ -80,19 +83,42 @@ async function updateNpcStates(host: Host, force = false) {
         const anchorFloor = recent[recent.length - 1].message_id;
         newData.处理到楼层 = anchorFloor;
         newData.清空层 = 0;
-        const stateStore = useStateStore();
-        // 自动更新路径传 允许覆盖更新快照=false: 锚点之后若已有更新的快照(通常来自手动保存),
-        // 这一轮不写入 —— 否则写进去了也会被读侧按最大层号忽略, 变成静默丢弃。
-        if (writeStateSnapshot(host, newData, anchorFloor, anchorFloor, true, null, false)) {
-            stateStore.data = { ...newData, 锚点楼层: anchorFloor };
-        }
-        else {
-            stateStore.data = newData;
-            // 写入失败要出声: 玩家最容易误以为"更新完成 = 状态已保存"。
+        // ── 2026-11-20 C2：落盘 + 更新界面走同一个入口 ──
+        //
+        //  ── 原来错在哪 ──
+        //  这里写的是：
+        //      if (writeStateSnapshot(...)) stateStore.data = {...};
+        //      else { stateStore.data = newData; ...warn... }
+        //
+        //  **失败那一支仍然把 `newData` 交给了界面** —— 而那份数据**没落盘**。
+        //  用户看到"已更新 N 个NPC"，刷新后全没了。
+        //
+        //  「界面所见 == 落盘那份」这条不变量原来**没有任何模块拥有它**：
+        //  `数据变更.ts` 写对了、`update.ts` 写错了，配对规则只写在注释里。
+        //
+        //  现在由 `当前状态.提交下一份` 统一负责：**先落盘，成功了才更新界面；
+        //  失败就回滚成上一次落盘成功的那份**（见那个模块的"失败语义"）。
+        const 提交结果 = 提交下一份(
+            host,
+            newData,
+            '本轮状态没能存进楼层(楼层可能已被删除或变量写入失败)',
+            {
+                // 自动更新的落盘语义（与改动前逐字一致）：
+                //   · 锚在本次分析的最后一条楼层 —— 这一轮读过的东西都到那里为止
+                //   · 锚点之后若已有更新的快照（通常来自手动保存）就**不写** ——
+                //     写进去也会被读侧按最大层号忽略，变成静默丢弃
+                //   · 消费清空层：清空层只在清空后的首次更新生效
+                锚点楼层: anchorFloor,
+                处理到楼层: anchorFloor,
+                消费清空层: true,
+                允许覆盖更新快照: false,
+            },
+        );
+        if (!提交结果.ok) {
+            // 失败要出声: 玩家最容易误以为"更新完成 = 状态已保存"。
             // 失败有三种原因, 这里按"锚点冲突 / 其余"两档说 —— 两种都要弹, 且**同一次失败只弹一条**:
             //   · 锚点冲突(手动保存过更新的快照): 下面第一条;
-            //   · 楼层不存在 / 写变量抛错: 第二条。这两种 writeStateSnapshot 只在 console 里记,
-            //     玩家看不到 —— 于是"更新成功"的绿字后面藏着一份没存下的状态。
+            //   · 楼层不存在 / 写变量抛错 / 索引登记失败: 第二条。
             const 冲突楼层 = 锚点之后的快照楼层(host, anchorFloor);
             const 说明 = 冲突楼层.length > 0
                 ? `本轮结果因手动修改未保存: 楼层 #${冲突楼层.join('、#')} 上有更新的快照, 本轮锚点 #${anchorFloor} 之后已有它。`
@@ -111,11 +137,18 @@ async function updateNpcStates(host: Host, force = false) {
         const secs = (ms: number) => (ms / 1000).toFixed(1);
         console.info(`[彼方] 本次更新总耗时 ${secs(Date.now() - timing.start)}s = 前置 ${secs(timing.前置)}s + 世界书 ${secs(timing.世界书)}s + 接口请求 ${secs(timing.请求)}s(${timing.请求次数}次) + 解析应用 ${secs(timing.解析应用)}s + 收尾 ${secs(timing.收尾)}s`);
         console.info(`[彼方] 幕后NPC状态更新完成: ${摘要.更新.join('、') || '(本次无重要NPC变化)'}${摘要.移除.length > 0 ? `; 已移除: ${摘要.移除.join('、')}` : ''}`);
-        toastSuccess(摘要.更新.length > 0
-            ? `彼方: 已更新 ${摘要.更新.length} 个NPC的幕后状态${摘要.移除.length > 0 ? `，移除 ${摘要.移除.length} 个NPC` : ''}`
-            : 摘要.移除.length > 0
-                ? `彼方: 已移除 ${摘要.移除.length} 个NPC`
-                : '彼方: 本次没有重要NPC的幕后状态变化', '彼方');
+        // ⚠ 提交失败时**不许弹成功提示**（需求方 #440 判据①：不许显示"已保存"）。
+        //
+        //  原来这一句无条件执行 —— 于是失败时玩家会先看到红字"本轮状态没能存进楼层"，
+        //  紧接着又看到绿字"已更新 2 个NPC的幕后状态"。**两句互相矛盾，玩家会信后一句。**
+        //  这正是"看起来成功了"的来源。
+        if (提交结果.ok) {
+            toastSuccess(摘要.更新.length > 0
+                ? `彼方: 已更新 ${摘要.更新.length} 个NPC的幕后状态${摘要.移除.length > 0 ? `，移除 ${摘要.移除.length} 个NPC` : ''}`
+                : 摘要.移除.length > 0
+                    ? `彼方: 已移除 ${摘要.移除.length} 个NPC`
+                    : '彼方: 本次没有重要NPC的幕后状态变化', '彼方');
+        }
     }
     catch (error) {
         if (abortSignal.aborted) {

@@ -10,7 +10,8 @@ import { 剧情跨度 } from './剧情时间';
 import { getPersonaTextForNpc, 读取世界书段 } from './worldbook';
 import { 压缩记忆回溯 } from './记忆回溯';
 import { 生活状态待更新 } from './生活状态';
-import { loadData, updateClearLayer, 读取快照序列 } from './快照';
+import { updateClearLayer, 读取快照序列 } from './快照';
+import { 从存储重读 } from './当前状态';
 import { 生成近期轨迹, 轨迹上限 } from './轨迹';
 import { toastWarning } from './toast';
 import { 确保周期长度 } from './生理规则';
@@ -22,7 +23,11 @@ type 取料参数 = { host: any; settings: any; force: any; timing: any; debugSt
 export async function 收集本轮输入(参数: 取料参数) {
     const { host, settings, force, timing, debugStore } = 参数;
 
-    let data = loadData(host);
+    // ── 2026-11-20 C2：不再自己 `loadData`，走 `当前状态.从存储重读` ──
+    //  六条读路径（update / 数据变更 / 清空 / 更新输入 / 世界书注入 / 数据仓 reload）
+    //  收成一个入口。这里要的是"盘上那份"作为本轮增量重填的基底，
+    //  `从存储重读` 同时把界面拉到同一份 —— 于是"算的时候用的"和"用户看到的"不会分叉。
+    let data = 从存储重读(host);
     // 获取玩家/主角名, 避免给主角建档; 顺带清理历史误建的主角卡
     const playerName = host.persona.name();
     // 主角信息(persona 描述): 主 AI 能看到 persona, 彼方此前没有读取渠道——

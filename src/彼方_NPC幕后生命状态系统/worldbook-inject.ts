@@ -146,6 +146,13 @@ async function syncNpcStatesWorldbook(host: Pick<Host, 'worldbook'>, data: 彼�
  */
 function maybeInjectNpcStates(host: Host): void {
     const settings = getSettings(host);
+    // ── 这里**故意**用 `loadData` 而不是 `当前状态.从存储重读`（2026-11-20 C2）──
+    //
+    //  C2 把六条路收成一个入口，但**这一条不属于它们**：
+    //  它要的是"盘上那份"去同步世界书，**不该顺手把界面也换掉** ——
+    //  世界书同步是 fire-and-forget 的后台链路，跑一次就把用户正在看的界面改掉是错的。
+    //
+    //  > 统一的是"界面所见 == 落盘那份"这条不变量；**纯后台读盘不在它范围内。**
     const data = loadData(host);
     const 目标 = settings.启用幕后 ? settings.更新.世界书写入 : '关闭';
     // 同步失败要报到界面: 这条链路是 fire-and-forget, 吞掉异常等于"关掉了但没清干净"没人知道。

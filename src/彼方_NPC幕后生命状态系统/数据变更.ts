@@ -13,9 +13,9 @@ import { getSettings } from './settings';
 import { CARD_FIELDS, 字段分组表, 扩展编辑字段 } from './卡字段';
 import { 合并 } from './卡合并';
 import type { 空值语义 } from './卡合并';
-import { clearAllData, emptyData, saveData } from './快照';
+import { 清空全部, 提交下一份 } from './当前状态';
+import { emptyData } from './快照';
 import type { 彼方数据, 清空结果 } from './快照';
-import { useStateStore } from './数据仓';
 import { 世界书失败文案, syncNpcStatesWorldbook } from './worldbook-inject';
 import type { 世界书写入目标 } from './settings';
 import { toastWarning } from './toast';
@@ -54,19 +54,17 @@ export function 建变更环境(host: 变更宿主): 变更环境 {
         世界书写入: 目标,
         // 保存 = 写快照 + 提交给界面: "界面看到的就是刚落盘的那份"这条不变量只在这里维护。
         // 写不进去就**不提交**: 否则 store 里那份是假的, 而界面已经按它渲染了。
+        //
+        // ── 2026-11-20 C2：改成走 `当前状态.提交下一份` ──
+        //  这条不变量现在由那个模块统一拥有（六条路收成一个入口）。
+        //  语义没变：仍然是"落盘成功才提交"，失败时不碰界面。
         保存: (数据: 彼方数据) => {
-            if (!saveData(host, 数据))
-                return false;
-            useStateStore().data = 数据;
-            return true;
+            return 提交下一份(host, 数据, '状态没能存进楼层(楼层可能已被删除或变量写入失败)').ok;
         },
         // 清空 = 物理删除快照 + 把空数据提交给界面(返回给 清空彼方数据 复用)
+        // 同样走 `当前状态`：清空失败时不碰界面（与改动前一致）。
         清空: () => {
-            const 结果 = clearAllData(host);
-            if (!结果.成功)
-                return 结果;
-            useStateStore().data = emptyData();
-            return 结果;
+            return 清空全部(host);
         },
         // 手改也要带上生理开关: 否则关着生理时, 改个名字就会把生理六列重新写回世界书条目
         同步世界书: (数据, 写入) => syncNpcStatesWorldbook(host, 数据, 写入 ? 目标 : '关闭', undefined, getSettings(host).更新.生理监测),
