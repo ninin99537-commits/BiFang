@@ -237,7 +237,63 @@ function loadData(host: 快照宿主): 彼方数据 {
     try {
         const meta = loadMeta(host);
         const floors = [...meta.快照楼层].sort((a, b) => a - b);
+        // ── 聊天未就绪护栏（2026-11-20 P0 #423）────────────────────────────
+        //
+        //  ── 不补这条会发生什么 ──
+        //  下面那个循环逐楼层 `host.chat.messages(floorId)`，读不到就 push 进
+        //  `missingFloors`（判成"楼层已删"），最后 `saveMeta` 把索引里那些楼层**删掉**。
+        //
+        //  而"读不到"有两种原因：
+        //    ① 楼层真的被删了            → 清索引是对的
+        //    ② **聊天还没就绪**（还没加载完 / `this_chid` 还没挂 /
+        //       脚本初始化早于聊天就绪）  → 每一层都读不到 → **索引被整个清空**
+        //
+        //  ② 的后果是**状态消失且不报错** —— 用户只看到"打开聊天，人物页空了"。
+        //  丢的不是设置，是**每个聊天里全部 NPC 状态**。
+        //
+        //  ── 怎么区分 ① 和 ② ──
+        //  看 `lastMessageId()`：
+        //    · 抛错或返回 < 0  → **聊天还没就绪**（一个有效楼层都没有）
+        //    · 返回 >= 0       → 聊天有内容，此时 `messages(floorId)` 为空
+        //                        说明那一楼**真的不存在** → 清索引是对的
+        //  所以护栏只需要卡第一种。
+        //
+        //  ── 对照：烟火那份早就补了同一条 ──
+        //  `烟火_世界运转/保存世界状态.ts` 的注释直接写着
+        //  「此前在这里误删索引，导致世界状态消失」。彼方这份一直缺。
+        //
+        //  ⚠ **判据必须是"一个字节都没写"**，不能只断言"返回空状态" ——
+        //    "返回空"和"把索引删了再返回空"在用户眼里一样，但后者是永久损坏。
+        const 最后楼层 = (() => {
+            try {
+                return host.chat.lastMessageId();
+            }
+            catch {
+                return -1;
+            }
+        })();
+        if (floors.length > 0 && !(最后楼层 >= 0)) {
+            console.warn('[彼方] 聊天尚未就绪（拿不到有效末层），本次只按空状态展示，'
+                + '**不动快照索引** —— 等聊天就绪后的刷新会重新读到真实数据。'
+                + `（索引里现有 ${floors.length} 层：${floors.join(', ')}）`);
+            return { ...emptyData(), 清空层: meta.清空层 };
+        }
+        /**
+         * 索引里的这些楼层，**真的可以被判成"已删"吗**？
+         *
+         * 第二个护栏（同一条 P0 的另一半）。`lastMessageId() >= 0` 说明聊天有内容，
+         * 但"读不到"仍然有两种可能：
+         *   ① 楼层号 **> 最后楼层** → 聊天被截短了（`/cut`、删尾），楼层真的没了 → **清是对的**
+         *   ② 楼层号 **<= 最后楼层** → 那个位置**应该有消息**，却读不到
+         *      → 这自相矛盾，只能是平台/接口的临时异常 → **宁可不清**（留着索引，下次再判）
+         *
+         * 为什么 ② 必须保守：判错一次就是**永久丢失**（索引删了，数据还在楼层变量里但没人再去找）。
+         * 而"多留一次索引"的代价只是下次启动再判一遍 —— **代价完全不对称**。
+         */
+        const 可判为已删 = (层: number) => 层 > 最后楼层;
         const missingFloors: number[] = [];
+        /** 出现了"楼层在聊天范围内、却读不到"——平台状态不可信，本次一律不动索引 */
+        let 平台状态可疑 = false;
         /** 编号对不上的快照(楼层被大段剪过 → 之后所有楼层号重排), 留作认领候选 */
         const 编号对不上: Array<{ floorId: number, snapshot: Record<string, any> }> = [];
         const 成数据 = (snapshot: Record<string, any>, floorId: number): 彼方数据 => {
@@ -269,7 +325,15 @@ function loadData(host: 快照宿主): 彼方数据 {
                 message = null;
             }
             if (!message) {
-                missingFloors.push(floorId);
+                // 只有"楼层号超出聊天末尾"才算真的删了；范围内的读不到 → 平台异常，留着索引
+                if (可判为已删(floorId)) {
+                    missingFloors.push(floorId);
+                }
+                else {
+                    平台状态可疑 = true;
+                    console.warn(`[彼方] 楼层 #${floorId} 在聊天范围内(末层 #${最后楼层})却读不到 —— `
+                        + '这不像"楼层被删"，更像平台/接口临时异常。**本次不动索引**，下次再判。');
+                }
                 continue;
             }
             let snapshot = null;
@@ -291,8 +355,14 @@ function loadData(host: 快照宿主): 彼方数据 {
             // 按内容比对会把"正常游玩"误判成"楼层被编辑", 导致每轮回退空状态
             // (更新次数恒为1、名单反复消失)。
             if (missingFloors.length > 0) {
-                meta.快照楼层 = meta.快照楼层.filter(floor => !missingFloors.includes(floor));
-                saveMeta(host, meta);
+                if (平台状态可疑) {
+                    console.warn('[彼方] 本次有楼层"在范围内却读不到"，索引里也有超出末层的楼层 —— '
+                        + '为了不误删，**这次一条都不清**，下次再判。');
+                }
+                else {
+                    meta.快照楼层 = meta.快照楼层.filter(floor => !missingFloors.includes(floor));
+                    saveMeta(host, meta);
+                }
             }
             return { ...成数据(snapshot, floorId), 清空层: meta.清空层 };
         }
@@ -324,22 +394,28 @@ function loadData(host: 快照宿主): 彼方数据 {
         if (候选) {
             const { floorId, snapshot } = 候选;
             const 修正: Record<string, any> = { ...snapshot, 楼层: floorId, 处理到楼层: floorId };
-            try {
-                host.vars.insertOrAssign({ [STORAGE_KEY]: 修正 }, { type: 'message', message_id: floorId });
+            // 平台状态可疑时不认领、不写盘 —— 认领会改写那一楼的快照 + 重置索引，都是写
+            if (平台状态可疑) {
+                console.warn('[彼方] 平台状态可疑（有楼层在范围内读不到），**本次不认领也不写盘**，下次再判。');
             }
-            catch {
-                // 写不回去也不影响本次读到的东西
+            else {
+                try {
+                    host.vars.insertOrAssign({ [STORAGE_KEY]: 修正 }, { type: 'message', message_id: floorId });
+                }
+                catch {
+                    // 写不回去也不影响本次读到的东西
+                }
+                meta.快照楼层 = [floorId];
+                if (missingFloors.length > 0)
+                    meta.快照楼层 = meta.快照楼层.filter(floor => !missingFloors.includes(floor));
+                saveMeta(host, meta);
             }
-            meta.快照楼层 = [floorId];
-            if (missingFloors.length > 0)
-                meta.快照楼层 = meta.快照楼层.filter(floor => !missingFloors.includes(floor));
-            saveMeta(host, meta);
             const 位移 = 编号对不上.map(x => x.floorId - Number(x.snapshot.楼层 ?? 0)).filter(n => Number.isFinite(n));
             console.warn(`[彼方] 楼层号与快照对不上(楼层被删过, 编号重排): 已按 #${floorId} 上的快照认领(它记的原编号 ${snapshot.楼层}), `
                 + `恢复 ${Array.isArray(修正.名单) ? 修正.名单.length : 0} 个 NPC。位移线索: ${位移.join(' / ') || '(无)'}`);
             return { ...成数据(修正, floorId), 清空层: meta.清空层 };
         }
-        if (missingFloors.length > 0) {
+        if (missingFloors.length > 0 && !平台状态可疑) {
             meta.快照楼层 = meta.快照楼层.filter(floor => !missingFloors.includes(floor));
             saveMeta(host, meta);
         }
