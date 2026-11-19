@@ -5,7 +5,6 @@
 
 // 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
 import { buildUpdateMessages } from './prompts';
-import { 默认模板, 校验模板 } from './提示词模板';
 import { 名字出现, 上下文, 最近回复, 正文过滤, 时间提示, 时间跳跃, 追踪NPC } from './聊天取料';
 import { 剧情跨度 } from './剧情时间';
 import { getPersonaTextForNpc, 读取世界书段 } from './worldbook';
@@ -19,39 +18,17 @@ import { 读取台账 } from './事务台账';
 import { 字段分组表 } from './卡字段';
 import { 计算规模 } from './规模';
 
-type 取料参数 = { host: any; settings: any; force: any; timing: any; debugStore: any;
-    /** 只读模式: 不写日志、不打日志行。**预览专用**。
-     *  为什么要有它: 预览的意义是"看实际会发什么", 但它不该因此往日志页塞一条记录 ——
-     *  那会让用户分不清"我更新了一次"和"我预览了一次"。 */
-    只读?: boolean;
-};
-
+type 取料参数 = { host: any; settings: any; force: any; timing: any; debugStore: any };
 export async function 收集本轮输入(参数: 取料参数) {
     const { host, settings, force, timing, debugStore } = 参数;
 
-    let data = loadData(host, !!参数.只读);
-    // ── 主角名 / 主角信息：**可选的输入，缺失不该让整份提示词失败** ──────────
-    // 2026-11-19 P1：真没选人设的聊天（`user_avatar = null`）会让 `getPersona('current')`
-    // 内部抛错。`host.ts` 的三个人设方法已有 try/catch，但这里**再包一层** ——
-    // 理由是：宿主是边界，边界之外的任何实现都可能换（比如以后换成直接调酒馆 API）。
-    // 一个可选输入缺失，不该让整份提示词拼不出来。
-    // 用空串而不是 null 表示"没有" —— 下游（`玩家名`）的既有类型是 string，
-    // 而"空串 = 没有"在这条链上已经成立（原来 `?? null` 走到那里也是空串语义）。
-    let playerName = '';
-    let playerDescription = '';
-    try {
-        playerName = host.persona.name() ?? '';
-    }
-    catch (error) {
-        console.warn('[彼方] 读不到主角名(可能没选人设), 本轮按"无主角"处理:', error);
-    }
-    try {
-        playerDescription = (host.persona.description() ?? '').trim();
-    }
-    catch (error) {
-        console.warn('[彼方] 读不到主角信息(可能没选人设), 本轮主角信息为空:', error);
-    }
+    let data = loadData(host);
+    // 获取玩家/主角名, 避免给主角建档; 顺带清理历史误建的主角卡
+    const playerName = host.persona.name();
+    // 主角信息(persona 描述): 主 AI 能看到 persona, 彼方此前没有读取通道——
+    // 主角设定不写在世界书里时, 更新 AI 完全不知道主角是谁, 这里补齐。
     // 零截断原则: 全量发送, 不在发送时砍内容(规模控制只做在源头的读取范围/账本容量)。
+    const playerDescription = host.persona.description().trim();
     const recentCount = Math.max(1, settings.更新.读取最近回复数 ?? 3);
     let clearLayer = data.清空层 ?? 0;
     // 清空层自适应: 清空后楼层被删到清空层以下时, 现有楼层号永远追不上清空层,
@@ -163,11 +140,7 @@ export async function 收集本轮输入(参数: 取料参数) {
     // 四个口子(无更早快照/中间缺/跨清空层/形状不一致)全部由 轨迹.ts 内部挡, 这里只负责取料。
     const 轨迹结果 = 生成近期轨迹(读取快照序列(host, 轨迹上限.K层), data.清空层 ?? 0);
     const recentTrace = 轨迹结果.文本;
-    // ⚠ 这行原来在 `if (!只读)` 之外（2026-11-19 复查指出）。
-    //  `取料参数` 的注释承诺「只读模式：不写日志、**不打日志行**」——
-    //  承诺和事实差一个词也是差。所以挪进只读判断里：
-    //  **行为对齐承诺，不是承诺迁就行为。**
-    if (recentTrace && !参数.只读)
+    if (recentTrace)
         console.info(`[彼方] 近期轨迹: 用 ${轨迹结果.用了快照数} 份快照, 写出 ${轨迹结果.写出条数} 条变化${轨迹结果.跳过形状不一致 ? `, 跳过 ${轨迹结果.跳过形状不一致} 个形状不一致字段` : ''}${轨迹结果.截掉清空层前 ? `, 清空层截掉 ${轨迹结果.截掉清空层前} 份` : ''}`);
     const currentCards: Record<string, any> = {};
     // 批2·B2: 逐 NPC 的「最后剧情时刻」—— 与批1 的**全局**跨度是两回事, 别混用。
@@ -241,24 +214,7 @@ export async function 收集本轮输入(参数: 取料参数) {
             }
         }
     }
-    // **模板**（2026-11-19 收口）：唯一路径，必填。
-    // settings 里没存过（新用户 / 默认）时回退到 `默认模板` ——
-    // 那个常量展开后与改造前的产物逐字节相同（I3 由 tests/bifang-模板.test.ts 守）。
-    const 模板值 = Array.isArray(settings.提示词?.模板) && settings.提示词.模板.length > 0
-        ? settings.提示词.模板
-        : 默认模板;
-    // **兜底校验**（需求方 #230）：段列表里至少要有一段 user。
-    // 没有它，`api.ts` 取到的 `user_input` 是空串 —— 请求发不出去，而用户看不出为什么。
-    // 界面上已经有实时提示（`校验模板`），这里是**最后一道**：
-    // 万一有别的入口（未来的、或用户手改 settings）绕过了界面，这里必须拦住。
-    const 模板问题 = 校验模板(模板值);
-    if (模板问题) {
-        console.warn(`[彼方] ${模板问题} 本次更新已跳过。`);
-        host.toast?.warn?.(`彼方: ${模板问题}`, '彼方');
-        return null;
-    }
-    const 拼装结果 = buildUpdateMessages({
-        模板: 模板值,
+    const { messages, 工具说明 } = buildUpdateMessages({
         reply,
         replyCount: recent.length,
         context,
@@ -271,30 +227,17 @@ export async function 收集本轮输入(参数: 取料参数) {
         // 恋爱子系统: 标记即开关——只有被玩家标记为恋爱对象的 NPC 才进恋爱说明段。
         // 没有任何标记时是空数组, 恋爱段输出空串, 提示词与改动前逐字节相同(零成本、零回归)。
         恋爱对象名单: tracked.filter((name: string) => String(currentCards[name]?.['恋爱对象'] ?? '').trim() === '是'),
-        // 用户自定义段: 旧版的「零件位置」已在上一次迁移里转成占位符条目（见 条目列表.ts 的 `迁移旧段`），
-        // 所以这里**只透传用户手写的段**，不再有第二条搬迁路径。
-        自定义段: settings.提示词?.自定义段 ?? [],
-        关闭零件: settings.提示词?.关闭零件 ?? [],
-        // 用户条目（C12）: 列表模型的输入。形状由 `用户条目键` 派生, 这里只做透传。
-        // **注意 `条目顺序` 不在这里传** —— 顺序是 UI 侧的表达, 拼装只需要"哪些条目"。
-        // 排序在 prompts.ts 里按 `条目顺序` 重排（见那边的注释）。
-        条目: settings.提示词?.条目 ?? [],
-        条目顺序: settings.提示词?.条目顺序 ?? [],
-        // ⚠ **不再传 `预填充`**（2026-11-19 波3）：拼装层从来没用过它。
-        //  真正生效的是 `update.ts:61` 那条（它直接传给请求层）。
-        //  原来这里传一个永远没人读的值 —— 那让"预填充在拼装阶段生效"看起来成立。
-        // 消息伪装已移除（2026-11-19 用户裁定）—— 这里不再传那个入参，
-        // 类型上也删掉了（留着会让后来人以为它还有用）。
-        // 登记归档也已移除（同批裁定）：身份句归模板文字，用户自己改。
-        // 规则进工具(§33): 工具通道开着时,**所有段都进工具说明**, messages 只剩
-        // 第 1 段的第一行(身份句)+ 收尾那句。
-        //
-        // ⚠ 原注释写的是"规则/设定/字段说明整块搬进工具说明, 剧情与状态仍留在 messages" ——
-        //   **那是错的**(2026-11-19 复查指出)。实测(11 段混排): messages 只剩 2 条
-        //   `[system:17, user:18]`, 工具说明 229 字, **连 assistant 段也进了工具说明**。
-        //   所以它不是"按 role 分", 是"全都进, 与 role 无关"。
-        //   留这条更正记录是因为: 注释说 A 实现做 B, 下一个人会拿它当依据。
+        自定义段: settings.提示词?.自定义段 ?? [], // 用户自定义段: 只插锚点, 不改内置提示词
+        预填充: !!settings.更新.预填充,
+        // 消息伪装(§33): **常驻**, 没有开关。与工具通道**正交** ——
+        // 规则进表了, messages 照样是有来有回的短问答(伪装的对象是对话形状, 不是规则段落)。
+        消息伪装: true,
+        // 规则进工具(§33): 工具通道开着时, 规则/设定/字段说明整块搬进工具说明,
+        // 剧情与状态仍留在 messages。两件事各管一边, 不抢位置。
         规则进工具: !!settings.接口.工具通道,
+        // 登记归档(§35.2 第 4 层): 开关开时身份句换成"档案写入进程"那一版。
+        // 它只改身份句, 不动任何规则正文 —— 规则一个字都不改。
+        登记归档: !!settings.接口.登记归档,
         worldbook,
         currentStoryTime: data.剧情时间,
         storyTimeHint,
@@ -312,28 +255,9 @@ export async function 收集本轮输入(参数: 取料参数) {
             }
         },
     });
-    const { messages, 工具说明 } = 拼装结果;
-    // ── 请求体 = **实际要发出去的全部内容**（2026-11-19 波1，用户报的日志缺陷）──
-    //
-    //  ── 原来为什么日志页只有一行 ──
-    //  这里只拼了 `messages`。而全进工具模式下（实测）：
-    //      messages: 2 条  [system:17, user:18]
-    //      工具说明: 14513 字
-    //  **14513 字全在工具说明里，日志页一个字都看不到。**
-    //
-    //  > 仅看 messages 的日志，在工具模式下等于没有日志。
-    //
-    //  用户报的正是这个：「我打开工具调用开关的时候，日志页看到的发送给 AI 的内容只有一行」。
-    //  **他看到的完全正确 —— 是日志本身漏了 14513 字。**
-    //
-    //  ── 顺带修好的第二个出口 ──
-    //  `规模` 里的「请求体 N 字」也是拿这份算的，所以它同样漏了工具说明
-    //  （全进工具模式下严重偏小）。**同一个 bug 的两个出口，一起修。**
-    const 请求体 = [
-        ...messages.map(message => `【${message.role === 'system' ? '系统指令' : message.role === 'user' ? '用户' : '助手'}】\n${message.content}`),
-        // 工具说明为空时不加这一段（没开工具通道时它本来就是空串）
-        ...(工具说明 ? [`【工具说明】\n${工具说明}`] : []),
-    ].join('\n\n────────\n\n');
+    const 请求体 = messages
+        .map(message => `【${message.role === 'system' ? '系统指令' : message.role === 'user' ? '用户' : '助手'}】\n${message.content}`)
+        .join('\n\n────────\n\n');
     // 规模四数与请求体同源: 都取自**这一轮真正要发出去的那份**(messages / currentCards / worldbook)
     const 规模 = 计算规模({
         追踪: tracked.length,
@@ -342,30 +266,17 @@ export async function 收集本轮输入(参数: 取料参数) {
         世界书字数: worldbook.length,
         请求体,
     });
-    // **只读模式跳过所有写动作**(U 批需求: 预览不许写日志、不许写缓存落盘、不触碰快照)。
-    // 这里只有两处副作用, 都在下面这个 if 里:
-    //   ① debugStore.record —— 写日志页的数据
-    //   ② console.info —— 往 Console 打一行
-    //
-    // ⚠ **原来这里写着「上面那些读动作(loadData / 读取快照序列 / 读取世界书)本来就不写盘」——
-    //    那句是错的**（2026-11-19 复查「发现4」）。`loadData` 的**认领分支会写盘**
-    //    （索引里有失效楼层时，它会重写索引）。
-    //    所以"只读"不能只靠这个 if —— `loadData` 那条路自己也得能区分只读。
-    if (!参数.只读) {
-        debugStore.record({
-            time: Date.now(),
-            model: settings.接口.模型,
-            replyIds: recent.map((message: any) => message.message_id),
-            replyPreview: reply.slice(0, 150),
-            request: 请求体,
-            规模,
-        });
-        console.info(`[彼方] 开始更新幕后NPC状态 (使用最近 ${recent.length} 条回复: #${recent.map((message: any) => message.message_id).join(', #')})`);
-    }
+    debugStore.record({
+        time: Date.now(),
+        model: settings.接口.模型,
+        replyIds: recent.map(message => message.message_id),
+        replyPreview: reply.slice(0, 150),
+        request: 请求体,
+        规模,
+    });
+    console.info(`[彼方] 开始更新幕后NPC状态 (使用最近 ${recent.length} 条回复: #${recent.map(message => message.message_id).join(', #')})`);
 
-    // 拼装清单一起交出去: 预览页要显示它, 而它是**这一次拼装的产物**(不是另算的)。
-    // 与 messages/工具说明 同源 —— 这正是 U3a(结果锁)要的。
-    return { data, messages, 工具说明, 拼装清单: 拼装结果.拼装清单, 零件内容: 拼装结果.零件内容, playerName, recent, timeJump, 规模 };
+    return { data, messages, 工具说明, playerName, recent, timeJump };
 }
 
 

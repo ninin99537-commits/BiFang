@@ -121,7 +121,6 @@ import { 事实档案 } from './一致性面板';
 const {
   npcList, newNpcName, openAddDialog, autoTrackEnabled, data, removeNpc, openNpc,
   updating, reload, clearAll, clearing, stats, npcEntries, 待续事务数, 过期事务数, 头像色号,
-  本轮有变化人数,
 } = use仪表盘面板();
 
 /** 本轮有变化: 卡的「最后更新」等于全局「最后更新」时刻 */

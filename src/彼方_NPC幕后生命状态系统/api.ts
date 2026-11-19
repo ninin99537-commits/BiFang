@@ -151,36 +151,14 @@ async function chatCompletionInner(host: 接口宿主, messages: any[], options?
     // 展开酒馆骰子宏 {{roll 1d100}} → 真实随机数:
     // 直连 / generateRaw 都不经过酒馆的 substituteParams, 宏不会自动展开,
     // 这里手动替换, 保证受孕判定等需要随机数的场景拿到真实 D100 结果。
-    //
-    // ⚠ **骰子数量与面数必须有上限**（2026-11-19 发现7 P2）。
-    //
-    //  ── 原来为什么会卡死页面 ──
-    //  循环是 `for (let i = 0; i < +count; i++)` —— `count` 直接来自宏参数，**没有上限**。
-    //  `{{roll 1000000000d6}}` 会让主线程掷十亿次骰子，**整个酒馆页面无响应**
-    //  （不是报错、不是慢，是转圈到用户以为崩了）。
-    //
-    //  ── 为什么是"按上限算 + warn"而不是"抛错" ──
-    //  这个宏出现在**要发出去的提示词**里。抛错会让整轮更新失败 ——
-    //  为一个写错的宏（或模型自己编的宏）丢掉一整轮状态，代价太大。
-    //  按上限算 + 出声，用户能在 Console 里看到"它被截断了"，而本轮照常完成。
-    //
-    //  ⚠ **不许静默截断**：那样用户永远不知道自己写的 `1000d6` 只掷了 100 次。
-    const 骰子上限 = { 数量: 100, 面数: 1000 } as const;
     messages = messages.map((message: any) => ({
         ...message,
         content: String(message.content ?? '').replace(/\{\{\s*roll\s+(\d+)d(\d+)\s*\}\}/gi, (_match, count, sides) => {
-            const 原数量 = +count;
-            const 原面数 = +sides;
-            const 数量 = Math.min(原数量, 骰子上限.数量);
-            const 面数 = Math.min(原面数, 骰子上限.面数);
-            if (原数量 > 骰子上限.数量 || 原面数 > 骰子上限.面数) {
-                console.warn(`[彼方] 掷骰宏超出上限已截断: {{roll ${原数量}d${原面数}}} → 按 ${数量}d${面数} 计算(上限 ${骰子上限.数量}d${骰子上限.面数})`);
-            }
             let total = 0;
-            for (let i = 0; i < 数量; i++)
-                total += 1 + Math.floor(Math.random() * 面数);
+            for (let i = 0; i < +count; i++)
+                total += 1 + Math.floor(Math.random() * +sides);
             // 记录骰子结果到彼方日志(供受孕判定等场景回溯"到底投出了多少")
-            console.info(`[彼方] 掷骰: ${数量}d${面数} = ${total}`);
+            console.info(`[彼方] 掷骰: ${count}d${sides} = ${total}`);
             return String(total);
         }),
     }));

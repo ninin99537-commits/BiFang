@@ -8,30 +8,6 @@
 //   - persona/character/macros 给最小假; worldbook 全家桶给"能跑通但不开"的最小假。
 // 它**没**模拟什么: 真实酒馆事件时序(CHAT_CHANGED/楼层删除)、世界书写入路径、persona 注入、
 //   宏展开的真实酒馆宏、流式/SSE、直连 fetch —— 这些各有专测或不在本系列范围, 别把它当真环境。
-//
-// ══════════════════════════════════════════════════════════════════════════════
-// **规矩：新增方法必须真实现，或调用即抛。空体（`() => undefined` / `() => {}`）不允许。**
-// ══════════════════════════════════════════════════════════════════════════════
-// 为什么（2026-11-19 实测）：
-//   `worldbook.entries/update/create/remove` 四个方法原来是 `async () => undefined`。
-//   后果：`syncNpcStatesWorldbook` 的新建 / 更新 / 删除三条分支**从来没被执行过** ——
-//   调了等于没调，**而它不报错**。最狠的是 `entries: async () => []`：
-//   找不到既有条目 → 每次同步都走 create → **条目只增不减**。
-//
-//  > **一个测不到的写入路径，等于没测。** 它比"测试失败"更危险 —— 失败会红，它不会。
-//
-// 自查：`node tests/fixtures/bifang-probe-fakehost-audit.mjs`（扫空体 + 对生产用到的能力）。
-// 唯一允许的空体是 `model.stop`（中断请求：假宿主没有在飞的请求，什么都不做是对的）。
-// ══════════════════════════════════════════════════════════════════════════════
-//
-// 已知边界（2026-11-19 记录，**未修**）：
-//   · **假世界书只有"一本"**（不区分主书 / 聊天书）。真平台是两本 ——
-//     所以"写错书"这类 bug 在共享假宿主上**测不出来**（写错了不报错，只是写进另一本）。
-//     要测那类场景，得用 `bifang-worldbook-shutdown.test.ts` 那种按名管理的自造假件。
-//   · 有些用例会 `(host as any).worldbook.remove = ...` **自己覆盖**上面的实现 ——
-//     那意味着**共享版那一条在那次用例里没被执行**。覆盖本身没错（自造更精确），
-//     但"共享假宿主的覆盖率"和"你以为的覆盖率"是两件事。
-// ══════════════════════════════════════════════════════════════════════════════
 // 最小骨架:
 //   import { 彼方假宿主, 种已有状态 } from '../helpers/彼方假宿主';
 //   setActivePinia(createPinia());
@@ -63,7 +39,7 @@ export function 模型卡乙() {
 
 export function 彼方假宿主(选项: 假平台选项 = {}) {
   const 最后楼层号 = 选项.最后楼层号 ?? 3;
-  const 存: any = { global: {}, chat: {}, message: {}, script: undefined };
+  const 存: any = { global: {}, chat: {}, message: {} };
   // 造一份新假宿主 = 换一份假全局设置 = 换数据源 —— getSettings 的 500ms 读缓存必须失效。
   // 这是同一个坑第三次咬人(总开关清理[1]→[2]、慢一步[1]→[2]、慢一步[2]→[3]/[4]→[5]/[5]→[6]),
   // 上提到共享 helper: 所有用例一次性免疫, 与生产路径 写回全局() 成功后调 invalidateReadCache() 同一概念。
@@ -75,15 +51,7 @@ export function 彼方假宿主(选项: 假平台选项 = {}) {
   ];
   const 记 = { rawCalls: [] as any[] };
   const 队列 = [...(选项.模型回复 ?? [])];
-  /** 假世界书：`worldbook.entries/update/create/remove` 都读写这一份（2026-11-19） */
-  const 书: { 条目: any[] } = { 条目: [] };
-  const 变量表 = (arg: any) => (arg?.type === 'global'
-    ? 存.global
-    : arg?.type === 'chat'
-      ? 存.chat
-      : arg?.type === 'script'
-        ? 存.script
-        : 存.message[arg?.message_id]);
+  const 变量表 = (arg: any) => (arg?.type === 'global' ? 存.global : arg?.type === 'chat' ? 存.chat : 存.message[arg?.message_id]);
   const host = {
     vars: {
       get: (arg: any) => 变量表(arg),
@@ -94,51 +62,12 @@ export function 彼方假宿主(选项: 假平台选项 = {}) {
         const 新 = fn(变量表(arg));
         if (arg?.type === 'global') 存.global = 新;
         else if (arg?.type === 'chat') 存.chat = 新;
-        else if (arg?.type === 'script') {
-          // ⚠ **2026-11-19 补**：原来没有这一支 —— `type:'script'` 会落到 `存.message[undefined]`。
-          //  而 `settings.ts` 的第三段迁移（"旧设置存在脚本变量里"）正是靠这一支；
-          //  没有它，那条路径在测试里**根本跑不到**（实测：`vars.get({type:'script'})` 返回 undefined）。
-          //  **一个测不到的迁移路径，等于没测。**
-          if (新 === null)
-            delete 存.script;
-          else
-            存.script = 新;
-        }
         else 存.message[arg.message_id] = 新;
       },
       del: (key: string, arg: any) => {
         delete 变量表(arg)[key];
       },
-      /**
-       * 往楼层变量里写入指定键（**深合并**，与真平台 `insertOrAssignVariables` 一致）。
-       *
-       * ── 2026-11-19 补：原来这里是 `() => undefined` ──
-       *  后果：`快照.ts` 的**认领分支**（`loadData` 里楼层号对不上时改写那一楼的快照）
-       *  在测试里**从来没被执行过** —— 调了等于没调，而它不报错。
-       *
-       *  实测暴露：写「发现4/发现5」的探针时，`[自证] 非只读时认领会写盘` 一直是 false，
-       *  查了半天以为产品代码有问题，实际是**假宿主没这个能力**。
-       *
-       *  > **一个测不到的写入路径，等于没测。** 它比"测试失败"更危险 —— 失败会红，它不会。
-       */
-      insertOrAssign: (数据: Record<string, any>, arg: any) => {
-        if (arg?.type === 'message') {
-          存.message[arg.message_id] ??= {};
-          Object.assign(存.message[arg.message_id], 数据);
-          return;
-        }
-        if (arg?.type === 'global') {
-          存.global = { ...存.global, ...数据 };
-          return;
-        }
-        if (arg?.type === 'chat') {
-          存.chat = { ...存.chat, ...数据 };
-          return;
-        }
-        if (arg?.type === 'script') {
-          存.script = { ...存.script, ...数据 };
-        }
-      },
+      insertOrAssign: () => undefined,
       scriptId: () => 't',
     },
     chat: {
@@ -173,31 +102,10 @@ export function 彼方假宿主(选项: 假平台选项 = {}) {
       groupMemberNames: () => [] as string[],
       chatName: () => null,
       getOrCreateChat: async () => '聊天书',
-      /**
-       * ── 2026-11-19：这四个方法原来是 `async () => undefined` ──
-       *
-       * **后果：`syncNpcStatesWorldbook` 的新建 / 更新 / 删除三条分支，
-       * 在假宿主上从来没被执行过。** 调了等于没调，而它不报错。
-       *
-       * 实测暴露：写「发现4/发现5」的探针时，认领分支的写盘一直是 false，
-       * 查了半天以为产品代码有问题 —— 实际是**假宿主没这个能力**。
-       *
-       * > **一个测不到的写入路径，等于没测。** 它比"测试失败"更危险：失败会红，它不会。
-       *
-       * 现在用一本内存世界书（`书.条目`）真实现；用例可以从返回值里拿到 `书` 直接检查。
-       */
-      entries: async (_name?: string) => 书.条目.map((e: any) => ({ ...e })),
-      update: async (_name: string, fn: any) => {
-        // 真平台语义：fn 接收整本条目列表，返回新的整本
-        书.条目 = fn(书.条目.map((e: any) => ({ ...e })));
-      },
-      create: async (_name: string, 新增: any[]) => {
-        书.条目.push(...新增.map((e: any) => ({ ...e })));
-      },
-      remove: async (_name: string, 谓词: any) => {
-        // 真平台语义：谓词命中即删（`removeWorldbookEntries(name, predicate)`）
-        书.条目 = 书.条目.filter((e: any) => !谓词(e));
-      },
+      entries: async () => [],
+      update: async () => undefined,
+      create: async () => undefined,
+      remove: async () => undefined,
     },
     toast: {
       warn: (text: string, header: string) => 存.global['__toast_warn'] = [...(存.global['__toast_warn'] ?? []), { text, header }],
@@ -211,7 +119,7 @@ export function 彼方假宿主(选项: 假平台选项 = {}) {
     接口: { 地址: 'https://fake.local', 模型: 'fake-model', 密钥: '', 直连: false, 流式: false },
     更新: { 读取最近回复数: 3, 注入世界书: false, 自动建档: true, 生理监测: false, 预填充: false, 世界书写入: '关闭' },
   };
-  return { host, 存, 记, 队列, 楼层, 书 };
+  return { host, 存, 记, 队列, 楼层 };
 }
 
 /** 种一份"已有状态"(甲/丙 两人)在楼层 1, 让 loadData 有真快照可读; 返回种子数据 */

@@ -77,10 +77,6 @@
         <DashboardPage v-if="tab === 'dashboard'" key="dashboard" />
         <NpcPage v-else-if="tab === 'npc'" key="npc" />
         <ConsistencyPage v-else-if="tab === 'consistency'" key="consistency" />
-        <!-- ⚠ `:host="host"` 不能漏（2026-11-19 P0）：拼装页的预览要真读一次聊天，
-             而它靠 `props.host` 走宿主接缝。漏了就是 `undefined.persona` 崩在预览里。
-             判据在 tests/bifang-拼装页.test.ts 的 `[prop]` 段（扫全部页面组件的 defineProps）。 -->
-        <PartsPage v-else-if="tab === 'parts'" key="parts" :host="host" />
         <LogsPage v-else-if="tab === 'logs'" key="logs" />
         <SettingsPage v-else key="settings" />
       </main>
@@ -236,7 +232,6 @@ import { 取收纳坞, 取收纳坞入口 } from '../共用/收纳坞';
 // 列表类设置的文本 → 名单: 三家统一按换行切(逗号/顿号不再当分隔符)
 import { 解析名单 } from '../共用/世界书排除';
 import LogsPage from './页面-日志.vue';
-import PartsPage from './页面-拼装.vue';
 import ConsistencyPage from './页面-一致性.vue';
 import NpcPage from './页面-NPC.vue';
 import DashboardPage from './页面-仪表盘.vue';
@@ -435,7 +430,6 @@ const tabs = [
   { key: 'dashboard', label: '此刻的彼方' },
   { key: 'npc', label: '人物' },
   { key: 'consistency', label: '事实档案' },
-  { key: 'parts', label: '拼装' },
   { key: 'logs', label: '日志' },
   { key: 'settings', label: '设置' },
 ] as const;
@@ -1662,11 +1656,10 @@ provide(仪表盘面板键, 建仪表盘面板({
   openAddDialog,
   removeNpc,
   openNpc,
+  manualUpdate,
   reload,
   clearAll,
   clearing,
-  // 本轮有变化人数（2026-11-19）：页面模板要显示它，但它算在壳里（要用 stats + 卡的「最后更新」）
-  本轮有变化人数,
 }));
 
 provide(日志面板键, 建日志面板({

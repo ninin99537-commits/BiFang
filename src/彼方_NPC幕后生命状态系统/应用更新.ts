@@ -20,34 +20,6 @@ function maskBaseUrl(url: string) {
     const value = String(url || '').trim();
     return value.replace(/([?&](?:key|token|api_key|apiKey|apikey)=)[^&]*/gi, '$1***');
 }
-
-/**
- * 往一个普通对象上**写自身属性**，绕过 `__proto__` 的 setter（2026-11-19 #340）。
- *
- * ── 为什么不能直接 `obj[key] = value` ──
- *  对 `__proto__` 这一个键，`obj[key] = value` 走的是 `Object.prototype.__proto__` 的 **setter**：
- *
- *      const o = {};
- *      o['__proto__'] = { 当前在做: 'x' };
- *      Object.keys(o)            // []                        ← 没产生自身属性
- *      Object.getPrototypeOf(o)  // { 当前在做: 'x' }         ← 原型被改了
- *
- *  而 `Object.defineProperty(o, '__proto__', {value, enumerable: true, writable: true, configurable: true})`
- *  会正常产生自身属性（实测 `Object.keys(o)` = `['__proto__']`）。
- *
- * ── 为什么其余名字不需要特殊处理（实测过）──
- *      constructor / prototype / toString / hasOwnProperty  → 赋值都会正常产生自身属性
- *  只有 `__proto__` 是访问器属性。**别把这里写成"所有键都 defineProperty"** ——
- *  那会让正常路径多一层无谓开销，也掩盖了"只有一个键有问题"这个事实。
- *
- * ── 为什么这一道要与入口那道并存 ──
- *  入口（`认出NPC`）拦的是"模型给了非法名字"；
- *  这里拦的是"**任何其它路径**把非法名字送到写卡这一步"（导入/迁移/面板改名/将来新增的路径）。
- *  **只做入口 = 只防住了今天已知的那条路。**
- */
-function 写自身属性(目标: Record<string, any>, 键: string, 值: any): void {
-    Object.defineProperty(目标, 键, { value: 值, enumerable: true, writable: true, configurable: true });
-}
 /**
  * 处理 NPC 改名合并: AI 输出状态卡时若带「曾用名」, 且该曾用名正好是已建档的旧卡 key,
  * 说明正文揭示了同一角色的真实姓名(如"林姐"→"林淑仪")。此时:
@@ -219,14 +191,7 @@ function applyUpdate(data: 彼方数据, parsed: Record<string, any> | null, pla
             continue;
         }
         const resolved = resolveRenamedNpc(newData, 采用名, card, playerName);
-        // **第二道防线**（2026-11-19 #340）：即使入口漏了，写卡也不许走 `__proto__` 的 setter。
-        //
-        // 为什么两道：入口（`认出NPC`）拦的是"模型给了非法名字"；
-        // 这里拦的是"任何其它路径把非法名字送到写卡这一步"（比如以后加了导入/迁移/面板改名）。
-        // **只做入口 = 只防住了今天已知的那条路。**
-        //
-        // 用 `defineProperty` 而不是 `obj[k] = v`：后者对 `__proto__` 走 setter，不产生自身属性。
-        写自身属性(newData.NPC, resolved.name, 合并一张卡(resolved.name, resolved.oldCard, card));
+        newData.NPC[resolved.name] = 合并一张卡(resolved.name, resolved.oldCard, card);
         updatedNames.push(resolved.name);
         if (!newData.名单.includes(resolved.name))
             newData.名单.push(resolved.name);

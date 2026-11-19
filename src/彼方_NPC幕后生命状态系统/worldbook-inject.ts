@@ -1,11 +1,11 @@
 import type { Host } from './host';
 // 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
 import { buildInjectionPrompt } from './prompts';
-import { BIFANG_WORLDBOOK_ENTRY_NAME, isBifangEntryDeletable, sanitizeBifangEntryName } from './彼方条目';
+import { BIFANG_WORLDBOOK_ENTRY_NAME, isBifangEntry, sanitizeBifangEntryName } from './彼方条目';
 import { useMainPromptStore } from './日志仓';
 import type { 彼方数据 } from './快照';
 import type { 世界书写入目标 } from './settings';
-import { getSettings, 设置读取可信 } from './settings';
+import { getSettings } from './settings';
 import { loadData } from './快照';
 
 /**
@@ -75,7 +75,7 @@ function 报告世界书失败(host: Pick<Host, 'toast'>, error: unknown): void 
 async function syncNpcStatesWorldbook(host: Pick<Host, 'worldbook'>, data: 彼方数据, 目标: 世界书写入目标, 未回票?: Record<string, string[]>, 生理监测 = true) {
     if (目标 === '关闭') {
         for (const name of 已有世界书(host))
-            await host.worldbook.remove(name, isBifangEntryDeletable);
+            await host.worldbook.remove(name, isBifangEntry);
         return;
     }
     const wbName = await 目标世界书(host, 目标);
@@ -91,21 +91,17 @@ async function syncNpcStatesWorldbook(host: Pick<Host, 'worldbook'>, data: 彼�
     }
     const npcEntries = Object.entries(data.NPC ?? {});
     if (npcEntries.length === 0) {
-        await host.worldbook.remove(wbName, isBifangEntryDeletable);
+        await host.worldbook.remove(wbName, isBifangEntry);
         return;
     }
     const content = buildInjectionPrompt(npcEntries, 未回票, String(data?.剧情时间 ?? ''), 生理监测);
     // 日志页「彼方写入世界书的内容」记录: 与写入条目的内容完全一致(同一个渲染函数),
     // 主AI 以及任何读取该世界书的环节读到的就是这一段
     useMainPromptStore().record(content);
-    // ⚠ **写入端也用严格判据**（2026-11-19 #325）：
-    //  这里做的是"找到自己那条 → 覆盖它的内容"。若用宽松判据，
-    //  用户一条正文以 `[彼方 · 幕后NPC状态]` 开头的条目会被**整段内容覆盖掉** ——
-    //  那比删掉更糟（删了还能重建，覆盖了原文就没了）。
-    const existing = (await host.worldbook.entries(wbName)).find(isBifangEntryDeletable);
+    const existing = (await host.worldbook.entries(wbName)).find(isBifangEntry);
     if (existing) {
         // 保留其它字段, 只刷新内容; 确保防递归开启; 名字若命中 ACU 屏蔽词则改回安全名
-        await host.worldbook.update(wbName, wb => wb.map(entry => isBifangEntryDeletable(entry)
+        await host.worldbook.update(wbName, wb => wb.map(entry => isBifangEntry(entry)
             ? {
                 ...entry,
                 name: sanitizeBifangEntryName(entry.name || BIFANG_WORLDBOOK_ENTRY_NAME),
@@ -150,22 +146,6 @@ async function syncNpcStatesWorldbook(host: Pick<Host, 'worldbook'>, data: 彼�
  */
 function maybeInjectNpcStates(host: Host): void {
     const settings = getSettings(host);
-    // ⚠ **读不到设置 ≠ 用户关掉了**（2026-11-19 波2「发现6」）。
-    //
-    //  ── 原来会发生什么 ──
-    //  `getSettings` 读全局失败时返回 store 里那份，而它可能是 `Settings.parse({})` ——
-    //  全默认值，其中 `更新.世界书写入 = '关闭'`。于是这里判出 `目标 = '关闭'`，
-    //  `syncNpcStatesWorldbook` 就把两本世界书里的彼方条目**删掉**。
-    //
-    //  全程**没有任何提示**：同步本身"成功"了，所以 `报告世界书失败` 那条链也不触发。
-    //  用户只看到主 AI 读不到幕后状态了。
-    //
-    //  ── 为什么是"跳过"而不是"用上次的值" ──
-    //  上次的值可能已经过期（用户在这期间真的改了设置）。**猜错了会写错数据。**
-    //  跳过则什么都没发生 —— 下一个触发器（切聊天/删楼/下次更新）会再试一次。
-    //  **不做事比做错事便宜。**
-    if (!设置读取可信())
-        return;
     const data = loadData(host);
     const 目标 = settings.启用幕后 ? settings.更新.世界书写入 : '关闭';
     // 同步失败要报到界面: 这条链路是 fire-and-forget, 吞掉异常等于"关掉了但没清干净"没人知道。

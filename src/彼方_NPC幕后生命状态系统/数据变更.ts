@@ -9,7 +9,7 @@
 // 依赖走 变更环境: 生产环境(建变更环境)连接真实的 快照.ts / worldbook-inject.ts,
 // 测试里换成假的就能把四种变更各跑一遍, 不需要酒馆。
 import type { Host } from './host';
-import { getSettings, 设置读取可信 } from './settings';
+import { getSettings } from './settings';
 import { CARD_FIELDS, 字段分组表, 扩展编辑字段 } from './卡字段';
 import { 合并 } from './卡合并';
 import type { 空值语义 } from './卡合并';
@@ -49,8 +49,7 @@ export interface 变更环境 {
 
 /** 真实环境: 闸门取当前设置, 其余用 快照.ts / worldbook-inject.ts 的实现; 宿主由边界传入 */
 export function 建变更环境(host: 变更宿主): 变更环境 {
-    const 设置 = getSettings(host);
-    const 目标 = 设置.更新.世界书写入;
+    const 目标 = getSettings(host).更新.世界书写入;
     return {
         世界书写入: 目标,
         // 保存 = 写快照 + 提交给界面: "界面看到的就是刚落盘的那份"这条不变量只在这里维护。
@@ -70,15 +69,7 @@ export function 建变更环境(host: 变更宿主): 变更环境 {
             return 结果;
         },
         // 手改也要带上生理开关: 否则关着生理时, 改个名字就会把生理六列重新写回世界书条目
-        //
-        // ⚠ **读不到设置 ≠ 用户关掉了**（2026-11-19 波2「发现6」）：
-        //    `写入=false` 会删条目。而读失败时 `世界书写入` 是默认值 '关闭' → 被算成 `写入=false`。
-        //    **删是不可逆的（对用户而言），所以这一支宁可什么都不做。**
-        同步世界书: (数据, 写入) => {
-            if (!设置读取可信())
-                return undefined;
-            return syncNpcStatesWorldbook(host, 数据, 写入 ? 目标 : '关闭', undefined, getSettings(host).更新.生理监测);
-        },
+        同步世界书: (数据, 写入) => syncNpcStatesWorldbook(host, 数据, 写入 ? 目标 : '关闭', undefined, getSettings(host).更新.生理监测),
         现在: Date.now,
     };
 }
@@ -313,17 +304,6 @@ export function 导出数据(数据: 彼方数据): string {
  * 导入: 从导出的文本恢复状态。
  * 只认"名单 + NPC"这两个必需项, 其余缺就用缺省 —— 备份是给人手工搬的, 缺字段不该整份作废。
  * 走的是和手动编辑同一条通道(保存 = 写快照 + 提交界面), 写完立刻重同步世界书。
- *
- * ── 2026-11-19 波2「发现9」：**每个 NPC 的值也必须是对象** ──
- *
- * 原来只校验 `载荷.NPC` 是对象，不校验它的**每个值**。于是
- * `{"NPC": {"甲": "一段字符串"}}` 能通过校验并写进快照 ——
- * 之后选中「甲」时面板按 `card['字段']` 取值全是 undefined，人物页空白，
- * **畸形数据常驻**，而且没有任何提示说明它是怎么来的。
- *
- * 校验策略：**整份拒绝**（不是跳过坏的那条）。
- * 理由：这是"导入一份备份"，用户期待的是**完整恢复**。
- * 悄悄丢掉几条，用户会以为备份里本来就没有那个人 —— 那比拒绝更糟。
  */
 export function 导入数据(文本: string, 数据: 彼方数据, 环境: 变更环境): 变更返回 {
     let 解析: any;
@@ -339,21 +319,6 @@ export function 导入数据(文本: string, 数据: 彼方数据, 环境: 变�
         return { 数据, 说明: '未导入: 内容不是一份数据', 失败: '内容不是一份数据' };
     if (!Array.isArray(载荷.名单) || !载荷.NPC || typeof 载荷.NPC !== 'object' || Array.isArray(载荷.NPC))
         return { 数据, 说明: '未导入: 缺少「名单」或「NPC」', 失败: '缺少「名单」或「NPC」' };
-    // **逐个值校验**：每个 NPC 的卡必须是普通对象（不能是字符串/数字/数组/null）
-    const 坏条目: string[] = [];
-    for (const [名, 卡] of Object.entries(载荷.NPC as Record<string, unknown>)) {
-        if (!卡 || typeof 卡 !== 'object' || Array.isArray(卡))
-            坏条目.push(`${名}（${Array.isArray(卡) ? '数组' : 卡 === null ? 'null' : typeof 卡}）`);
-    }
-    if (坏条目.length > 0) {
-        // **说清是哪几条、为什么** —— 只说"格式不对"，用户没法修他的备份文件。
-        const 摘要 = 坏条目.slice(0, 5).join('、') + (坏条目.length > 5 ? ` 等 ${坏条目.length} 条` : '');
-        return {
-            数据,
-            说明: `未导入: 有 ${坏条目.length} 个 NPC 的状态不是对象（${摘要}）—— 每张卡必须是 { 字段: 值 } 这样的对象`,
-            失败: `NPC 状态卡格式不对: ${摘要}`,
-        };
-    }
     const 新数据: 彼方数据 = {
         ...数据,
         名单: 载荷.名单.map((名: unknown) => String(名 ?? '').trim()).filter(Boolean),

@@ -5,9 +5,8 @@
          两列看着省地方, 实际是"列高由内容决定"的伪瀑布流: 五组高度差 2~4 倍, 两列各自到底,
          中间留下大片空白(实测空掉约 35% 的栅格面积), 读的时候还得左右横跳。
          行宽由控件自己管: 说明文字 74ch、数字框 200px, 输入框才拉满。
-      ② **五组按"改得勤 → 改得少"排**: 接口 / 幕后更新 / 世界书 / 标签过滤 / 数据备份。
+      ② **六组按"改得勤 → 改得少"排**: 接口 / 幕后更新 / 世界书 / 提示词 / 标签过滤 / 数据备份。
          原来「幕后更新」一组 1154px 里塞了更新节奏 + 世界书写入两件事, 现在拆成 02 / 03。
-         ⚠ 2026-11-19: 原来是**六组**, 删掉了第四节（功能已并入「拼装」页）。
       ③ **只有三种行**: 开关行(标题+说明+右侧开关) / 字段行(120px 标签槽+控件+行内动作) /
          分段行(标签+分段控件)。同一页里出现第四种排法就算破规矩。
       ④ **说明文字一行封顶**(.bf-page-settings .bf-hint 限 74ch, 12px): 原理与长表格塞进
@@ -36,7 +35,7 @@
       <header class="bf-page-head">
         <div>
           <h2 class="bf-page-title">设置</h2>
-          <p class="bf-page-sub">接口、更新、世界书、标签与备份。改动后自动保存（停止输入约 0.3 秒落盘；「写入世界书」立即生效）。</p>
+          <p class="bf-page-sub">接口、更新、世界书、提示词、标签与备份。改动后自动保存（停止输入约 0.3 秒落盘；「写入世界书」立即生效）。</p>
         </div>
       </header>
       <!-- 01 接口 -->
@@ -46,31 +45,6 @@
           <h3 id="bf-set-api">接口</h3>
           <span class="bf-set-aside">{{ settings.接口.模型 || '未选模型' }}</span>
         </header>
-
-        <!-- ── 配置预设：放在**最上面**（2026-11-19 需求方 #310 ①）──
-             用户要求「先选预设，再改字段」。
-             原来它在所有接口字段**之后** —— 那意味着要切预设得先滚到底。 -->
-        <h4 class="bf-subgroup-title">配置预设</h4>
-        <div class="bf-set-row bf-set-row-inline">
-          <label class="bf-form-label" for="bf-preset-name">预设名</label>
-          <input
-            id="bf-preset-name"
-            v-model="presetName"
-            class="bf-input"
-            placeholder="如 DeepSeek"
-            @keyup.enter="saveApiPreset"
-          />
-          <button class="bf-btn bf-btn-sm" @click="saveApiPreset">保存当前</button>
-        </div>
-        <div v-if="presetNames.length > 0" class="bf-set-row bf-set-row-inline">
-          <label class="bf-form-label" for="bf-preset-select">已保存</label>
-          <select id="bf-preset-select" v-model="selectedPreset" class="bf-select">
-            <option value="">（选择预设加载）</option>
-            <option v-for="name in presetNames" :key="name" :value="name">{{ name }}</option>
-          </select>
-          <button class="bf-btn bf-btn-sm" @click="loadApiPreset">加载</button>
-          <button class="bf-btn bf-btn-sm" @click="deleteApiPreset">删除</button>
-        </div>
 
         <div class="bf-set-row">
           <label class="bf-form-label" for="bf-api-url">地址</label>
@@ -146,8 +120,6 @@
             {{ testing ? '测试中…' : '测试连接' }}
           </button>
         </div>
-        <!-- 白名单①「故障处理」：这是**出错时怎么办**，不是"这个按钮是什么"。
-             删了之后用户点「获取模型列表」→ 404 → 不知道下一步做什么，会以为接口坏了。 -->
         <p class="bf-hint">拉不到列表不代表接口不能用 —— 没有 /models 端点的接口直接手填模型名，再测一次连接。</p>
 
         <div class="bf-set-pairs">
@@ -191,9 +163,6 @@
           </span>
           <input v-model="settings.接口.直连" type="checkbox" class="bf-switch" />
         </label>
-        <!-- 白名单②「二选一的差别」：这是**选哪个**的依据，不是"这个开关是什么"。
-             不写，用户不知道选哪个；而选错的后果是请求失败（跨域被拦）。
-             它描述的是"开/关各是什么"，不是重复标题。 -->
         <p class="bf-hint">关：酒馆服务器转发，无跨域问题。开：浏览器直连，预设、世界书与其他扩展都碰不到请求体。</p>
 
         <label class="bf-switch-row">
@@ -203,6 +172,10 @@
           </span>
           <input v-model="settings.接口.工具通道" type="checkbox" class="bf-switch" />
         </label>
+        <p class="bf-hint">
+          让 AI 填一张表：连剧情内容也一起放进表里，对话只留一句指令。
+          <br />打开期间「流式输出」和「预填充」不起作用。
+        </p>
 
         <label class="bf-switch-row">
           <span class="bf-switch-copy">
@@ -211,6 +184,46 @@
           </span>
           <input v-model="settings.接口.请求打散" type="checkbox" class="bf-switch" />
         </label>
+        <p class="bf-hint">
+          每次请求开头加一小段随机字符，让每次请求都不一样。
+          <br />代价：变慢、更费 token。
+        </p>
+
+        <label class="bf-switch-row">
+          <span class="bf-switch-copy">
+            <b>登记归档</b>
+            <span>把"写状态"说成"登记档案"，让 AI 不评判内容</span>
+          </span>
+          <input v-model="settings.接口.登记归档" type="checkbox" class="bf-switch" />
+        </label>
+        <p class="bf-hint">
+          打开后，告诉 AI 它在登记已发生的事实，而不是在创作。这样它不会去判断内容合不合适。
+          <br /><b>代价：可能让推演变弱</b>——「接下来想做」「心事」这类字段可能变成复述剧情，而不是推断。
+          <br />建议开几次、关几次对比着看。
+        </p>
+
+        <h4 class="bf-subgroup-title">配置预设</h4>
+        <div class="bf-set-row bf-set-row-inline">
+          <label class="bf-form-label" for="bf-preset-name">预设名</label>
+          <input
+            id="bf-preset-name"
+            v-model="presetName"
+            class="bf-input"
+            placeholder="如 DeepSeek"
+            @keyup.enter="saveApiPreset"
+          />
+          <button class="bf-btn bf-btn-sm" @click="saveApiPreset">保存当前</button>
+        </div>
+        <div v-if="presetNames.length > 0" class="bf-set-row bf-set-row-inline">
+          <label class="bf-form-label" for="bf-preset-select">已保存</label>
+          <select id="bf-preset-select" v-model="selectedPreset" class="bf-select">
+            <option value="">（选择预设加载）</option>
+            <option v-for="name in presetNames" :key="name" :value="name">{{ name }}</option>
+          </select>
+          <button class="bf-btn bf-btn-sm" @click="loadApiPreset">加载</button>
+          <button class="bf-btn bf-btn-sm" @click="deleteApiPreset">删除</button>
+        </div>
+        <p class="bf-hint">把当前接口配置存成一套，换接口时一键切回。</p>
       </section>
 
       <!-- 02 幕后更新 -->
@@ -247,6 +260,7 @@
           </span>
           <input v-model="settings.更新.慢一步" type="checkbox" class="bf-switch" />
         </label>
+        <p class="bf-hint">只影响自动更新；点「立即更新」时仍然分析到最新一层。</p>
 
         <div class="bf-set-pairs">
           <div class="bf-set-row">
@@ -265,6 +279,7 @@
             />
           </div>
         </div>
+        <p class="bf-hint">每 N 条回复更新一次；更新时读取最近 N 条 AI 回复。</p>
         </div>
 
         <label class="bf-switch-row">
@@ -274,6 +289,7 @@
           </span>
           <input v-model="settings.更新.自动建档" type="checkbox" class="bf-switch" />
         </label>
+        <p class="bf-hint">关闭后只更新已追踪的人物；手动加到名单里的名字仍会建档。</p>
 
         <label class="bf-switch-row">
           <span class="bf-switch-copy">
@@ -282,6 +298,7 @@
           </span>
           <input v-model="settings.更新.追踪当前角色" type="checkbox" class="bf-switch" />
         </label>
+        <p class="bf-hint">角色写在世界书里时保持关闭。</p>
 
         <label class="bf-switch-row">
           <span class="bf-switch-copy">
@@ -295,18 +312,14 @@
           <button class="bf-text-btn bf-text-btn-danger" type="button" @click="确认清空生理数据">清空生理数据</button>
         </div>
 
-        <!-- 「预填充」已删除（2026-11-19 用户裁定）────────────────────────────
-             用户原话：「他妈的不是说了删掉预填充嘛？都自定义段了！」
-
-             **他说得对**：现在是完全可自定义的段列表 ——
-             想要"末尾补一条 assistant `{`"，自己加一段就完了，
-             而且比开关更灵活（可以补任何前缀，不只是 `{`）。
-
-             所以那个开关是：一个只能做一件事、而那件事用户现在能自己做得更好的开关。
-             它是"零件化"之后被淘汰的东西，不是"还有人用"的东西。
-
-             ⚠ 这个理由**只对彼方成立** —— 烟火与剧情导演没有段列表，
-                所以它们的「预填充」保留（共用层的参数改成可选）。 -->
+        <label class="bf-switch-row">
+          <span class="bf-switch-copy">
+            <b>预填充（prefill）</b>
+            <span>追加 assistant 消息，引导直接从 JSON 输出</span>
+          </span>
+          <input v-model="settings.更新.预填充" type="checkbox" class="bf-switch" />
+        </label>
+        <p class="bf-hint">报错时先关掉它。</p>
       </section>
 
       <!-- 03 世界书 -->
@@ -333,6 +346,8 @@
             </button>
           </div>
         </div>
+        <p class="bf-hint">角色卡主世界书随当前发言者变（群聊里每个成员一本）；聊天世界书一场聊天一本。换目标不会删掉另一本里的旧条目。</p>
+
         <h4 class="bf-subgroup-title">读取 · 给彼方接口注入世界书</h4>
         <label class="bf-switch-row">
           <span class="bf-switch-copy">
@@ -341,6 +356,7 @@
           </span>
           <input v-model="settings.更新.注入世界书" type="checkbox" class="bf-switch" />
         </label>
+        <p class="bf-hint">不读全局世界书，只读当前角色卡与聊天绑定的世界书。</p>
 
         <div class="bf-set-pairs">
           <label class="bf-field-block">
@@ -351,6 +367,7 @@
               rows="3"
               placeholder="角色名 / 人设条目名，如「苏禾」或「人设」"
             ></textarea>
+            <span class="bf-hint">每行一个条目名或关键词，每次都强制注入；匹配不到会静默跳过。</span>
           </label>
           <label class="bf-field-block">
             <span class="bf-form-label">排除条目</span>
@@ -360,14 +377,84 @@
               rows="3"
               placeholder="[mvu_update]"
             ></textarea>
+            <span class="bf-hint">每行一条，条目<b>标题或备注里含这些字就排除</b>（不分大小写），不用写全名——填一条 [mvu_update] 就能一次排掉 [mvu_update]1、[mvu_update]2…</span>
           </label>
         </div>
       </section>
 
-      <!-- 05 标签过滤: 默认收起 -->
+      <!-- 04 提示词: 默认收起(写法级调整, 不是每天都动的) -->
       <details class="bf-setting-group bf-set-group">
         <summary class="bf-set-head">
           <span class="bf-set-index" aria-hidden="true">04</span>
+          <h3 id="bf-set-prompt">提示词</h3>
+          <span class="bf-set-aside">{{ settings.提示词.自定义段.length }} 段自定义</span>
+        </summary>
+        <p class="bf-hint">内置提示词固定不动，这里只往它的锚点里插你自己写的段。</p>
+
+        <div class="bf-switch-row">
+          <span class="bf-switch-copy">
+            <b>自定义提示词段</b>
+            <span>破限也不再内置 —— 要的话在这里插一段</span>
+          </span>
+          <button class="bf-btn bf-btn-sm" type="button" @click="添加自定义段">＋ 添加一段</button>
+        </div>
+        <p v-if="!settings.提示词.自定义段.length" class="bf-hint">
+          还没有自定义段，当前请求就是内置提示词本身（不含破限）。
+        </p>
+
+        <div v-for="(seg, index) in settings.提示词.自定义段" :key="index" class="bf-set-seg-card">
+          <div class="bf-form-grid bf-set-seg-grid">
+            <label class="bf-field">
+              <span class="bf-form-label">插入位置</span>
+              <select v-model="seg.锚点" class="bf-select">
+                <option v-for="锚点 in 锚点选项" :key="锚点" :value="锚点">{{ 锚点 }}</option>
+              </select>
+            </label>
+            <label class="bf-field">
+              <span class="bf-form-label">身份（role）</span>
+              <select v-model="seg.role" class="bf-select">
+                <option value="system">system</option>
+                <option value="user">user</option>
+                <option value="assistant">assistant</option>
+              </select>
+            </label>
+          </div>
+          <textarea
+            v-model="seg.content"
+            class="bf-textarea bf-textarea-sm"
+            rows="4"
+            placeholder="这一段的内容（支持酒馆宏：user / char）"
+          ></textarea>
+          <div class="bf-set-seg-foot">
+            <label class="bf-set-inline-toggle">
+              <input v-model="seg.启用" class="bf-switch" type="checkbox" />
+              <span>启用</span>
+            </label>
+            <button class="bf-btn bf-btn-sm bf-btn-danger" type="button" @click="删除自定义段(index)">删除这一段</button>
+          </div>
+        </div>
+
+        <p class="bf-hint">
+          锚点＝消息级位置。插在「任务之前」的规则会被后面的内置段覆盖；想要更强的约束就插在「任务之后」或「最后」。
+        </p>
+        <details class="bf-fold bf-set-fold">
+          <summary>发送顺序：五个锚点落在哪</summary>
+          <pre class="bf-code bf-set-order">① 最前        你的段
+② system      身份句 + 全部更新规则（内置，含生理段：开关开时才有）
+③ 主提示词之后  你的段
+④ system      【最新用户输入·仅供场景判断】（有玩家输入时才有）
+⑤ 任务之前     你的段
+⑥ user        任务正文 ← 最长的那个内置段（正文 / 世界书 / 状态卡 / 台账 / 生理说明 / 恋爱说明 / 仅更新已追踪）
+⑦ 任务之后     你的段（以前破限的位置）
+⑧ 最后        你的段
+（末条若是 assistant 且预填充关着，会自动补一句收尾 user）</pre>
+        </details>
+      </details>
+
+      <!-- 05 标签过滤: 默认收起 -->
+      <details class="bf-setting-group bf-set-group">
+        <summary class="bf-set-head">
+          <span class="bf-set-index" aria-hidden="true">05</span>
           <h3 id="bf-set-tags">标签过滤</h3>
           <span class="bf-set-aside">{{ settings.标签.模式 }}</span>
         </summary>
@@ -412,15 +499,16 @@
         </p>
       </details>
 
-      <!-- 05 数据备份: 默认收起(救急时才用) -->
+      <!-- 06 数据备份: 默认收起(救急时才用) -->
       <details class="bf-setting-group bf-set-group">
         <summary class="bf-set-head">
-          <span class="bf-set-index" aria-hidden="true">05</span>
+          <span class="bf-set-index" aria-hidden="true">06</span>
           <h3 id="bf-set-backup">数据备份</h3>
           <span class="bf-set-aside">状态只存楼层里，删楼就没</span>
         </summary>
 
         <div class="bf-set-note">
+          <p class="bf-hint">导出复制成一段文本；导入走同一条保存通道（写快照 + 重同步世界书）。大段删楼（/cut）之后靠它恢复。</p>
           <button class="bf-btn bf-btn-sm" type="button" @click="导出数据">导出并复制</button>
         </div>
 
@@ -453,10 +541,10 @@ const {
   导出数据, 导入数据, 导入文本, 清空生理数据,
 } = use设置面板();
 
-// ---- 左侧章节目录(§4.5): 5 节 + 实时摘要; 点击平滑滚动, 滚动时反查高亮 ----
-// **2026-11-19：从 6 节变 5 节** —— 第四节删了（功能已并入「拼装」页，
-//  而用户在导航里能直接看到它，不需要设置里再放一个指路牌）。
-//  留一个指向别处的空壳，那个壳本身就是障碍。
+// ---- 左侧章节目录(§4.5): 6 节 + 实时摘要; 点击平滑滚动, 滚动时反查高亮 ----
+// 分节按 **设计稿 HTML 的 6 节**(接口/幕后更新/世界书/提示词/标签过滤/数据备份),
+// 不是 MD §4.5 表格里那版(恋爱追踪/生理状态)—— R1–R15 总原则: 冲突以 HTML + 源码为准,
+// 而 settings.ts 里根本没有「启用恋爱追踪」这个字段(恋爱是按人物标记的, 不是全局开关)。
 const 章节表 = computed(() => [
   { key: 'bf-set-api', 编号: '01', 标题: '接口与模型', 摘要: () => settings.value.接口?.模型 || '未填模型' },
   {
@@ -467,8 +555,9 @@ const 章节表 = computed(() => [
       `${settings.value.更新?.自动更新 ? '自动' : '手动'} · 每 ${settings.value.更新?.更新频率 ?? 1} 层 · 读 ${settings.value.更新?.读取最近回复数 ?? 3} 条`,
   },
   { key: 'bf-set-worldbook', 编号: '03', 标题: '世界书', 摘要: () => settings.value.更新?.世界书写入 || '关闭' },
-  { key: 'bf-set-tags', 编号: '04', 标题: '标签过滤', 摘要: () => settings.value.标签?.模式 || '排除' },
-  { key: 'bf-set-backup', 编号: '05', 标题: '数据备份', 摘要: () => 'JSON' },
+  { key: 'bf-set-prompt', 编号: '04', 标题: '提示词', 摘要: () => `${settings.value.提示词?.自定义段?.length ?? 0} 段自定义` },
+  { key: 'bf-set-tags', 编号: '05', 标题: '标签过滤', 摘要: () => settings.value.标签?.模式 || '排除' },
+  { key: 'bf-set-backup', 编号: '06', 标题: '数据备份', 摘要: () => 'JSON' },
 ]);
 
 const 根节点 = ref<HTMLElement | null>(null);
@@ -599,11 +688,16 @@ watch(() => settings.value.调试?.暴露状态, 开 => {
   if (w) delete w.__bfNavDiag;
 });
 
-/** 插入位置: 消息级锚点 —— 这一节已并入「拼装」页（2026-11-19），
- *  锚点概念只保留在迁移映射里（见 条目列表.ts 的 `迁移旧段`）。
- *  这里不再有编辑入口，所以不再声明 锚点选项 / 添加 / 删除。 */
+/** 插入位置: 消息级锚点, 与 prompts.ts 的 锚点表 同序。插不进某条消息的正文内部。 */
+const 锚点选项 = ['最前', '主提示词之后', '任务之前', '任务之后', '最后'];
+function 添加自定义段() {
+  settings.value.提示词.自定义段.push({ 锚点: '任务之后', role: 'system', content: '', 启用: true });
+}
 function 确认清空生理数据() {
   if (window.confirm('清空所有 NPC 的生理数据？好感/恋爱等其它字段不受影响，清掉的数据不可恢复。'))
     清空生理数据();
+}
+function 删除自定义段(index: number) {
+  settings.value.提示词.自定义段.splice(index, 1);
 }
 </script>

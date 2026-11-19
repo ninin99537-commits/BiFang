@@ -48,14 +48,7 @@
         </div>
         <div>
           <dt>发送 / 返回</dt>
-          <dd>
-            {{ debugLog.request.length }} / {{ debugLog.response.length }} 字
-            <!-- ── 请求形态（2026-11-19 波1）──
-                 工具通道开着时，内容几乎全在「工具说明」里，messages 只剩身份句 + 收尾。
-                 不说明这一点，用户看到「发送 14550 字」但展开只看两行，会以为日志坏了。
-                 **数字全部来自 request 的实际内容**（数分段标题），不另算。 -->
-            <span v-if="请求形态" class="bf-log-shape">{{ 请求形态 }}</span>
-          </dd>
+          <dd>{{ debugLog.request.length }} / {{ debugLog.response.length }} 字</dd>
         </div>
         <div>
           <dt>更新人物 / 移除</dt>
@@ -153,7 +146,7 @@ const {
   mainPrompt, mainPromptTime, mainPromptCount,
   consoleLines, consoleLinesReversed, consoleStore,
   规模超线, token口径, 可复制,
-  代码标签, 代码标签表, 当前代码, 已复制, 复制当前代码, 请求形态,
+  代码标签, 代码标签表, 当前代码, 已复制, 复制当前代码,
   控制台等级, 控制台等级表, 控制台显示,
   复制排障头, 复制返回开头, 本轮失败,
 } = use日志面板();

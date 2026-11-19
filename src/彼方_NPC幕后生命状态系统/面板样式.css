@@ -1682,20 +1682,6 @@
   font-size: 12.5px;
   color: var(--bf-secondary);
 }
-/* 请求形态(2026-11-19 波1): `2 条消息 + 工具说明 14513 字`
- *
- * 为什么单独一行、字号更小、颜色更淡:
- *  它是**解释**「为什么字数这么多」，不是主要信息。与上面那行数字并列会抢注意力。
- *  `bf-log-meta` 是 4 列网格（每格约 1/4 宽），这句最长约 22 个字 ——
- *  不换行会溢出，所以这里显式 block + 允许换行。 */
-.bf-log-shape {
-  display: block;
-  margin-top: 2px;
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
-  color: var(--bf-muted);
-  overflow-wrap: anywhere;
-}
 /* 四标签合一代码检视窗(§4.4 第 3 条) */
 .bf-code-box {
   margin: 0 0 20px;
@@ -2389,23 +2375,6 @@ label.bf-switch-row:hover {
   font-size: 12.5px;
   line-height: 1.65;
   color: var(--bf-muted);
-}
-/* 置灰的开关行（2026-11-19 波3）：工具通道开着时的「预填充」。
- *
- * ── 为什么需要它 ──
- *  那个开关在工具通道下**根本不生效**（`update.ts:61` 有 `&& !工具通道` 门控）。
- *  原来界面上它看起来完全可用 —— 用户打开它、报错、然后去查为什么没用。
- *
- *  `:disabled` 的 `<input>` 本身会变灰，但**整行**（标题 + 说明 + 光标）不变 ——
- *  那会让人以为"只有开关坏了，这行还能点"。所以整行一起降透明度 + 去掉 hover。 */
-.bf-switch-row.bf-switch-disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.bf-switch-row.bf-switch-disabled:hover {
-  /* 盖掉上面 label.bf-switch-row:hover 的高亮 —— 不可用的东西不该有交互反馈 */
-  background: transparent;
-  box-shadow: none;
 }
 .bf-switch {
   position: relative;
