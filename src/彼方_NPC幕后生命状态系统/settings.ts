@@ -385,6 +385,25 @@ function 记基线(host: 设置宿主, 读到的那份: any) {
 function 写回全局(host: 设置宿主, settings: any) {
     try {
         const 闸门 = 取写回闸门(host);
+        // **闸门 ②**：拒绝写"全默认值"（2026-11-19 P0，纵深防御）。
+        //
+        //  `三方基线` 已经能挡住大部分（本地 == 默认的字段不进差异）。
+        //  但如果某一支判成"本地 != 默认"，差异里就会出现该字段 —— 而它的值是默认值。
+        //  这一道是**不依赖逐字段比较**的最后保险：
+        //  **待写设置与 `Settings.parse({})` 序列化后完全相同 → 它里面没有任何用户数据
+        //   → 写它只会造成损害，没有任何好处。**
+        //
+        //  ⚠ 前提是"全局非空"：全局本来就空时，写一份默认值是无害的（甚至是对的，
+        //    那相当于"首次落盘"）。所以这一条只在"全局已有内容"时拦。
+        if (闸门.可写回()) {
+            const 默认 = Settings.parse({});
+            const 是纯默认 = JSON.stringify(settings) === JSON.stringify(默认);
+            const 远端 = 闸门.当前基线();
+            if (是纯默认 && 是非空对象(远端)) {
+                console.warn('[彼方] 检测到待写设置与默认值完全相同，已拒绝覆盖(避免清空已有配置)');
+                return;
+            }
+        }
         if (闸门.立即写(settings)) {
             invalidateReadCache();
             return;
@@ -542,8 +561,30 @@ let persistenceBound = false;
 const useSettingsStore = defineStore('bifang-settings', () => {
     // 初值只给 schema 默认值, 不碰平台; 边界挂载时调 load(host) 读真实设置。
     const settings = ref(Settings.parse({}));
+    /**
+     * **`load()` 跑完了没有**（2026-11-19 P0 闸门）。
+     *
+     * ── 为什么需要它 ──
+     *  `settings` 初值是 `Settings.parse({})` —— **全默认值**。
+     *  而 `bindPersistence` 里的 `watch` 是**立即**绑上的。
+     *  如果 `load(host)` 还没跑（或跑了但 watch 在赋值前先被别的响应式变化触发），
+     *  debounce 300ms 后就会**把一份默认值写回全局**。
+     *
+     * ── 现有保护与它的缺口 ──
+     *  `三方基线` 已经能挡住大部分：本地 == 默认的字段，基线取本地，差异里不含它。
+     *  实测三种场景（先绑后改 / 先 load 再绑 / 绑了不动）**都没覆盖**。
+     *
+     *  但那道保护依赖"本地与默认逐字段相等"。**任何让本地偏离默认的东西**
+     *  （UI 初始化写了个值、schema 的 `.transform()` 有副作用、将来加了个字段）
+     *  都会让某一支判成"本地 != 默认" → 基线取全局 → 差异里出现该字段。
+     *
+     *  **所以加一道不依赖"逐字段相等"的闸门：没 load 完，一个字节都不写。**
+     *  这是纵深防御，不是替代 `三方基线`。
+     */
+    const 已加载 = ref(false);
     function load(host: 设置宿主) {
         settings.value = loadSettings(host);
+        已加载.value = true;
     }
     /** 绑定写回: 设置变化后 debounce 300ms 写回全局(服务器端共享)。只有编辑器(.vue)需要绑定。 */
     function bindPersistence(host: 设置宿主) {
@@ -557,6 +598,12 @@ const useSettingsStore = defineStore('bifang-settings', () => {
         //   同名顶层字段用 store 值(用户当前看到的最新值)。
         let saveTimer: ReturnType<typeof setTimeout> | null = null;
         watch(settings, value => {
+            // **闸门 ①**：没 load 完不写（2026-11-19 P0）。
+            //  否则"启动时 store 是默认值"会被当成用户设置写回去。
+            if (!已加载.value) {
+                console.warn('[彼方] 设置还没加载完, 跳过这次写回(避免默认值覆盖已存配置)');
+                return;
+            }
             if (saveTimer !== null)
                 clearTimeout(saveTimer);
             saveTimer = setTimeout(() => {
@@ -568,6 +615,8 @@ const useSettingsStore = defineStore('bifang-settings', () => {
         // 300ms 防抖里外层读到的还是旧目标 —— 群聊里主世界书恒为 null, 于是弹出
         // "当前角色卡没有绑定主世界书"。这一项不该等防抖。
         watch(() => settings.value.更新.世界书写入, () => {
+            if (!已加载.value)
+                return;
             if (saveTimer !== null) {
                 clearTimeout(saveTimer);
                 saveTimer = null;
@@ -575,7 +624,7 @@ const useSettingsStore = defineStore('bifang-settings', () => {
             写回全局(host, klona(settings.value));
         });
     }
-    return { settings, load, bindPersistence };
+    return { settings, load, bindPersistence, 已加载 };
 });
 
 /**

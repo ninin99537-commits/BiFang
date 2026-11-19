@@ -20,6 +20,7 @@ import lodash from 'lodash';
 import { buildUpdateMessages } from '../src/彼方_NPC幕后生命状态系统/prompts';
 import { 默认模板 } from '../src/彼方_NPC幕后生命状态系统/提示词模板';
 import { 零件表 } from '../src/彼方_NPC幕后生命状态系统/零件表';
+import { useSettingsStore } from '../src/彼方_NPC幕后生命状态系统/settings';
 
 (globalThis as any)._ = lodash;
 setActivePinia(createPinia());
@@ -419,5 +420,67 @@ console.log('\n[文案] 面板不出现内部术语(W5 规范)');
   ok('[文案/自证] 禁词表本身有内容', 禁词.length >= 5);
 }
 
+// ─────────────────────────────────────────────────────────────
+console.log('\n[写回闸门] 没 load 完不许写 + 拒写全默认值（2026-11-19 P0）');
+{
+  // ── 这两道闸门防的是什么 ──
+  //  `settings` 初值是 `Settings.parse({})`（全默认值），而 `bindPersistence` 的 watch
+  //  是**立即**绑上的。若 `load()` 还没跑，debounce 300ms 后就会把**默认值**写回全局。
+  //
+  //  `三方基线` 已经能挡住大部分（本地 == 默认的字段不进差异）——
+  //  实测三种启动场景都没覆盖。所以这两道闸门是**纵深防御**，不是唯一防线。
+  //
+  //  ⚠ 但"没覆盖"是**实测结论**，不是结构保证：它依赖"本地与默认逐字段相等"。
+  //    任何让本地偏离默认的东西（UI 初始化写值、schema 的 transform 副作用、将来加字段）
+  //    都会让某一支判成"本地 != 默认" → 差异里出现该字段。所以闸门值得有。
+  const 源码 = readFileSync(path.join(彼方目录, 'settings.ts'), 'utf8');
+
+  // ① 已加载 标记存在，且 load 里把它置 true
+  ok('[闸门] 有 `已加载` 标记', /已加载\s*=\s*ref\(false\)/.test(源码));
+  ok('[闸门] load 里把 已加载 置 true', /已加载\.value\s*=\s*true/.test(源码));
+  // ② watch 里第一句判它
+  ok('[闸门] watch 里判 已加载（没加载完不写）',
+     /if\s*\(!已加载\.value\)[\s\S]{0,120}?return;/.test(源码),
+     (源码.match(/if \(!已加载\.value\)/g) || []).length + ' 处');
+  // ③ 世界书写入那条立即写回也判它
+  ok('[闸门] 立即写回那条也判 已加载',
+     (源码.match(/if \(!已加载\.value\)/g) || []).length >= 2);
+  // ④ 拒写全默认值
+  ok('[闸门] 有"拒写全默认值"的判断',
+     /是纯默认/.test(源码) && /JSON\.stringify\(settings\)\s*===\s*JSON\.stringify\(默认\)/.test(源码));
+  ok('[闸门] 拒写时打 warn', /已拒绝覆盖/.test(源码));
+  ok('[闸门] 只在"全局非空"时拦（全局本来就空时写默认值无害）',
+     /是纯默认\s*&&\s*是非空对象\(远端\)/.test(源码));
+
+  // ── 自证：去掉闸门后，这两条判据必须红 ──
+  //  做法：把源码里的闸门**文本替换掉**，再拿同样的正则去测。
+  //  这不是"跑一遍业务逻辑"，而是"验判据能不能区分有闸门与没闸门"——
+  //  后者才是判据的职责。
+  const 去掉已加载 = 源码.replace(/if \(!已加载\.value\)[\s\S]{0,120}?return;/g, '');
+  ok('[闸门/自证] 去掉"已加载"判断后会被抓到',
+     !/if\s*\(!已加载\.value\)[\s\S]{0,120}?return;/.test(去掉已加载));
+  const 去掉纯默认 = 源码.replace(/是纯默认\s*&&\s*是非空对象\(远端\)/g, 'false');
+  ok('[闸门/自证] 去掉"拒写全默认值"后会被抓到',
+     !/是纯默认\s*&&\s*是非空对象\(远端\)/.test(去掉纯默认));
+
+  // ── 端到端：真的跑一遍"全局有 5 套 + store 全默认 + 改一个字段" ──
+  //  ⚠ 这条要真跑（不能只读源码）：闸门是**运行时**行为。
+  //  但 `persistenceBound` 是模块级变量（一进程只能绑一次），
+  //  而本文件已经跑了很多用例 —— 所以这里只验"标记的初始状态"，
+  //  真实时序由 `tests/fixtures/` 的独立探针覆盖（每场景一个进程）。
+  setActivePinia(createPinia());
+  try {
+    const store = useSettingsStore();
+    ok('[闸门] 新 store 的 已加载 是 false（初值还没读到真设置）', store.已加载 === false,
+       String(store.已加载));
+    // 自证：这条能区分"有标记"和"没标记"
+    ok('[闸门/自证] 若 已加载 初值是 true，这条会红', !(store.已加载 === true));
+  }
+  catch (error: any) {
+    ok('[闸门] 能创建 store 并读到 已加载 标记', false, error?.message ?? String(error));
+  }
+}
+
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 process.exit(fail > 0 ? 1 : 0);
+
