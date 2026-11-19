@@ -16,6 +16,10 @@ import { getSettings } from './settings';
 import { toastError } from './toast';
 // 墓碑上限与五层容量同一处(世界字段表): 这里不引 state.ts —— 它反过来依赖本模块, 会成环
 import { 取层, 规范化事件字段, 规范化条目 } from './世界字段表';
+// 楼层快照的索引/有效性/护栏已抽到共用层（2026-11-20 C1）。
+// ⚠ **只接了读路径**：写入路径有"提交号 + 前一快照 + 失败回滚"那套协议，内核没有。
+import { 取最新有效 } from '../共用/楼层快照';
+import type { 快照存储 } from '../共用/楼层快照';
 
 export const STORAGE_KEY = '烟火';
 export const DATA_VERSION = 2;
@@ -261,54 +265,101 @@ export function loadData(excludeFloor = -1): WorldData {
     if (floors.length > 0 && lastId < 0) {
       return { ...emptyData(), ...元数据字段(meta) };
     }
-    const missingFloors: number[] = [];
-    let result: WorldData | null = null;
-    for (let i = floors.length - 1; i >= 0; i--) {
-      const floorId = floors[i];
-      if (floorId === excludeFloor || (meta.清空截止 != null && floorId <= meta.清空截止)) continue;
-      // 楼层号超过当前末层 = 楼层真的被删除了, 快照随之消亡, 从索引清理
-      if (floorId > lastId) {
-        missingFloors.push(floorId);
-        continue;
+
+    // ── 2026-11-20 C1：索引/有效性/护栏走共用内核 ──
+    //
+    //  不变量 1/2/3/4 在三家各写过一遍，现在只有一份实现（`共用/楼层快照.ts`）。
+    //  **烟火特有的语义通过策略传进去**，内核不碰它们：
+    //    · 世代一致（`snapshot.世代 === meta.世代`）
+    //    · 已接受快照链（提交号 / 前一快照）
+    //    · excludeFloor 与 清空截止
+    //
+    //  ⚠ **写入路径没接内核**：烟火有一套"提交号 + 前一快照 + 失败回滚"的协议，
+    //    内核没有那套东西。硬接会把回滚能力弄丢 —— 那是行为变更，不在本批范围。
+    //
+    //  ⚠ **`已接受快照` 可能返回"前一快照"而不是传入的那份**（候选被拒时回退到已提交版本）。
+    //    原代码 `snapshot = 已接受快照(raw, ...)` 用的是**返回值**，不是原值。
+    //    第一版我只判了真假、用了原值 → 读到了未提交的候选（`yanhuo-commit-guard` 当场抓住）。
+    const 已接受结果 = new Map<number, any>();
+    const 读结果 = 取最新有效(建快照存储(meta), {
+      跳过: (楼层) => 楼层 === excludeFloor || (meta.清空截止 != null && 楼层 <= meta.清空截止),
+      有效: (载荷, 楼层) => {
+        // 世代必须一致
+        if ((载荷.世代 ?? 0) !== (meta.世代 ?? 0))
+          return false;
+        // 提交号协议：只认"已接受"的那份；**把返回值存起来**（它可能是前一快照）
+        const 接受 = 已接受快照(载荷, meta, 分支键(楼层));
+        if (!接受)
+          return false;
+        已接受结果.set(楼层, 接受);
+        return true;
+      },
+    });
+
+    if (读结果.载荷) {
+      // 内核判出"这些层真的被删了" → 清索引（与原来同一时机）
+      if (读结果.已删楼层.length > 0) {
+        meta.快照楼层 = meta.快照楼层.filter(楼层 => !读结果.已删楼层.includes(楼层));
+        saveMeta(meta);
       }
-      let message = null;
-      try {
-        message = useHost().chat.messages(floorId)[0] ?? null;
-      } catch {
-        message = null;
-      }
-      if (!message) {
-        // 楼层在末层之内却读不到内容: 多半是聊天仍在加载中, 跳过该层且**绝不清理索引**,
-        // 等聊天就绪后的补读/事件刷新自然读回 (此前在这里误删索引, 导致世界状态"消失")
-        continue;
-      }
-      let snapshot = null;
-      try {
-        snapshot = 已接受快照(useHost().vars.get({ type: 'message', message_id: floorId })?.[STORAGE_KEY], meta, 分支键(floorId));
-      } catch {
-        snapshot = null;
-      }
-      if (!snapshot || typeof snapshot !== 'object' || snapshot.楼层 !== floorId) {
-        console.info(`[烟火] loadData: 楼层 #${floorId} 无快照或楼层号不符`);
-        continue;
-      }
-      // 快照有效性只按"楼层存在 + 快照键匹配 + 世代一致"判定, 不校验楼层内容 hash:
-      // 主 AI 楼层在快照写入后仍会变动(流式收尾 / 正则脚本后处理 / 世界书格式追加),
-      // 内容 hash 失配会把"正常游玩"误判成"楼层被编辑", 导致每轮回退空状态。
-      // 内容变了不自动回退, 由用户手动重推。
-      if ((snapshot.世代 ?? 0) !== (meta.世代 ?? 0)) continue;
-      result = { ...sanitizeSnapshot(snapshot), 锚点楼层: floorId, 处理到楼层: Number(snapshot.处理到楼层 ?? 0) || 0, 处理签名: String(snapshot.处理签名 ?? ''), ...元数据字段(meta) }; 
-      break;
+      // ⚠ 用 `已接受快照` 的返回值（可能是前一快照），不是内核给的原载荷
+      const snapshot = 已接受结果.get(读结果.楼层) ?? 读结果.载荷;
+      return {
+        ...sanitizeSnapshot(snapshot),
+        锚点楼层: 读结果.楼层,
+        处理到楼层: Number(snapshot.处理到楼层 ?? 0) || 0,
+        处理签名: String(snapshot.处理签名 ?? ''),
+        ...元数据字段(meta),
+      };
     }
-    if (missingFloors.length > 0) {
-      meta.快照楼层 = meta.快照楼层.filter(floor => !missingFloors.includes(floor));
+
+    // 没有命中 → 清掉内核判出的已删楼层，返回空状态
+    if (读结果.已删楼层.length > 0) {
+      meta.快照楼层 = meta.快照楼层.filter(楼层 => !读结果.已删楼层.includes(楼层));
       saveMeta(meta);
     }
-    return result ?? { ...emptyData(), ...元数据字段(meta) };
+    return { ...emptyData(), ...元数据字段(meta) };
   } catch (error) {
     console.warn('[烟火] 读取世界状态失败, 使用空状态:', error);
     return emptyData();
   }
+}
+
+/**
+ * 把烟火的宿主接成内核的 `快照存储`（2026-11-20 C1）。
+ *
+ * ⚠ **只接读路径用**：写入路径有"提交号 + 前一快照 + 失败回滚"那套协议，
+ *    内核没有，所以 `writeStateSnapshot` 保持原样。
+ */
+function 建快照存储(meta: ChatMeta): 快照存储 {
+  return {
+    读索引: () => ({ 快照楼层: [...meta.快照楼层] }),
+    // 读路径不该写索引 —— 真被调用说明逻辑有误，直接返回 false 让它显形
+    写索引: () => false,
+    楼层还在: (楼层) => {
+      try {
+        return !!useHost().chat.messages(楼层)[0];
+      } catch {
+        return false;
+      }
+    },
+    读楼层: (楼层) => {
+      try {
+        const raw = useHost().vars.get({ type: 'message', message_id: 楼层 })?.[STORAGE_KEY];
+        return raw && typeof raw === 'object' ? raw as any : null;
+      } catch {
+        return null;
+      }
+    },
+    写楼层: () => {
+      throw new Error('[烟火] 读路径不该写楼层');
+    },
+    删楼层: (楼层) => {
+      try { useHost().vars.del(STORAGE_KEY, { type: 'message', message_id: 楼层 }); }
+      catch { /* 楼层可能已不存在 */ }
+    },
+    末层: () => useHost().chat.lastMessageId(),
+  };
 }
 
 /** 构造楼层快照数据(楼层不存在时返回 null); v1.8 起楼层 hash 校验已移除, 不再写入 */
