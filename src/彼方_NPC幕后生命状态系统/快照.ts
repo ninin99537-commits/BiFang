@@ -532,7 +532,22 @@ function writeStateSnapshot(host: 快照宿主, data: 彼方数据, anchorFloor:
     }
     if (consumeClearLayer)
         meta.清空层 = 0;
-    saveMeta(host, meta);
+    // ⚠ **索引写失败 = 整次保存失败**（2026-11-19 P1-1）。
+    //
+    //  ── 原来为什么会骗人 ──
+    //  这里丢弃了 `saveMeta` 的返回值。而 `saveMeta` 失败时只 console + toast 然后 `return false`。
+    //  于是：**楼层快照写了、索引没更新** → 刷新后读侧找不到这一层 → **状态回退**，
+    //  而 `writeStateSnapshot` 仍然 `return true` → 界面弹「已更新」。
+    //
+    //  **用户看到的是成功，实际是数据丢了。** 这比直接报错糟得多。
+    //
+    //  ── 为什么索引失败就该整体失败 ──
+    //  索引是"哪些楼层有快照"的唯一来源；快照本体存在但索引里没有 = 读侧看不见 = 等于没存。
+    //  所以这两件事要么都成、要么都算失败。
+    if (!saveMeta(host, meta)) {
+        console.error(`[彼方] 快照索引写入失败(楼层 #${anchorFloor}): 快照本体已写但读侧找不到它, 本次按失败处理`);
+        return false;
+    }
     console.info(`[彼方] 快照写入楼层 #${anchorFloor} (NPC=${Object.keys(payload.NPC).length}个: ${Object.keys(payload.NPC).join('、') || '(空)'}; 更新次数=${payload.统计?.更新次数}; 保留快照楼层=[${meta.快照楼层.join(',')}]${consumeClearLayer ? ', 清空层已生效清零' : ''})`);
     console.info(`[彼方] 本轮更新前名单: [${(data.名单 ?? []).join('、') || '(空)'}] → 更新后名单: [${(payload.名单 ?? []).join('、') || '(空)'}]`);
     return true;
