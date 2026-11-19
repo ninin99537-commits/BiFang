@@ -167,39 +167,14 @@
 
         <label class="bf-switch-row">
           <span class="bf-switch-copy">
-            <b>工具通道</b>
-            <span>让 AI 填一张表</span>
-          </span>
-          <input v-model="settings.接口.工具通道" type="checkbox" class="bf-switch" />
-        </label>
-        <p class="bf-hint">
-          让 AI 填一张表：连剧情内容也一起放进表里，对话只留一句指令。
-          <br />打开期间「流式输出」和「预填充」不起作用。
-        </p>
-
-        <label class="bf-switch-row">
-          <span class="bf-switch-copy">
             <b>请求打散</b>
-            <span>每次请求开头加一小段随机字符</span>
+            <span>每次请求在系统提示词末尾插一段随机标记（实验性）</span>
           </span>
           <input v-model="settings.接口.请求打散" type="checkbox" class="bf-switch" />
         </label>
         <p class="bf-hint">
-          每次请求开头加一小段随机字符，让每次请求都不一样。
-          <br />代价：变慢、更费 token。
-        </p>
-
-        <label class="bf-switch-row">
-          <span class="bf-switch-copy">
-            <b>登记归档</b>
-            <span>把"写状态"说成"登记档案"，让 AI 不评判内容</span>
-          </span>
-          <input v-model="settings.接口.登记归档" type="checkbox" class="bf-switch" />
-        </label>
-        <p class="bf-hint">
-          打开后，告诉 AI 它在登记已发生的事实，而不是在创作。这样它不会去判断内容合不合适。
-          <br /><b>代价：可能让推演变弱</b>——「接下来想做」「心事」这类字段可能变成复述剧情，而不是推断。
-          <br />建议开几次、关几次对比着看。
+          让同一份提示词不再逐字节相同，用来排除"服务端按提示词字节判定是否降级"。
+          标记只加在系统提示词末尾（不加在开头，否则整段系统提示词每轮都变，前缀缓存全废）。
         </p>
 
         <h4 class="bf-subgroup-title">配置预设</h4>

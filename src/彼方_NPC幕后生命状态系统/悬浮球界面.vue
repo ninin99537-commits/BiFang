@@ -215,8 +215,6 @@ import { useStateStore } from './数据仓';
 import { useConsoleStore, useDebugStore, useMainPromptStore } from './日志仓';
 import { useUpdatingStore } from './任务中断';
 import { 加NPC, 移除NPC, 更新状态卡, 改事务状态, 新增事务, 清空彼方数据, 清空生理数据, 建变更环境, 导出数据, 导入数据 } from './数据变更';
-import { 吸收日志, 判定本轮收尾, 重试提示, 新建本轮账 } from './更新状态机';
-import type { 运行状态 as 运行状态类型, 本轮账 as 本轮账类型 } from './更新状态机';
 import { 建档字段 } from './卡字段';
 import type { NpcStateCard } from './卡字段';
 import { 一致性面板键, 建一致性面板, 事实档案 } from './一致性面板';
@@ -439,7 +437,7 @@ const 当前页名 = computed(() => tabs.find(item => item.key === tab.value)?.l
 
 // ---------- 更新状态: 三态做进面板本身(顶栏分割线光效 + 底栏状态行 + 按钮), 不弹任何浮层 ----------
 /** idle = 待机; running = 正在跑; ok = 刚成功(4.5s 后回落待机); err = 上次失败(常驻, 点状态行跳日志) */
-const 运行状态 = ref<运行状态类型>('idle');
+const 运行状态 = ref<'idle' | 'running' | 'ok' | 'err'>('idle');
 /** 本次运行已用秒数(200ms 刷新一次; 面板收起也继续跑, 重新展开直接读当前值) */
 const 已用秒 = ref(0);
 let 运行起点 = 0;
@@ -447,19 +445,9 @@ let 秒表定时器: number | null = null;
 let 回落定时器: number | null = null;
 /** 最近一次成功更新的摘要(底栏"更新成功 · 第 N 楼 · X 人已更新 · 用时 Ys"要用) */
 const 上次摘要 = ref({ 楼层: '', 人数: 0, 用时: 0 });
-/** 本轮账: 见过错(粘住, 只用于"重试过"弱提示) + 最终错误(跟随最新那条, 决定红绿)。
- *
- *  2026-11-18 修的 bug(方案 §24 W6): 以前只有一个"本轮出错"布尔量, 中途失败一次就永久粘住,
- *  于是"第一次失败、第二次重试成功"也会在收尾时判成失败 —— 明明成了, 挂红灯。
- *  现在两件事分开记: 红绿只看**最终错误**, 粘住的那份只喂弱提示。
- *  判定逻辑抽在 更新状态机.ts —— .vue 里的东西跑不进用例, 这类 bug 只能靠人手点。
- *
- *  复查 P1-11 补第三账: **本轮是否真的发过请求**。提前 return 的路径一条 error 都不写,
- *  只看"最终错误为空"会把它们判成成功、弹"已更新"绿 —— 而什么都没发生。
- *  这个事实由 `chatCompletionInner` 置真(经 任务中断.ts 的 本轮发过请求 传上来)。 */
-let 本轮账: 本轮账类型 = 新建本轮账();
-/** 本轮"重试过但成功了" —— 状态行给一句弱提示, 不挂红灯 */
-const 本轮重试过 = ref(false);
+/** 本轮是否真的出过错。为什么不直接读 debugLog.error: record() 是补丁式合并,
+ *  上一轮的 error 会一直留在日志里 —— 失败之后紧接着一次成功, 直接读它会误判成"又失败了"。 */
+let 本轮出错 = false;
 
 function 停秒表() {
   if (秒表定时器 !== null) window.clearInterval(秒表定时器);
@@ -470,10 +458,11 @@ function 停回落() {
   回落定时器 = null;
 }
 
-// 每写一条日志就更新本轮账。record() 每次都换一个新对象, 所以对象一变就说明有人写了日志。
+// 只认"本轮新写进来的"错误: record() 每次都换一个新对象, 所以对象一变就说明有人写了日志;
+// 那时带上 error 才算本轮出错(上一轮残留的那份不会触发这个 watch)。
 watch(() => debugLog.value, 日志 => {
   if (运行状态.value !== 'running') return;
-  本轮账 = 吸收日志(本轮账, 日志 as any);
+  if (日志?.error) 本轮出错 = true;
 });
 
 watch(updatingActive, active => {
@@ -482,9 +471,7 @@ watch(updatingActive, active => {
     运行状态.value = 'running';
     运行起点 = Date.now();
     已用秒.value = 0;
-    // 新一轮开始: 账清零(否则上一轮的红灯/弱提示会带进来)
-    本轮账 = 新建本轮账();
-    本轮重试过.value = false;
+    本轮出错 = false;
     停秒表();
     秒表定时器 = window.setInterval(() => {
       已用秒.value = Math.round((Date.now() - 运行起点) / 100) / 10;
@@ -495,20 +482,15 @@ watch(updatingActive, active => {
   if (运行状态.value !== 'running') return;
   const 日志 = debugLog.value;
   // 用户主动中断不是失败: 回落待机, 不挂红灯(否则"我点了中断"看起来像出错)
-  // 判定按**最终结果**, 不被中途重试污染(方案 §24 W6): 红绿只看 最终错误,
-  // "见过错"只喂弱提示 —— 否则"第一次失败、第二次成功"会挂红灯。
-  const 判定 = 判定本轮收尾({
-    发过请求: updatingStore.本轮发过请求,
-    见过错: 本轮账.见过错,
-    最终错误: 本轮账.最终错误,
-    中断: /已中断/.test(本轮账.最终错误),
-  });
-  本轮重试过.value = 判定.重试过;
-  if (判定.状态 !== 'ok') {
-    运行状态.value = 判定.状态;
+  if (本轮出错 && /已中断/.test(日志?.error ?? '')) {
+    运行状态.value = 'idle';
     return;
   }
-  const 用时 = Math.round((Date.now() - 运行起点) / 10) / 10;
+  if (本轮出错) {
+    运行状态.value = 'err';
+    return;
+  }
+  const 用时 = Math.round((Date.now() - 运行起点) / 100) / 10;
   上次摘要.value = {
     楼层: 日志?.replyIds?.length ? `第 ${日志.replyIds[日志.replyIds.length - 1]} 楼` : '',
     人数: 日志?.updatedNpcs?.length ?? 0,
@@ -548,14 +530,15 @@ const 运行文字 = computed(() => {
   }
   if (运行状态.value === 'ok') {
     const { 楼层, 人数, 用时 } = 上次摘要.value;
-    return ['更新成功', 重试提示(本轮重试过.value), 楼层, 人数 > 0 ? `${人数} 人已更新` : '无人物变化', `用时 ${用时.toFixed(1)}s`]
+    return ['更新成功', 楼层, 人数 > 0 ? `${人数} 人已更新` : '无人物变化', `用时 ${用时.toFixed(1)}s`]
       .filter(Boolean)
       .join(' · ');
   }
   if (运行状态.value === 'err') {
     const 原因 = (debugLog.value?.error ?? '').split('\n')[0].slice(0, 40) || '见日志';
     return `更新失败 · ${原因} · 点这里看日志`;
-  }  return ready.value ? `接口已就绪 · ${settings.value.接口.模型}` : '未配置模型 · 点设置填写';
+  }
+  return ready.value ? `接口已就绪 · ${settings.value.接口.模型}` : '未配置模型 · 点设置填写';
 });
 const 运行文字类 = computed(() => {
   if (运行状态.value === 'running') return 'is-running';

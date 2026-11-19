@@ -10,7 +10,7 @@ import { 剧情跨度 } from './剧情时间';
 import { getPersonaTextForNpc, 读取世界书段 } from './worldbook';
 import { 压缩记忆回溯 } from './记忆回溯';
 import { 生活状态待更新 } from './生活状态';
-import { loadData, updateClearLayer, 读取快照序列, 读取基线 } from './快照';
+import { loadData, updateClearLayer, 读取快照序列 } from './快照';
 import { 生成近期轨迹, 轨迹上限 } from './轨迹';
 import { toastWarning } from './toast';
 import { 确保周期长度 } from './生理规则';
@@ -25,10 +25,18 @@ export async function 收集本轮输入(参数: 取料参数) {
     let data = loadData(host);
     // 获取玩家/主角名, 避免给主角建档; 顺带清理历史误建的主角卡
     const playerName = host.persona.name();
-    // 主角信息(persona 描述): 主 AI 能看到 persona, 彼方此前没有读取通道——
+    // 主角信息(persona 描述): 主 AI 能看到 persona, 彼方此前没有读取渠道——
     // 主角设定不写在世界书里时, 更新 AI 完全不知道主角是谁, 这里补齐。
     // 零截断原则: 全量发送, 不在发送时砍内容(规模控制只做在源头的读取范围/账本容量)。
     const playerDescription = host.persona.description().trim();
+    if (playerName && data.NPC[playerName]) {
+        delete data.NPC[playerName];
+        data.名单 = data.名单.filter(name => name !== playerName);
+    }
+    // 手动更新不再撤销当前快照(旧行为"先回退再重填"会把本轮自动更新积累的其他 NPC
+    // 一起退回旧快照, 频繁手动更新时表现为角色/更新次数反复消失)——直接以现有状态为基底
+    // 增量重填, 更新次数照常累加。
+    const tracked = 追踪NPC(host, settings, data);
     const recentCount = Math.max(1, settings.更新.读取最近回复数 ?? 3);
     let clearLayer = data.清空层 ?? 0;
     // 清空层自适应: 清空后楼层被删到清空层以下时, 现有楼层号永远追不上清空层,
@@ -66,25 +74,6 @@ export async function 收集本轮输入(参数: 取料参数) {
     // 所以锚点写法一个字都不用改(这是选这个方案的原因)。
     if (!force && settings.更新.慢一步)
         recent = recent.slice(0, -1);
-    // 同层重跑 = 像没填过(方案 §23 W3): 锚点这一层上已经有一份状态(上一次在同一层算的),
-    // 读到的正是它 —— 它的错名字、它的幻觉会原样回到提示词里。所以这里回退到更早的基线。
-    // 判据与顺序都依赖上面算好的 recent, 所以只能放在这里(不能在开头 loadData 处)。
-    // 手动保存的快照也一起回退(用户裁定「既然重跑, 那这一层手动改的作废就作废呗」)。
-    if (recent.length > 0) {
-        const 本轮锚点 = recent[recent.length - 1].message_id;
-        if (data.锚点楼层 >= 本轮锚点) {
-            data = 读取基线(host, 本轮锚点);
-            clearLayer = data.清空层 ?? clearLayer;
-        }
-    }
-    if (playerName && data.NPC[playerName]) {
-        delete data.NPC[playerName];
-        data.名单 = data.名单.filter(name => name !== playerName);
-    }
-    // 手动更新不再撤销当前快照(旧行为"先回退再重填"会把本轮自动更新积累的其他 NPC
-    // 一起退回旧快照, 频繁手动更新时表现为角色/更新次数反复消失)——直接以现有状态为基底
-    // 增量重填, 更新次数照常累加。
-    const tracked = 追踪NPC(host, settings, data);
     if (recent.length === 0) {
         if (force) {
             toastWarning('彼方: 没有可分析的AI回复（请确认已生成至少一条AI回复）', '彼方');
@@ -214,7 +203,7 @@ export async function 收集本轮输入(参数: 取料参数) {
             }
         }
     }
-    const { messages, 工具说明 } = buildUpdateMessages({
+    const { messages } = buildUpdateMessages({
         reply,
         replyCount: recent.length,
         context,
@@ -229,15 +218,6 @@ export async function 收集本轮输入(参数: 取料参数) {
         恋爱对象名单: tracked.filter((name: string) => String(currentCards[name]?.['恋爱对象'] ?? '').trim() === '是'),
         自定义段: settings.提示词?.自定义段 ?? [], // 用户自定义段: 只插锚点, 不改内置提示词
         预填充: !!settings.更新.预填充,
-        // 消息伪装(§33): **常驻**, 没有开关。与工具通道**正交** ——
-        // 规则进表了, messages 照样是有来有回的短问答(伪装的对象是对话形状, 不是规则段落)。
-        消息伪装: true,
-        // 规则进工具(§33): 工具通道开着时, 规则/设定/字段说明整块搬进工具说明,
-        // 剧情与状态仍留在 messages。两件事各管一边, 不抢位置。
-        规则进工具: !!settings.接口.工具通道,
-        // 登记归档(§35.2 第 4 层): 开关开时身份句换成"档案写入进程"那一版。
-        // 它只改身份句, 不动任何规则正文 —— 规则一个字都不改。
-        登记归档: !!settings.接口.登记归档,
         worldbook,
         currentStoryTime: data.剧情时间,
         storyTimeHint,
@@ -276,7 +256,7 @@ export async function 收集本轮输入(参数: 取料参数) {
     });
     console.info(`[彼方] 开始更新幕后NPC状态 (使用最近 ${recent.length} 条回复: #${recent.map(message => message.message_id).join(', #')})`);
 
-    return { data, messages, 工具说明, playerName, recent, timeJump };
+    return { data, messages, playerName, recent, timeJump };
 }
 
 

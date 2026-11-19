@@ -10,12 +10,6 @@ import { ref } from 'vue';
 const useUpdatingStore = defineStore('bifang-updating', () => {
     const active = ref(false);
     const message = ref('');
-    /** 本轮是否**真的发出过请求**(复查 P1-11)。
-     *  为什么放在这里而不是从日志推: 提前 return 的路径(没填地址/没有可分析的回复)一条 error 都不写,
-     *  只看日志会把它们判成"成功", 面板弹"已更新"绿而什么都没发生。
-     *  由 `chatCompletionInner` 在真正要发请求时置真(经 发请求 闭包传下来), `start()` 时清零。
-     *  **`stop()` 不清它** —— 界面在 active 变 false 之后还要读这个值判收尾。 */
-    const 本轮发过请求 = ref(false);
     /** 进行中的任务: 任务名 → 独立的 AbortController(各自可独立取消, 不会误中断其他任务) */
     const tasks = new Map<string, AbortController>();
     const DEFAULT_TASK = '幕后';
@@ -27,13 +21,8 @@ const useUpdatingStore = defineStore('bifang-updating', () => {
         if (existing)
             existing.abort();
         tasks.set(name, controller);
-        本轮发过请求.value = false;
         refresh();
         return controller.signal;
-    }
-    /** 记一次"真的发了请求"。调用点在 chatCompletionInner 里 —— 那里才是请求真正发出去的地方。 */
-    function 记本轮发过请求() {
-        本轮发过请求.value = true;
     }
     function cancel(taskName?: string) {
         if (taskName) {
@@ -68,7 +57,7 @@ const useUpdatingStore = defineStore('bifang-updating', () => {
     function isActive(taskName?: string) {
         return taskName ? tasks.has(taskName) : tasks.size > 0;
     }
-    return { active, message, 本轮发过请求, 记本轮发过请求, start, cancel, stop, isActive, tasks };
+    return { active, message, start, cancel, stop, isActive, tasks };
 });
 
 export { useUpdatingStore };

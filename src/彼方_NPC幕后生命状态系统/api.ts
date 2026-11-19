@@ -11,7 +11,6 @@ import { getSettings } from './settings';
 import { 加打散标记, 生成打散标记 } from './请求打散';
 import { 新建请求态, 归属标记, 请求日志 } from './请求归属';
 import type { 功能状态, 请求态 } from './请求归属';
-import { 建工具定义, 建工具选择, 取回包正文, 是工具通道拒绝, 工具通道失败提示, 工具空回包提示 } from './工具通道';
 import type { Host } from './host';
 
 /** 本层需要的平台能力: 模型调用 + 变量表(读设置)。直连时只用得到 vars */
@@ -144,10 +143,7 @@ async function chatCompletionInner(host: 接口宿主, messages: any[], options?
     const 最大token = options?.接口?.最大token ?? baseCfg.最大token;
     const 直连 = options?.接口?.直连 ?? baseCfg.直连;
     const 请求打散 = options?.接口?.请求打散 ?? baseCfg.请求打散 ?? false;
-    const 工具通道 = options?.接口?.工具通道 ?? baseCfg.工具通道 ?? false;
-    // 流式在工具通道开启期间**强制关闭**(方案 §11.1): tool_call 的参数是分片到达的,
-    // 拼接是最容易产生偶发空回包的地方, 而这类 bug 极难复现。用户明确接受这个代价。
-    const 流式 = (options?.接口?.流式 ?? baseCfg.流式 ?? false) && !工具通道;
+    const 流式 = options?.接口?.流式 ?? baseCfg.流式 ?? false;
     // 展开酒馆骰子宏 {{roll 1d100}} → 真实随机数:
     // 直连 / generateRaw 都不经过酒馆的 substituteParams, 宏不会自动展开,
     // 这里手动替换, 保证受孕判定等需要随机数的场景拿到真实 D100 结果。
@@ -162,58 +158,30 @@ async function chatCompletionInner(host: 接口宿主, messages: any[], options?
             return String(total);
         }),
     }));
-    // 工具通道 = 填表 + 把剧情内容一起放进表里(§32: 原「上下文进工具」开关已并入本开关)。
-    // 为什么两件事绑在一起: 用户要的最终形态就是"整个请求看起来像一次填表", 内容留在对话里
-    // 反而半吊子。代价是无法再单独测"只换形态"与"换形态+搬内容"(§32.5 已记录, 用户接受)。
-    //
-    // §33 更正: **规则搬进工具说明, 剧情仍留在 messages** —— 伪装与工具通道正交。
-    //   规则正文由 prompts.ts 产出(它才知道怎么切), 这里只负责把它交给工具定义。
-    //   messages 那边已经是短问答了(由 buildUpdateMessages 排好), 这里不再整段替换。
-    let 工具上下文 = options?.工具说明 ?? '';
-    if (工具通道 && !工具上下文) {
-        // 兜底: 调用方没给 工具说明(比如别的调用点还没接上) —— 从当前 messages 现拼一份,
-        // 保证"开了工具通道就一定把内容放进表里", 不会静默退化成一个只换形态的半成品。
-        console.warn('[彼方] 工具通道开着但没拿到 工具说明, 已按当前 messages 现拼一份(内容可能不完整)。');
-        工具上下文 = messages
-            .map((message: any) => `【${message.role === 'system' ? '系统指令' : message.role === 'user' ? '用户' : '助手'}】\n${String(message.content ?? '')}`)
-            .join('\n\n────────\n\n');
-    }
     // 请求打散(K1): 每次请求换一个随机标记, 让同一份提示词不再字节相同。
-    // 放在最前面是为了让**首字节**就不同 —— 服务端按请求前缀识别, 前缀一样就当成同一份内容。
-    // **标记只进 messages, 绝不进工具说明**(P2-7): 工具说明每轮都变会让前缀每轮都变,
-    // 而那本来正是打散要的效果 —— 两处都加等于把同一个随机量发两遍, 且工具说明不该有随机内容。
+    // 放在宏展开**之后**: 标记本身不该被宏替换, 也不该让骰子结果每次重掷。
     if (请求打散)
         messages = 加打散标记(messages, 生成打散标记());
     // 一次更新的多次重试共用一个请求态(由调用方创建并传下来): 请求序号要连续,
     // 否则"第几次请求"这条归属信息在重试时全是 1。
     const 请求态: 请求态 = options?.请求态 ?? 新建请求态();
-    const 功能: 功能状态 = { 工具通道, 请求打散 };
+    请求态.请求序号 += 1;
+    const 功能: 功能状态 = { 工具通道: false, 请求打散 };
     const 路径 = 直连 ? '直连' : '转发';
+    // 每次**实际请求**一条日志(不是每次更新一条): 重试时才定位得到是哪一发出了问题。
+    const 日志 = 请求日志(功能, 路径, 请求态, 0);
+    if (日志)
+        console.info(日志);
+    // 归属标记: 两个开关全关时是空串 —— 老报错逐字节不变(验收 G2)。
+    const 归属 = 归属标记(功能, 路径, 请求态);
     const base = normalizeBaseUrl(地址);
     if (!base)
         throw Error('请先填写接口地址');
     if (!模型)
         throw Error('请先选择模型');
-    // 请求序号只在**校验通过、真的要去发**时才 +1(复查 §22.1 的 P2):
-    // 以前它在地址/模型校验之前就加, 于是地址为空时日志会打一条"第 1 次请求"而实际一个请求都没发 ——
-    // 归因信息自相矛盾(日志说发了、报错说没配置)。现在两者不会分叉。
-    请求态.请求序号 += 1;
-    // 每次**实际请求**一条日志(不是每次更新一条): 重试时才定位得到是哪一发出了问题。
-    // 酒馆会在模型名匹配 o1/o3/o4 / gpt-5-chat-latest 时静默删掉 tools 再发(openai.js:3000-3012),
-    // 那条路唯一的可检测痕迹就是这里的 tools 计数。
-    const 日志 = 请求日志(功能, 路径, 请求态, 工具通道 ? 建工具定义().length : 0);
-    if (日志)
-        console.info(日志);
-    if (工具通道)
-        console.info(`[彼方] 规则已搬进工具说明(${工具上下文.length} 字); messages 是 ${messages.length} 条短问答`);
-    // 归属标记: 两个开关全关时是空串 —— 老报错逐字节不变(验收 G2)。
-    const 归属 = 归属标记(功能, 路径, 请求态);
-    // "本轮真的发过请求"这个事实交给调用方(复查 P1-11): 状态机判收尾要靠它,
-    // 不能靠"有没有 error 日志"反推 —— 提前 return 的路径一条 error 都不写。
-    options?.记发过请求?.();
     // 直连: 浏览器直接 POST /chat/completions, 不经过酒馆的生成管线
     if (直连)
-        return await 直连请求(host, { base, 密钥, 模型, 温度, 最大token, 流式, messages, options, 工具通道, 工具上下文, 归属 });
+        return await 直连请求(host, { base, 密钥, 模型, 温度, 最大token, 流式, messages, options, 归属 });
     // 最后一条 user 消息作为 user_input 传入, 避免 generateRaw 追加空消息
     let userInput = '';
     const orderedPrompts = messages.map((message: any) => ({
@@ -247,52 +215,28 @@ async function chatCompletionInner(host: 接口宿主, messages: any[], options?
     if (abortSignal)
         abortSignal.addEventListener('abort', stopHandler, { once: true });
     try {
-        const 请求配置: Record<string, any> = {
-            generation_id: generationId,
-            user_input: userInput,
-            should_silence: true,
-            // 流式接收: 上游边生成边返回, 避免长时间无响应触发网关超时(504/499)
-            should_stream: 流式,
-            max_chat_history: 0,
-            custom_api: {
-                apiurl: base,
-                key: 密钥.trim(),
-                model: 模型,
-                source: 'openai',
-                temperature: options?.temperature ?? 温度,
-                max_tokens: options?.max_tokens ?? 最大token,
-            },
-            ordered_prompts: orderedPrompts,
-        };
-        // 工具通道(K2): 带一个强制调用的工具。上下文**仍留在 ordered_prompts 里** ——
-        // 搬进 description 是 (b), 留第二轮独立开关(方案 §12.1)。
-        // tools 与 json_schema 互斥, 这里只用 tools。
-        if (工具通道) {
-            请求配置.tools = 建工具定义(工具上下文);
-            请求配置.tool_choice = 建工具选择();
-        }
         const result = await Promise.race([
-            host.model.raw(请求配置 as any),
+            host.model.raw({
+                generation_id: generationId,
+                user_input: userInput,
+                should_silence: true,
+                // 流式接收: 上游边生成边返回, 避免长时间无响应触发网关超时(504/499)
+                should_stream: 流式,
+                max_chat_history: 0,
+                custom_api: {
+                    apiurl: base,
+                    key: 密钥.trim(),
+                    model: 模型,
+                    source: 'openai',
+                    temperature: options?.temperature ?? 温度,
+                    max_tokens: options?.max_tokens ?? 最大token,
+                },
+                ordered_prompts: orderedPrompts,
+            }),
             cancelBlocker,
         ]);
-        // 回包取正文: 工具参数优先 → 正文兜底 → 两者都像载荷时取更长(方案 §11.2 必需项)。
-        // 有 tool_calls 时 generateRaw 返回 GenerateDetailedResult 而不是 string,
-        // 而且 arguments 是 **JSON 字符串**, 所以这里只取原文, 二次 parse 交给既有的解析层。
-        const 取到 = 工具通道
-            ? 取回包正文({
-                工具参数: (result as any)?.tool_calls?.[0]?.function?.arguments,
-                正文: typeof result === 'string' ? result : (result as any)?.content,
-            })
-            : { 文本: typeof result === 'string' ? result : (result as any)?.content ?? '', 来源: '正文' as const };
-        const content = 取到.文本;
+        const content = typeof result === 'string' ? result : (result as any)?.content ?? '';
         if (!content) {
-            // 工具通道下"什么都没拿到"有它自己的成因(接口不认强制 tool_choice → 模型不调工具),
-            // 说清楚比丢一句"没有正文"有用 —— 这是 §18.3 对新增出口的同一要求。
-            if (工具通道) {
-                const 参数有无 = (result as any)?.tool_calls?.[0]?.function?.arguments ? '有' : '无';
-                const 正文字数 = typeof result === 'string' ? result.length : String((result as any)?.content ?? '').length;
-                throw Error(`${工具空回包提示(`(工具参数=${参数有无}, 正文=${正文字数} 字)${requestContext(host)}`)}${归属}`);
-            }
             throw Error(`响应中没有找到有效的正文内容(${requestContext(host)})。可能是推理模型把最大输出Token用尽(无正文), 或模型不支持当前参数。请调大「最大输出Token」或更换模型后重试。${归属}`);
         }
         return content;
@@ -300,13 +244,8 @@ async function chatCompletionInner(host: 接口宿主, messages: any[], options?
     catch (error) {
         if (abortSignal?.aborted)
             throw Error('用户已中断本次更新', { cause: error });
-        if (error instanceof Error && /无法连接到|接口返回错误|响应中|获取模型|工具通道/.test(error.message))
+        if (error instanceof Error && /无法连接到|接口返回错误|响应中|获取模型/.test(error.message))
             throw error;
-        // 工具相关的失败: 报错必须直接说出原因和动作, 不能只丢状态码(§18.3)。
-        // 判据只看"4xx + 工具关键词" —— 5xx / 超时 / 密钥错都与开关无关, 照旧走下面的老文案。
-        if (工具通道 && 是工具通道拒绝(error)) {
-            throw Error(`${工具通道失败提示(error)}${归属}`, { cause: error });
-        }
         // 超时通常是推理模型把时间花在思考上, 或接口负载高: 提示调小最大输出Token或换模型
         if (error instanceof Error && /Gateway|timeout|time-out|超时/i.test(error.message)) {
             throw Error(`生成超时(可能是推理模型的思考时间过长, 或接口负载高)。可调小「最大输出Token」或换更快的模型后重试。原始错误: ${error.message}${归属}`, { cause: error });
@@ -334,8 +273,6 @@ async function 直连请求(host: 接口宿主, p: {
     流式: boolean;
     messages: any[];
     options: any;
-    工具通道: boolean;
-    工具上下文: string;
     归属: string;
 }) {
     const body: Record<string, any> = {
@@ -345,12 +282,6 @@ async function 直连请求(host: 接口宿主, p: {
         temperature: p.options?.temperature ?? p.温度,
         max_tokens: p.options?.max_tokens ?? p.最大token,
     };
-    // 工具通道(K2): 与转发同一条定义、同一种 tool_choice 对象形式。
-    // 直连这边本来是自己解 SSE, 而工具通道强制关流式 —— 等于这条支路顺带少一条代码路径。
-    if (p.工具通道) {
-        body.tools = 建工具定义(p.工具上下文);
-        body.tool_choice = 建工具选择();
-    }
     const 外部 = p.options?.signal as AbortSignal | undefined;
     if (外部?.aborted)
         throw Error('用户已中断本次更新');
@@ -384,9 +315,6 @@ async function 直连请求(host: 接口宿主, p: {
         if (!response.ok) {
             const bodyText = await response.text();
             const errText = readableError(response.status, bodyText);
-            // 工具相关的失败: 直接说原因和动作(§18.3); 其余照旧 —— 文案与开关全关时逐字节一致。
-            if (p.工具通道 && 是工具通道拒绝({ status: response.status, message: errText }))
-                throw Error(`${工具通道失败提示(errText)}${p.归属}`);
             throw Error(`请求失败 (${errText})${policyBlockHint(errText)}${p.归属}`);
         }
         // 流式: 逐 token 读 SSE 并拼接 content(边生成边返回)
@@ -451,25 +379,10 @@ async function 直连请求(host: 接口宿主, p: {
         const data = await response.json();
         if (data?.error) {
             const message = typeof data.error === 'string' ? data.error : (data.error?.message ?? JSON.stringify(data.error));
-            if (p.工具通道 && 是工具通道拒绝({ message: String(message) }))
-                throw Error(`${工具通道失败提示(message)}${p.归属}`);
             throw Error(`接口返回错误: ${String(message).slice(0, 300)}${policyBlockHint(String(message))}${p.归属}`);
         }
-        // 回包取正文: 与转发路径同一套判据(工具参数优先 → 正文兜底 → 都像载荷取更长)。
-        // 直连拿得到完整的 data, 所以这里直接把 tool_calls 与 content 一起交给它。
-        const 取到 = p.工具通道
-            ? 取回包正文({
-                工具参数: data?.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments,
-                正文: extractTextContent(data?.choices?.[0]),
-            })
-            : { 文本: extractTextContent(data?.choices?.[0]), 来源: '正文' as const };
-        const content = 取到.文本;
+        const content = extractTextContent(data?.choices?.[0]);
         if (!content) {
-            if (p.工具通道) {
-                const 参数有无 = data?.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments ? '有' : '无';
-                const 正文字数 = extractTextContent(data?.choices?.[0]).length;
-                throw Error(`${工具空回包提示(`(工具参数=${参数有无}, 正文=${正文字数} 字)${requestContext(host)}`)}${p.归属}`);
-            }
             throw Error(`响应中没有找到有效的正文内容。${describeEmptyContent(data?.choices?.[0], data)}${p.归属}`);
         }
         return content;

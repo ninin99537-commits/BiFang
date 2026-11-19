@@ -29,13 +29,6 @@ async function updateNpcStates(host: Host, force = false) {
     const debugStore = useDebugStore();
     const updatingStore = useUpdatingStore();
     const abortSignal = updatingStore.start('正在分析最近楼层…', '幕后');
-    // 本轮是否真的发出过请求(复查 P1-11): 状态机判收尾要靠这个**事实**,
-    // 不能靠"有没有 error 日志"反推 —— 提前 return 的路径一条 error 都不写,
-    // 那样会被判成"成功", 面板弹"已更新"绿, 而什么都没发生。
-    // 这个事实存在 updatingStore 里(界面读它), 不在本文件留副本 —— 两份状态一定会漂。
-    const 标记发过请求 = () => {
-        updatingStore.记本轮发过请求();
-    };
     let parsed = null;
     let parseError = null;
     try {
@@ -47,7 +40,7 @@ async function updateNpcStates(host: Host, force = false) {
         }
         const 输入 = await 收集本轮输入({ host, settings, force, timing, debugStore });
         if (!输入) return; // 前置条件不满足(如没有可用的 AI 回复): 上面已经提示过用户
-        const { data, messages, 工具说明, playerName, recent } = 输入;
+        const { data, messages, playerName, recent } = 输入;
         // 一轮更新一个请求态: 多次重试共用(请求序号连续), 但不跨轮、不进 pinia、不落盘。
         const 请求态 = 新建请求态();
         let 请求结果;
@@ -55,16 +48,13 @@ async function updateNpcStates(host: Host, force = false) {
             // 取模型输出这一段已独立成模块(模型请求.ts): 发请求 → 解析 → 校验, 不合格就原样重试
             请求结果 = await 请求并校验({
                 messages,
-                // 预填充与工具通道互斥(方案 §16 方案 5): 预填充会在末位补一条 assistant '{',
-                // 与"必须调工具"语义打架; 而共用层的"拼回"在彼方侧关不掉, 只能让预填充恒为 false。
-                // **不改用户设置** —— 只是本次不生效, 开关在面板上仍是用户设的那个值。
-                预填充: settings.更新.预填充 && !settings.接口.工具通道,
+                预填充: settings.更新.预填充,
                 现有卡: data.NPC ?? {},
                 名单: data.名单 ?? [],
                 玩家名: playerName,
                 自动建档: settings.更新.自动建档 !== false,
                 signal: abortSignal,
-                发请求: (messages, options) => chatCompletion(host, messages, { ...options, 请求态, 工具说明, 记发过请求: () => 标记发过请求() }),
+                发请求: (messages, options) => chatCompletion(host, messages, { ...options, 请求态 }),
                 记日志: (partial) => debugStore.record(partial),
                 报进度: (文字) => { updatingStore.message = 文字; },
                 // 共用请求层在每个出口(成功/失败/中断)都会通知, 失败日志因此不会写成 0 次 0 秒
