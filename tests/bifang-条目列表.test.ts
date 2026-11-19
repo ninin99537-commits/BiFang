@@ -776,22 +776,17 @@ console.log('\n[迁移] 旧「按锚点的自定义段」按块边界迁成条�
     eq('[迁移] 段里有 null → 不炸', 迁移旧段({ 自定义段: [null] }), 0);
   }
 
-  // ⑤b 旧的「零件位置」也迁成条目（消掉第二条搬迁路径）
+  // ⑤b 旧的「零件位置」字段已被彻底删除（2026-11-19 收口）——
+  //     它现在**什么都不做**：迁移不认它，收集输入也不读它。
+  //     断言"传了也没反应"，比断言"字段不存在"更强：字段可能是 zod 的未知键，但行为必须无效。
   {
     const 提示词: any = { 零件位置: { D2: '最前' }, 自定义段: [] };
-    const 数 = 迁移旧段(提示词);
-    eq('[迁移] 零件位置 也迁了', 数, 1);
-    eq('[迁移] 零件位置 已清空', 提示词.零件位置, {});
-    const 新条目 = 提示词.条目[0];
-    eq('[迁移] 迁成的是只含占位符的条目', 新条目.content, '{{彼方:世界书}}');
-    eq('[迁移] 它的 role 是 system', 新条目.role, 'system');
-    // 位置在最前
-    eq('[迁移] 它在顺序表最前', 提示词.条目顺序[0], 新条目.id);
-    // 不可搬迁的零件被忽略（R6 由自己的开关控制）
-    const 提示词2: any = { 零件位置: { R6: '最前' }, 自定义段: [] };
-    eq('[迁移] 不可搬迁的 R6 不迁', 迁移旧段(提示词2), 0);
-    // 自证: 迁完之后旧路径不再生效（字段已空）
-    eq('[迁移/自证] 迁完后 零件位置 是空对象', 提示词.零件位置, {});
+    eq('[迁移] 零件位置 不再触发迁移', 迁移旧段(提示词), 0);
+    eq('[迁移] 它不再产出条目', 提示词.条目, undefined);
+    // 自证: 若迁移还认它，上面第一条会红
+    ok('[迁移/自证] 认它的旧版本会产出 1 条', 迁移旧段({
+      自定义段: [{ 锚点: '最前', role: 'system', content: 'x' }],
+    }) === 1);
   }
 
   // ⑥ 迁完之后内容真的进了产物
@@ -824,92 +819,37 @@ console.log('\n[迁移] 旧「按锚点的自定义段」按块边界迁成条�
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[旧路] 临时双路的三个条件（需求方 2026-11-19 裁定）');
+console.log('\n[旧路] 零件位置 那条旧搬迁路径已被删除（2026-11-19 收口）');
 {
-  const { 零件位置转段 } = await import('../src/彼方_NPC幕后生命状态系统/更新输入');
+  // ── 为什么现在能删（#215 ④）──
+  //  `零件位置` 曾经是"表格 + 下拉搬家"那一版的产物。删它会让**还没迁移**的旧设置
+  //  静默丢掉搬迁意图，所以上一批留了它 + 写了删除条件。
+  //
+  //  现在删的理由：迁移已随版本发布，且 `getSettings` **每次更新都会跑迁移**
+  //  （不是只在打开设置页时跑）。所以"永远不迁移"的用户不存在 —— 他只要用一次彼方，
+  //  迁移就跑过了。留着它才是风险：两条搬迁路径，后来的维护者不知道哪条在生效。
+  const 更新输入源码 = readFileSync(path.join(彼方目录, '更新输入.ts'), 'utf8');
+  const 条目源码 = readFileSync(path.join(彼方目录, '条目列表.ts'), 'utf8');
+  const 设置源码 = readFileSync(path.join(彼方目录, 'settings.ts'), 'utf8');
 
-  // ① **字段为空时必须产出 0 段** —— 否则这条"死路"不是死的：
-  //    空数据上它还在做事，而没人看得出来。
-  eq('[旧路] 空对象 → 0 段', 零件位置转段({}), []);
-  eq('[旧路] undefined → 0 段', 零件位置转段(undefined as any), []);
-  eq('[旧路] null → 0 段', 零件位置转段(null as any), []);
-  // 自证: 非空时必须产出段（否则上面三条等于没测）
-  eq('[旧路/自证] 非空 → 1 段', 零件位置转段({ D2: '最前' }).length, 1);
+  // ① 函数没了
+  ok('[旧路] 零件位置转段 已删除', !/export function 零件位置转段/.test(更新输入源码));
+  // ② 字段没了
+  ok('[旧路] settings 里 零件位置 字段已删除', !/零件位置:\s*z\.record/.test(设置源码));
+  // ③ 迁移里搬它的那段没了
+  ok('[旧路] 迁移旧段 里不再搬 零件位置', !/旧位置/.test(条目源码) && !/提示词\.零件位置/.test(条目源码));
+  // ④ 收集输入里不再有第二条翻译路径
+  ok('[旧路] 收集本轮输入 只透传用户手写的段', !/零件位置转段\s*\(/.test(更新输入源码));
+  ok('[旧路] 自定义段 只来自 settings.提示词.自定义段',
+    /自定义段:\s*settings\.提示词\?\.自定义段\s*\?\?\s*\[\]/.test(更新输入源码),
+    更新输入源码.slice(更新输入源码.indexOf('自定义段:'), 更新输入源码.indexOf('自定义段:') + 80));
 
-  // ② **注释里写明删除条件**，要具体到能执行
-  const 源码 = readFileSync(path.join(彼方目录, '更新输入.ts'), 'utf8');
-  const 函数段 = 源码.slice(源码.indexOf('export function 零件位置转段'), 源码.indexOf('export async function 收集本轮输入'));
-  const 注释段 = 源码.slice(源码.indexOf('把面板里配的「零件位置」'), 源码.indexOf('export function 零件位置转段'));
-  ok('[旧路] 注释里有「删除条件」', /删除条件/.test(注释段));
-  // 验收给的可执行版本: "存量用户里不再有 零件位置 非空的设置后，下一版删"
-  ok('[旧路] 删除条件是可执行的（写了"下一版删"）', /下一版删/.test(注释段), 注释段.slice(0, 200));
-  ok('[旧路] 删除条件写明要一起删哪些东西',
-    /零件位置/.test(注释段) && /零件位置转段|本函数/.test(注释段));
+  // ⑤ 自证: 若把函数写回来，第 1 条会红
+  ok('[旧路/自证] 写回 零件位置转段 会被抓到',
+    /export function 零件位置转段/.test('export function 零件位置转段(x) {}'));
 
-  // ②b **删除条件也写进了 CHANGELOG**（注释没人读，那里才是做版本时看得见的）
-  const 日志 = readFileSync(path.join(彼方目录, 'CHANGELOG.md'), 'utf8');
-  ok('[旧路] CHANGELOG 有待办一节', /待办[\s\S]{0,20}下一版要删/.test(日志));
-  ok('[旧路] CHANGELOG 写了触发条件（"下一版删" + 观察判据）',
-    /下一版删/.test(日志) && /来自旧设置迁移/.test(日志));
-  ok('[旧路] CHANGELOG 列了要一起删的三处',
-    /零件位置转段/.test(日志) && /零件位置/.test(日志) && /迁移旧段/.test(日志));
-  // 自证: 若把那一节删了，第一条会红
-  ok('[旧路/自证] 没有那一节时判据会红', !/待办[\s\S]{0,20}下一版要删/.test('# 更新日志\n\n## 2026-11-14'));
-
-  // ③ **走旧路径的结果要在 V1 清单里标出来**
-  ok('[旧路] 段上带 来自旧设置 标记', /来自旧设置:\s*true/.test(函数段));
-  const 提示词源码 = readFileSync(path.join(彼方目录, 'prompts.ts'), 'utf8');
-  ok('[旧路] 引用结论里有 来自旧设置 集合', /来自旧设置:\s*new Set/.test(提示词源码));
-  ok('[旧路] 清单项会写「来自旧设置迁移」备注', /（来自旧设置迁移）/.test(提示词源码));
-
-  // ③b 端到端: 真的走一遍，清单里能看到这个备注
+  // ⑥ 用户手写的占位符段仍然生效（删掉旧路不能把这条路也删了）
   {
-    const 造 = (自定义段: any[]) => ({
-      reply: '剧情', replyCount: 1, context: '', timeJump: '', tracked: ['甲'], inSceneHint: [],
-      currentCards: { 甲: { 当前在做: 'x' } }, autoTrackEnabled: true, physioEnabled: false,
-      恋爱对象名单: [], 预填充: false, worldbook: 'WB-旧路', currentStoryTime: '',
-      storyTimeHint: '', storySpan: '', recentTrace: '', playerName: 'P', playerDescription: '',
-      展开宏: (t: string) => t, 自定义段,
-    });
-    const 跑 = (自定义段: any[]) => {
-      const 原I = console.info;
-      const 原T = console.table;
-      const 原W = console.warn;
-      console.info = () => {};
-      console.table = () => {};
-      console.warn = () => {};
-      try {
-        return buildUpdateMessages(造(自定义段) as any);
-      }
-      finally {
-        console.info = 原I;
-        console.table = 原T;
-        console.warn = 原W;
-      }
-    };
-    const 项 = (跑(零件位置转段({ D2: '最前' })).拼装清单 ?? []).find((x: any) => x.代号 === 'D2');
-    eq('[旧路] D2 在清单里被标成被引用', 项?.状态, '被引用');
-    eq('[旧路] 清单备注写明来自旧设置', 项?.备注, '（来自旧设置迁移）');
-    // 自证: 换成用户手写的段，备注不该出现（证明这个标记不是永远为真）
-    const 项2 = (跑([{ 锚点: '最前', role: 'system', content: '{{彼方:世界书}}', 启用: true }]).拼装清单 ?? [])
-      .find((x: any) => x.代号 === 'D2');
-    eq('[旧路/自证] 用户手写的段不带这个备注', 项2?.备注, undefined);
-  }
-
-  // ③c UI 真的显示了这个备注（否则标记只在数据里，用户看不到）
-  const 页面源码 = readFileSync(path.join(彼方目录, '页面-拼装.vue'), 'utf8');
-  ok('[旧路] 拼装页显示 备注 字段', /项\.备注/.test(页面源码));
-  ok('[旧路] 拼装页有 V1 清单表', /bf-parts-table/.test(页面源码) && /拼装清单/.test(页面源码));
-
-  // ④ **迁移产生的条目也带标记，且清单里查得到**（需求方 2026-11-19 最后一批）
-  //    "一次性的 warn 等于没有 —— 用户当时没在看，之后想查就查不到。"
-  {
-    const { 迁移旧段 } = await import('../src/彼方_NPC幕后生命状态系统/条目列表');
-    const 提示词: any = { 自定义段: [{ 锚点: '最前', role: 'system', content: '{{彼方:世界书}}' }] };
-    迁移旧段(提示词);
-    eq('[旧路] 迁移产生的条目带 来自旧设置 标记', 提示词.条目[0].来自旧设置, true);
-
-    // 端到端: 把它喂给拼装，清单里 D2 要有备注
     const 原I = console.info;
     const 原T = console.table;
     const 原W = console.warn;
@@ -921,11 +861,10 @@ console.log('\n[旧路] 临时双路的三个条件（需求方 2026-11-19 裁�
       r = buildUpdateMessages({
         reply: '剧情', replyCount: 1, context: '', timeJump: '', tracked: ['甲'], inSceneHint: [],
         currentCards: { 甲: { 当前在做: 'x' } }, autoTrackEnabled: true, physioEnabled: false,
-        恋爱对象名单: [], 预填充: false, worldbook: 'WB-迁移', currentStoryTime: '',
+        恋爱对象名单: [], 预填充: false, worldbook: 'WB-手写', currentStoryTime: '',
         storyTimeHint: '', storySpan: '', recentTrace: '', playerName: 'P', playerDescription: '',
         展开宏: (t: string) => t,
-        条目: 提示词.条目,
-        条目顺序: 提示词.条目顺序,
+        自定义段: [{ 锚点: '最前', role: 'system', content: '{{彼方:世界书}}', 启用: true }],
       } as any);
     }
     finally {
@@ -934,33 +873,9 @@ console.log('\n[旧路] 临时双路的三个条件（需求方 2026-11-19 裁�
       console.warn = 原W;
     }
     const 项 = (r.拼装清单 ?? []).find((x: any) => x.代号 === 'D2');
-    eq('[旧路] 迁移来的条目引用 D2 时，清单标了来源', 项?.备注, '（来自旧设置迁移）');
-    // 自证: 用户手写同内容的条目不该带标记
-    const 原I2 = console.info;
-    const 原T2 = console.table;
-    const 原W2 = console.warn;
-    console.info = () => {};
-    console.table = () => {};
-    console.warn = () => {};
-    let r2;
-    try {
-      r2 = buildUpdateMessages({
-        reply: '剧情', replyCount: 1, context: '', timeJump: '', tracked: ['甲'], inSceneHint: [],
-        currentCards: { 甲: { 当前在做: 'x' } }, autoTrackEnabled: true, physioEnabled: false,
-        恋爱对象名单: [], 预填充: false, worldbook: 'WB-迁移', currentStoryTime: '',
-        storyTimeHint: '', storySpan: '', recentTrace: '', playerName: 'P', playerDescription: '',
-        展开宏: (t: string) => t,
-        条目: [{ id: 'u1', role: 'system', content: '{{彼方:世界书}}', 启用: true }],
-        条目顺序: ['u1'],
-      } as any);
-    }
-    finally {
-      console.info = 原I2;
-      console.table = 原T2;
-      console.warn = 原W2;
-    }
-    const 项2 = (r2.拼装清单 ?? []).find((x: any) => x.代号 === 'D2');
-    eq('[旧路/自证] 用户自己写的同内容条目不标来源', 项2?.备注, undefined);
+    eq('[旧路] 手写占位符仍然被引用（这条路没被误删）', 项?.状态, '被引用');
+    // 手写的不带"来自旧设置"标记
+    eq('[旧路] 手写的不标来源', 项?.备注, undefined);
   }
 }
 
@@ -1024,13 +939,12 @@ console.log('\n[落盘] 迁移必须真的写进存储（不落盘 = 没迁）')
   const { getSettings, invalidateReadCache } = await import('../src/彼方_NPC幕后生命状态系统/settings');
   const { 彼方假宿主 } = await import('./helpers/彼方假宿主');
 
-  /** 造一个带旧数据的假宿主：`自定义段` 里有一段，`零件位置` 里搬了一个零件 */
+  /** 造一个带旧数据的假宿主：`自定义段` 里有一段（`零件位置` 已删除，不再造它） */
   const 造旧宿主 = () => {
     const { host, 存 } = 彼方假宿主({ 模型回复: [] });
     存.global['彼方_settings'] = {
       提示词: {
         自定义段: [{ 锚点: '最后', role: 'system', content: '旧段-标记' }],
-        零件位置: { D2: '最前' },
       },
     };
     invalidateReadCache();
@@ -1044,12 +958,9 @@ console.log('\n[落盘] 迁移必须真的写进存储（不落盘 = 没迁）')
     const 落盘后 = 存.global['彼方_settings'];
     eq('[落盘] 存储里的 自定义段 已清空', 落盘后?.提示词?.自定义段, []);
     eq('[落盘] 存储里出现了 条目', Array.isArray(落盘后?.提示词?.条目), true);
-    eq('[落盘] 存储里的 零件位置 已清空', 落盘后?.提示词?.零件位置, {});
     // 内容没丢（这是"迁移不是删除数据"的硬证据）
     const 内容们 = (落盘后?.提示词?.条目 ?? []).map((x: any) => x.content);
     ok('[落盘] 旧段的内容仍在（迁移不是删除数据）', 内容们.includes('旧段-标记'), JSON.stringify(内容们));
-    ok('[落盘] 零件位置的搬迁意图仍在（变成占位符条目）',
-      内容们.includes('{{彼方:世界书}}'), JSON.stringify(内容们));
 
     // **再读一次**必须看到迁移后的（不是又回到旧数据）
     invalidateReadCache();
@@ -1083,7 +994,7 @@ console.log('\n[落盘] 迁移必须真的写进存储（不落盘 = 没迁）')
   // ③ 没有旧数据时**一次都不写**（别在纯读路径上制造写流量）
   {
     const { host, 存 } = 彼方假宿主({ 模型回复: [] });
-    存.global['彼方_settings'] = { 提示词: { 自定义段: [], 零件位置: {} } };
+    存.global['彼方_settings'] = { 提示词: { 自定义段: [] } };
     invalidateReadCache();
     let 写入次数 = 0;
     const 原update = host.vars.update;

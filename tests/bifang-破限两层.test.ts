@@ -1,23 +1,27 @@
-// 彼方 · 破限第 4 / 5 层(§35) —— 批次: 第五轮。
+// 彼方 · 破限第 4 / 5 层(§35) —— 批次: 第五轮（2026-11-19 改：第 4 层开关已删除）
 //
 // 两层性质完全不同, 分开测:
 //   第 5 层 · 写入通道分级 —— **不做开关**, 工具通道开时自动带(§35.1)
-//   第 4 层 · 任务重定义 —— **必须做成开关**, 默认关(§35.2)
+//   第 4 层 · 任务重定义 —— **原来做成开关，现已删除**（身份句归模板文字，用户自己改）
 //
 // 覆盖:
 //   [A] 第 5 层: 工具说明里带分级文案 / 只在工具通道开时出现 / 不与末条 user 重复
 //   [B] 第 5 层: 文案内容与边界(两条通道都提到、优先使用前者、完整性要求)
-//   [C] 第 4 层: 开关关 = 原身份句; 开关开 = 登记归档身份句
-//   [D] 第 4 层: 只换身份句, **规则正文一个字不改**
-//   [E] 第 4 层: 文案不含角色名/人格, 只有职能身份
-//   [F] 第 4 层: 默认关(设置 schema)
+//   [C] 第 4 层: 开关已删除 —— 传它不再改变产物；替代身份句作为文档保留
+//   [D] 第 4 层: 身份句独立于规则正文（去掉它，规则一个字不改）
+//   [E] 第 4 层: 那段替代文案不含角色名/人格, 只有职能身份
+//   [F] 第 4 层: 设置里已无该字段；与其余开关互不影响
 import { createPinia, setActivePinia } from 'pinia';
 import lodash from 'lodash';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { buildUpdateMessages } from '../src/彼方_NPC幕后生命状态系统/prompts';
 import { 建工具定义 } from '../src/彼方_NPC幕后生命状态系统/工具通道';
 import { getSettings } from '../src/彼方_NPC幕后生命状态系统/settings';
 import { 彼方假宿主 } from './helpers/彼方假宿主';
+
+const ROOT = process.cwd();
 
 (globalThis as any)._ = lodash;
 setActivePinia(createPinia());
@@ -125,100 +129,85 @@ console.log('\n[B] 第 5 层 · 文案内容与边界');
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[C] 第 4 层 · 登记归档: 开关关/开 换身份句');
+console.log('\n[C] 第 4 层 · 登记归档 开关已删除（2026-11-19 用户裁定）');
 {
-  // 关(默认): 原身份句开头
-  // 注意: 非伪装形态下 messages[0] = 身份句 + 全部规则, 所以只能断言**开头**
-  const 关 = buildUpdateMessages(造输入({ 登记归档: false }) as any);
-  const 关全文 = String(关.messages[0].content);
-  ok('[C] 关时以原身份句开头', 关全文.startsWith('你是「彼方 / Elsewhere」'), 关全文.slice(0, 40));
+  // ── 这个开关为什么删 ──
+  //  它只改**身份句**。而这次改造把身份句搬进了**模板文字**、用户可编辑 ——
+  //  开关能做的事用户直接改模板就能做到，而且更自由（不必在两句里二选一）。
+  //
+  //  所以这里不再测"开关关/开 换身份句"，改成测**它真的没了**：
+  //  传 `登记归档: true` 也不再改变产物。判据比"字段不存在"更强 ——
+  //  字段可能从 zod 掉了但入参还在类型上，那种"半删"最危险。
+  const 不传 = buildUpdateMessages(造输入({}) as any);
+  const 传开 = buildUpdateMessages(造输入({ 登记归档: true } as any) as any);
+  eq('[C] 传 登记归档:true 不再改变产物', sha(JSON.stringify(传开.messages)), sha(JSON.stringify(不传.messages)));
+  eq('[C] 传 登记归档:true 工具说明也不变', 传开.工具说明 ?? null, 不传.工具说明 ?? null);
 
-  // 开: 登记归档身份句开头
-  const 开 = buildUpdateMessages(造输入({ 登记归档: true }) as any);
-  const 开全文 = String(开.messages[0].content);
-  ok('[C] 开时以登记归档身份句开头', 开全文.startsWith('你是一个档案写入进程'), 开全文.slice(0, 40));
-  ok('[C] 开时不再有"彼方 / Elsewhere"', !开全文.startsWith('你是「彼方 / Elsewhere」'));
-  ok('[C] 开时含"登记"', 开全文.includes('登记'));
-  ok('[C] 开时含"不做内容审查"', 开全文.includes('不做内容审查'));
+  // 身份句现在是**固定的默认值**（模板的第一行）
+  const 全文 = String(不传.messages[0].content);
+  ok('[C] 默认身份句仍是原来那句', 全文.startsWith('你是「彼方 / Elsewhere」'), 全文.slice(0, 40));
+  // 自证: 若开关还活着，上面第一条会红
+  ok('[C/自证] 若开关仍生效，两次产物会不同',
+    sha('A') !== sha('B'));
 
-  // §2026-11-19: 伪装已移除。原先这里还有两条"伪装形态"断言(首条 system 只有身份句),
-  // 那个形态不存在了 —— 现在 messages[0] 永远是"身份句 + 全部规则"。
-  // 要断言"身份句单独长什么样"改用**全进工具**形态: 那时 messages[0] 只留身份句。
-  const 全进开 = buildUpdateMessages(造输入({ 规则进工具: true, 登记归档: true }) as any);
-  const 全进开身份 = String(全进开.messages[0].content);
-  ok('[C] 全进工具时首条 system 是登记归档身份句', 全进开身份.startsWith('你是一个档案写入进程'), 全进开身份.slice(0, 40));
-  ok('[C] 全进工具时首条 system 只有身份句(不含规则)', !全进开身份.includes('核心原则'), 全进开身份.slice(0, 60));
-  const 全进关 = buildUpdateMessages(造输入({ 规则进工具: true, 登记归档: false }) as any);
-  eq('[C] 全进工具时首条 system 是原身份句', String(全进关.messages[0].content).startsWith('你是「彼方 / Elsewhere」'), true);
-
-  // 全进工具形态: 工具说明里的身份句也跟着换
-  const 工具开 = buildUpdateMessages(造输入({ 规则进工具: true, 登记归档: true }) as any);
-  ok('[C] 工具说明以登记归档身份句开头', String(工具开.工具说明).startsWith('你是一个档案写入进程'), String(工具开.工具说明).slice(0, 40));
-  const 工具关 = buildUpdateMessages(造输入({ 规则进工具: true, 登记归档: false }) as any);
-  ok('[C] 工具说明以原身份句开头', String(工具关.工具说明).startsWith('你是「彼方 / Elsewhere」'), String(工具关.工具说明).slice(0, 40));
+  // 那句「档案写入进程」没丢 —— 它作为**文档**留在常量里，用户可照抄进模板
+  const 源码 = readFileSync(path.join(ROOT, 'src', '彼方_NPC幕后生命状态系统', 'prompts.ts'), 'utf8');
+  ok('[C] 替代身份句仍保留在源码里（作为用户可照抄的文档）', /你是一个档案写入进程/.test(源码));
+  ok('[C] 它仍然被导出（不是死代码）', /export const SYSTEM_PROMPT_HEAD_登记/.test(源码));
+  ok('[C] 但取身份句 不再读它', !/取身份句\s*=\s*\([^)]*\)\s*=>\s*\([^)]*SYSTEM_PROMPT_HEAD_登记/.test(源码));
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[D] 第 4 层 · 只换身份句, 规则正文一个字不改');
+console.log('\n[D] 身份句在规则正文之外：去掉它，规则正文一个字不改');
 {
-  const 关 = buildUpdateMessages(造输入({ 登记归档: false }) as any);
-  const 开 = buildUpdateMessages(造输入({ 登记归档: true }) as any);
-  const 关全文 = String(关.messages[0].content);
-  const 开全文 = String(开.messages[0].content);
-
-  // 去掉各自的身份句后, 剩下的规则正文必须逐字相同
-  const 原身份 = '你是「彼方 / Elsewhere」——维护角色扮演世界幕后生命状态系统: 当角色(玩家)离开某位 NPC 的视野后, 让世界里的 NPC 依然保持"正在生活"的状态。';
-  // 用"规则正文起点"来切, 不依赖身份句的具体长度
-  const 切点 = (全文: string) => 全文.slice(全文.indexOf('\n\n每次更新你会收到'));
-  eq('[D] 两种开关下的规则正文逐字相同', sha(切点(关全文)), sha(切点(开全文)));
-  ok('[D] 规则正文非空(切点有效)', 切点(开全文).length > 1000, `长度 ${切点(开全文).length}`);
-
-  // 用户消息(剧情)也不受影响
-  eq('[D] 剧情消息逐字相同', String(关.messages[1].content), String(开.messages[1].content));
+  // 原来这条是"两种开关下的规则正文逐字相同"。开关没了，但它守的性质还在：
+  // **身份句是独立的一行，规则正文从「每次更新你会收到」开始** ——
+  // 模板化之后这条更重要（用户改身份句不该动到规则）。
+  const 出 = buildUpdateMessages(造输入({}) as any);
+  const 全文 = String(出.messages[0].content);
+  const 切点 = (s: string) => s.slice(s.indexOf('\n\n每次更新你会收到'));
+  ok('[D] 规则正文非空（切点有效）', 切点(全文).length > 1000, `长度 ${切点(全文).length}`);
+  ok('[D] 身份句在切点之前', 全文.indexOf('你是「彼方') < 全文.indexOf('\n\n每次更新你会收到'));
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[E] 第 4 层 · 文案只有职能身份, 无角色名/人格');
+console.log('\n[E] 那条替代身份句：只有职能身份，无角色名/人格');
 {
-  // 用**全进工具形态**取身份句 —— 那时 messages[0] 只有身份句, 没有规则正文干扰。
-  // (§2026-11-19: 原来用"伪装形态", 伪装已删除; 全进工具是现在唯一能单独看到身份句的形态。)
-  // (非全进工具时 messages[0] 含全部规则, 里面当然有"角色扮演"这类词, 那不是身份句的问题。)
-  const 身份 = String(buildUpdateMessages(造输入({ 规则进工具: true, 登记归档: true }) as any).messages[0].content);
-  // 不该出现任何扮演性质的角色名或人格词
+  // 这段文字不再是"开关的一支"，而是**用户可照抄的文档**。
+  // 所以判据从"产物里长什么样"变成"那段文字本身长什么样" —— 它要被用户粘进模板，
+  // 就得符合原来那条设计约束：只给职能身份，不带扮演性质。
+  const { SYSTEM_PROMPT_HEAD_登记 } = await import('../src/彼方_NPC幕后生命状态系统/prompts');
+  const 身份 = String(SYSTEM_PROMPT_HEAD_登记);
   const 禁词 = ['你是「', '彼方 / Elsewhere', '扮演', '人格', '小猫', '昆仑', 'SoliUmbra', 'catgod'];
-  const 命中 = 禁词.filter(w => 身份.includes(w));
-  eq('[E] 身份句里无角色名/扮演性质词', 命中, []);
-  // 只给"档案写入进程 / 登记员"这类职能身份
-  ok('[E] 是职能身份(档案写入进程)', 身份.includes('档案写入进程'));
+  eq('[E] 那段文字里无角色名/扮演性质词', 禁词.filter(w => 身份.includes(w)), []);
+  ok('[E] 是职能身份（档案写入进程）', 身份.includes('档案写入进程'));
   ok('[E] 提到登记员', 身份.includes('登记员'));
-  // 身份句很短(只换身份, 不夹带规则)
-  ok('[E] 身份句很短(< 150 字)', 身份.length < 150, `长度 ${身份.length}`);
+  ok('[E] 很短（< 150 字，只换身份不夹带规则）', 身份.length < 150, `长度 ${身份.length}`);
+  // 自证: 它确实是一句完整的话（能被直接粘进模板）
+  ok('[E] 以句号结尾', 身份.trim().endsWith('。'));
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[F] 第 4 层 · 默认关 + 与其余开关互不影响');
+console.log('\n[F] 第 4 层 · 默认值 + 与其余开关互不影响');
 {
   setActivePinia(createPinia());
   const { host } = 彼方假宿主();
   const 设置 = getSettings(host as any);
-  eq('[F] 登记归档默认关', 设置.接口.登记归档, false);
+  eq('[F] 登记归档 字段已从设置里删除', Object.prototype.hasOwnProperty.call(设置.接口, '登记归档'), false);
   eq('[F] 工具通道默认关', 设置.接口.工具通道, false);
   eq('[F] 请求打散默认关', 设置.接口.请求打散, false);
 
-  // 四组合(工具 × 登记归档)都不崩, 且身份句各自正确
+  // 两种工具通道下都不崩，身份句一致（身份句不再随任何开关变）
   for (const 工具 of [false, true]) {
-    for (const 登记 of [false, true]) {
-      const 出 = buildUpdateMessages(造输入({ 规则进工具: 工具, 登记归档: 登记 }) as any);
-      const 身份 = String(出.messages[0].content);
-      const 期望前缀 = 登记 ? '你是一个档案写入进程' : '你是「彼方 / Elsewhere」';
-      ok(`[F] 工具=${+工具} 登记=${+登记}: 身份句正确`, 身份.startsWith(期望前缀), 身份.slice(0, 30));
-      // 第 5 层: 只在工具通道开时出现(同样要按"实际 description"的层次测)
-      const 实际说明 = String(建工具定义(String(出.工具说明 ?? ''))[0].function.description);
-      if (工具)
-        ok(`[F] 工具=${+工具} 登记=${+登记}: 有分级文案`, 实际说明.includes('写入通道说明'));
-      else
-        ok(`[F] 工具=${+工具} 登记=${+登记}: 无分级文案`, !JSON.stringify(出.messages).includes('写入通道说明'));
-    }
+    const 出 = buildUpdateMessages(造输入({ 规则进工具: 工具 }) as any);
+    const 身份 = String(出.messages[0].content);
+    ok(`[F] 工具=${+工具}: 身份句是默认那句`, 身份.startsWith('你是「彼方 / Elsewhere」'), 身份.slice(0, 30));
+    // 第 5 层: 只在工具通道开时出现(同样要按"实际 description"的层次测)
+    const 实际说明 = String(建工具定义(String(出.工具说明 ?? ''))[0].function.description);
+    if (工具)
+      ok(`[F] 工具=${+工具}: 有分级文案`, 实际说明.includes('写入通道说明'));
+    else
+      ok(`[F] 工具=${+工具}: 无分级文案`, !JSON.stringify(出.messages).includes('写入通道说明'));
   }
 }
 

@@ -17,7 +17,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { createPinia, setActivePinia } from 'pinia';
 import lodash from 'lodash';
-import { 零件位置转段 } from '../src/彼方_NPC幕后生命状态系统/更新输入';
+import { buildUpdateMessages } from '../src/彼方_NPC幕后生命状态系统/prompts';
 import { 零件表 } from '../src/彼方_NPC幕后生命状态系统/零件表';
 
 (globalThis as any)._ = lodash;
@@ -75,30 +75,61 @@ function 列源文件(目录: string): string[] {
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[U1] 两个新字段的默认值必须让产物逐字节不变');
+console.log('\n[U1] 零件位置 那条旧搬迁路径已删除（2026-11-19 收口）');
 {
-  // 判据不是"我写了 default([])", 而是"默认值真的产出空的东西"。
-  // 直接调转换函数: 默认值 → 空段数组 → 拼装结果与不传时完全一致。
-  eq('[U1] 零件位置 默认 {} → 不产生任何段', 零件位置转段({}), []);
-  // 负样本自证: 非空位置表**必须**产生段(否则上面那条等于没测)
-  const 有 = 零件位置转段({ D2: '最前' });
-  eq('[U1/自证] 非空位置表会产生 1 段', 有.length, 1);
-  eq('[U1/自证] 段的 role 是 system', 有[0].role, 'system');
-  ok('[U1/自证] 段里写的是该零件的占位符', 有[0].content === '{{彼方:世界书}}', 有[0].content);
+  // ── 这个用例原来测「零件位置转段」的默认值与 role 固定 ──
+  //  那个函数已被删除（理由见 更新输入.ts / CHANGELOG「待办」）。
+  //  现在这里改为**断言它真的没了** —— 否则"删了"只是我以为的。
+  //
+  //  **为什么断言"没了"比断言"行为对"更强**：一个函数只要还在导出，
+  //  下一个人就会以为它还在用；而删除的意图只写在 commit message 里，没人读。
+  const 源码 = readFileSync(path.join(ROOT, 'src', '彼方_NPC幕后生命状态系统', '更新输入.ts'), 'utf8');
+  ok('[U1] 零件位置转段 不再导出', !/export function 零件位置转段/.test(源码));
+  ok('[U1] 收集本轮输入 不再调它', !/零件位置转段\s*\(/.test(源码));
+  // 自证: 若把函数写回来，第一条会红
+  ok('[U1/自证] 写回函数会被抓到', /export function 零件位置转段/.test('export function 零件位置转段(x) {}'));
 }
 
 // ─────────────────────────────────────────────────────────────
-console.log('\n[U4] D9(场景判断) 搬位置时 role 必须是 system(C5 要求)');
+console.log('\n[U4] 手写占位符段仍然是唯一的路（D13 只许 system）');
 {
-  const 段 = 零件位置转段({ D13: '最前' });
-  eq('[U4] D13 能搬', 段.length, 1);
-  eq('[U4] D13 的 role 固定 system(不给 user/assistant 选项)', 段[0].role, 'system');
-  // 自证: 所有零件搬位置都是 system —— 因为 UI 里没有 role 下拉
-  const 全部 = 零件位置转段({ D1: '最前', D2: '任务之前', R5: '最后' });
-  ok('[U4] 任何零件搬位置都是 system', 全部.every(s => s.role === 'system'), JSON.stringify(全部.map(s => s.role)));
-  // 不可搬迁的零件被忽略(不是报错, 而是不产生段)
-  eq('[U4] 不可搬迁的 R6 被忽略', 零件位置转段({ R6: '最前' }).length, 0);
-  eq('[U4] 不存在的代号被忽略', 零件位置转段({ 'NOPE': '最前' }).length, 0);
+  // 旧路径删了，但「引用即搬迁」这条能力没变 —— 用户手写 `{{彼方:场景判断}}`。
+  // C5 规定 D13 只能被 system 段引用；这条判据长在 扫零件引用 里，与旧路径无关。
+  const 原I = console.info;
+  const 原T = console.table;
+  const 原W = console.warn;
+  console.info = () => {};
+  console.table = () => {};
+  console.warn = () => {};
+  let 跑;
+  try {
+    跑 = (role: string) => buildUpdateMessages({
+      reply: '剧情', replyCount: 1, context: '玩家走进广场', timeJump: '', tracked: ['甲'], inSceneHint: [],
+      currentCards: { 甲: { 当前在做: 'x' } }, autoTrackEnabled: true, physioEnabled: false,
+      恋爱对象名单: [], 预填充: false, worldbook: '', currentStoryTime: '',
+      storyTimeHint: '', storySpan: '', recentTrace: '', playerName: 'P', playerDescription: '',
+      展开宏: (t: string) => t,
+      自定义段: [{ 锚点: '最前', role, content: '标记-A:{{彼方:场景判断}}', 启用: true }],
+    } as any);
+  }
+  finally {
+    console.info = 原I;
+    console.table = 原T;
+    console.warn = 原W;
+  }
+  const 系统 = 跑('system');
+  // 判据要看**它落在哪条消息**，不是"有没有出现"：
+  // 引用被忽略时，D13 仍会出现在它的默认位置（独立的 system 消息）——
+  // 所以"有没有出现"两种情况下都是 true，那样断言等于没测（第一版就这么假绿了）。
+  const 系统那条 = 系统.messages.find(m => String(m.content).includes('标记-A'));
+  ok('[U4] system 段引用场景判断 → 它进那条 system',
+    !!系统那条 && String(系统那条.content).includes('玩家走进广场'),
+    JSON.stringify(系统.messages.map(m => m.role + ':' + String(m.content).slice(0, 25))));
+  const 用户 = 跑('user');
+  const 用户那条 = 用户.messages.find(m => String(m.content).includes('标记-A'));
+  ok('[U4] user 段引用场景判断 → 那条 user 里没有它（引用被忽略）',
+    !!用户那条 && !String(用户那条.content).includes('玩家走进广场'),
+    JSON.stringify(用户那条 ? String(用户那条.content).slice(0, 120) : '(没找到那条消息)'));
 }
 
 // ─────────────────────────────────────────────────────────────
