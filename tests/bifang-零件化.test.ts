@@ -17,6 +17,7 @@
 //   正确的形状是"性质写成函数, 随机生成配置喂给它" —— 组合覆盖靠随机性, 正确性靠不变量。
 import { createPinia, setActivePinia } from 'pinia';
 import lodash from 'lodash';
+import 提示词源码 from '../src/彼方_NPC幕后生命状态系统/prompts.ts?raw';
 import { buildUpdateMessages } from '../src/彼方_NPC幕后生命状态系统/prompts';
 import { 零件表, 扫占位符, 切规则零件, 清单摘要, 是默认配置 } from '../src/彼方_NPC幕后生命状态系统/零件表';
 import { 校验全部, type 拼装结果 } from './helpers/彼方-零件不变量';
@@ -684,7 +685,10 @@ console.log('\n[切散] 零件被切散在两处时, 清单必须指认, 不许�
   console.table = () => {};
   let 结果;
   try {
-    结果 = buildUpdateMessages(造输入({ 关闭零件: ['D2'] }) as any);
+    // **必须带非空 worldbook**: D2 在默认输入里是空串, 而"切散"断言按
+    // "内容非空才数次数"判定 —— 空内容会被跳过, 于是"D2 被拼两次"这件事
+    // 根本不会被看见, 变异用例就会假绿。这条是给 M5 准备的前提。
+    结果 = buildUpdateMessages(造输入({ worldbook: 'WB-切散检测标记', 关闭零件: [] }) as any);
   }
   finally {
     console.info = 原I;
@@ -760,6 +764,33 @@ console.log('\n[清单摘要] 一句话说得清');
   ok('[摘要] 有关闭项时不是默认配置', !是默认配置([
     { 代号: 'D1', 名: 'x', 状态: '已关闭', 位置: '—', 字数: 0 },
   ]));
+}
+
+// ─────────────────────────────────────────────────────────────
+console.log('\n[导出面] 静默 必须不在公开入参上(否则外部能静默关掉清单与 warn)');
+{
+  // 这条是**结构断言**, 不是行为断言: 它检查"公开类型里有没有 静默 这个字段"。
+  // 为什么重要: `静默: true` 会让人拿不到清单、也看不到 warn —— 而清单与 warn
+  // 正是这个功能的可诊断性(V1/V3)。给它一个外部口子 = 静默失效, 与整套设计前提相反。
+  // 现在 `静默` 只在内部接口 `内部入参` 上, 公开的 `更新提示词入参` 没有它。
+  //
+  // 读源码做断言(而不是靠 tsc 探针): 探针要起子进程跑 tsc, 太慢, 不适合放进常驻套件。
+  // 探针留在 tests/fixtures/bifang-probe-静默.mjs, 手工跑。
+  // 源码用 `?raw` 导入(在 .build 下 import.meta.url 指向产物目录, 用不了相对路径)。
+  const 源码 = 提示词源码;
+  const 公开段 = 源码.slice(
+    源码.indexOf('interface 更新提示词入参'),
+    源码.indexOf('interface 内部入参'),
+  );
+  // **只查字段声明, 不查整段文本**: 注释里提到"静默"是合理的(比如解释为什么它不在这),
+  // 断言要查的是"有没有 `静默?: boolean;` 这样的字段声明"。
+  // 第一版我直接 `公开段.includes('静默')`, 于是被注释里的字样误伤 —— 假红。
+  const 有字段声明 = (段: string, 名: string) => new RegExp(`^\\s*${名}\\?\\??\\s*:`, 'm').test(段);
+  ok('[导出面] 公开入参 更新提示词入参 里没有 静默 字段', !有字段声明(公开段, '静默'));
+  ok('[导出面] 公开入参里仍有 关闭零件 字段(证明取的是对的段落)', 有字段声明(公开段, '关闭零件'));
+  // 自证: 内部接口里**应该**有它 —— 否则说明我们找错了地方
+  const 内部段 = 源码.slice(源码.indexOf('interface 内部入参'), 源码.indexOf('function buildUpdateMessages'));
+  ok('[导出面/自证] 内部入参 里确实有 静默 字段(说明这两段确实不同)', 有字段声明(内部段, '静默'));
 }
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
