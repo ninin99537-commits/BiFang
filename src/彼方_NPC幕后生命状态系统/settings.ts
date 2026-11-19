@@ -199,7 +199,10 @@ const Settings = z
          *  (任何人打开它就能拿到一条改状态的通道)。开启方式只有两条:
          *    ① 脚本变量里手写 `彼方_settings.调试.暴露状态 = true`;
          *    ② 浏览器 Console 改 `settingsStore.settings.value.调试.暴露状态 = true`(立即生效, 有 watch 跟随)。
-         *  改完刷新页面即恢复默认(不落盘到"开着"的状态之外)。 */
+         *
+         *  **刷新页面即恢复默认** —— 这不是承诺，是 `写回全局` 里**真的剔除了 `调试` 字段**
+         *  (2026-11-19 P1-3)。原来注释这么写但实现会把它一起落盘，于是"后门一开就永远开着"。
+         *  改法选了"让注释成真"：一个刷新即恢复的才是后门，会落盘的是**一条持久的改状态通道**。 */
         暴露状态: z.boolean().default(false),
     })
         .prefault({}),
@@ -406,6 +409,19 @@ function 记基线(host: 设置宿主, 读到的那份: any) {
 function 写回全局(host: 设置宿主, settings: any) {
     try {
         const 闸门 = 取写回闸门(host);
+        // ── **`调试` 字段不持久化**（2026-11-19 P1-3）──
+        //
+        //  `settings.ts:202` 的注释承诺：「改完刷新页面即恢复默认（不落盘）」。
+        //  但 `bindPersistence` 的 `watch(settings, ..., {deep:true})` 会把它一起写进全局 ——
+        //  **注释是假的，后门一开就永远开着。**
+        //
+        //  两个选择：让注释成真，或改注释承认会落盘。
+        //  **选了前者**：一个"刷新即恢复"的后门才是后门；会落盘的版本是**一条持久的改状态通道**。
+        //
+        //  ⚠ 剔除方式是从**待写副本**里删，不动调用方传进来的对象（那可能是 pinia 的响应式代理）。
+        const 待写: any = klona(settings);
+        if (待写 && typeof 待写 === 'object' && '调试' in 待写)
+            delete 待写.调试;
         // **闸门 ②**：拒绝写"全默认值"（2026-11-19 P0，纵深防御）。
         //
         //  `三方基线` 已经能挡住大部分（本地 == 默认的字段不进差异）。
@@ -418,14 +434,18 @@ function 写回全局(host: 设置宿主, settings: any) {
         //    那相当于"首次落盘"）。所以这一条只在"全局已有内容"时拦。
         if (闸门.可写回()) {
             const 默认 = Settings.parse({});
-            const 是纯默认 = JSON.stringify(settings) === JSON.stringify(默认);
+            // 比较时同样剔掉 `调试` —— 否则"只改了调试开关"会被判成"不是纯默认"而漏过拦截。
+            const 默认待比: any = klona(默认);
+            if (默认待比 && typeof 默认待比 === 'object')
+                delete 默认待比.调试;
+            const 是纯默认 = JSON.stringify(待写) === JSON.stringify(默认待比);
             const 远端 = 闸门.当前基线();
             if (是纯默认 && 是非空对象(远端)) {
                 console.warn('[彼方] 检测到待写设置与默认值完全相同，已拒绝覆盖(避免清空已有配置)');
                 return;
             }
         }
-        if (闸门.立即写(settings)) {
+        if (闸门.立即写(待写)) {
             invalidateReadCache();
             return;
         }
