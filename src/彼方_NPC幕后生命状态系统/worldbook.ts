@@ -127,6 +127,40 @@ async function 内置激活(host: 世界书宿主, name: string, scanText: strin
  * 人设全靠瞎编)。所以群聊改成**按成员逐个取**(名单由宿主给, 见 host.groupMemberNames)。
  * 成员间重复绑同一本书时按书名去重, 不会重复激活。
  */
+/**
+ * **条目的身份** —— 用来判断"两条路径拿到的是不是同一条世界书条目"。
+ *
+ * ── 为什么需要它（2026-11-20 C6，需求方 #448）──
+ *
+ *  两条读路径（`读取世界书段` 给"世界书"段、`getPersonaTextForNpc` 给每张卡的"人设参考"）
+ *  都会读到同一条条目。原来的去重是：
+ *
+ *      if (已注入文本 && 已注入文本.includes(text.trim())) continue;   // ← 拿渲染产物猜身份
+ *
+ *  **这是错的**：两条路径的求值上下文不同 ——
+ *    · 路径一 `组装求值上下文(scanText, …)` 传**真实扫描文本**
+ *    · 路径二 `组装求值上下文('', …)` 传**空串**
+ *
+ *  于是同一条条目里的 `<if seed:某词>` 在两边展开出**不同文本** →
+ *  `includes` 失败 → **同一条设定发两遍，而且内容不一样** → 模型可能当成两个版本。
+ *
+ *  > **渲染产物会随上下文变，身份不会。**
+ *
+ * ── 身份怎么取 ──
+ *
+ *  `书名 + '｜' + (name ?? comment ?? key)`。
+ *
+ *  为什么不用"条目 UID"：世界书条目类型里**没有稳定 id**（只有 name/comment/content/strategy），
+ *  引入要改数据模型 —— 那是另一件事。这是当前数据能达到的最佳。
+ *
+ *  ⚠ 已知局限：**条目改名后身份会变**（会被当成新条目）。比"文本包含"可靠得多，但不是绝对。
+ *    如果真机数据里条目名不可靠（名字可能只在 comment 里），这里用 `name ?? comment ?? key` 兜住。
+ */
+function 条目身份(书名: string, entry: 世界书条目形状): string {
+    const 标签 = String(entry?.name ?? entry?.comment ?? entry?.key ?? '').trim();
+    return `${书名}｜${标签}`;
+}
+
 function 收集世界书来源(host: 世界书宿主): string[] {
     const names: string[] = [];
     const 加入 = (name?: string | null) => {
@@ -169,7 +203,7 @@ async function getActiveWorldbookText(host: 世界书宿主, scanText: string, e
  * 为什么不在调用方数 `文本.split('\n\n')`: 条目正文里本来就可能有空行, 数出来的条数是错的;
  * "这一轮到底注入了几条"只有组装这一层知道。文本与条数因此必须出自同一次组装。
  */
-async function 读取世界书段(host: 世界书宿主, scanText: string, excludeNames: string[] = [], alwaysIncludeNames: string[] = []): Promise<{ 文本: string; 条数: number }> {
+async function 读取世界书段(host: 世界书宿主, scanText: string, excludeNames: string[] = [], alwaysIncludeNames: string[] = []): Promise<{ 文本: string; 条数: number; 已发身份: Set<string> }> {
     const 环境 = 彼方求值环境(host);
     // 排除名单: 条目名/comment 与排除项相等或包含即不注入(如填 "【彼方】NPC幕后生活" 排除该条目);
     // 名字在激活数据里可能不可靠(可能只在 comment), 故内容开头(如 "[彼方 · 幕后NPC状态]")也参与匹配
@@ -201,7 +235,7 @@ async function 读取世界书段(host: 世界书宿主, scanText: string, exclu
     const names = 收集世界书来源(host);
     if (names.length === 0) {
         console.info('[彼方] 本轮没有可读的世界书: 角色卡没绑定主/附加世界书, 也没有聊天世界书或 persona 世界书');
-        return { 文本: '', 条数: 0 };
+        return { 文本: '', 条数: 0, 已发身份: new Set<string>() };
     }
     // 主 AI 的激活逻辑由「提示词模板语法」插件提供(getWorldInfoActivatedData), 同一个环境也用来渲染 EJS; 带 30 秒缓存。
     // 插件没装 / 版本过旧时这里拿不到那个函数 —— 以前是直接 return '' 跳过整个世界书, 用户只看到一句
@@ -218,7 +252,9 @@ async function 读取世界书段(host: 世界书宿主, scanText: string, exclu
     // 用类型谓词而不是 `as`: 谓词就是过滤条件本身, 条件改了类型跟着改, 不会漂。
     const acceptsEntry = (entry: 世界书条目形状): entry is 有正文条目 => Boolean(entry && entry.disable !== true && entry.enabled !== false && entry.content && !isBifangEntry(entry) && !isExcluded(entry));
     // 1. 收集各世界书的激活条目（用酒馆主 AI 的激活机制）
-    const activatedAll: Array<{ entry: 有正文条目 }> = [];
+    //    ⚠ 2026-11-20 C6：带上 `书名` —— 后面要用"书名 + 条目标签"算**条目身份**，
+    //      让路径二能在**收集阶段**按身份跳过，而不是渲染完再用文本猜。
+    const activatedAll: Array<{ entry: 有正文条目; 书名: string }> = [];
     /** 被「排除条目」名单挡掉的条目(静默排除是排查黑洞: 日志里得看得见它到底有没有生效) */
     const 排除挡掉: string[] = [];
     {
@@ -242,7 +278,7 @@ async function 读取世界书段(host: 世界书宿主, scanText: string, exclu
                     continue;
                 }
                 if (acceptsEntry(entry))
-                    activatedAll.push({ entry });
+                    activatedAll.push({ entry, 书名: name });
             }
         }
     }
@@ -250,7 +286,7 @@ async function 读取世界书段(host: 世界书宿主, scanText: string, exclu
     // 角色人设条目通常按关键词触发——最新正文没提到该角色时就不会激活, 更新AI读不到人设;
     // 常驻名单保证这些人设条目每次都注入。换角色卡后匹配不到则静默跳过(不报错、不警告)。
     if (alwaysNames.length > 0) {
-        const alwaysEntries: 有正文条目[] = [];
+        const alwaysEntries: Array<{ entry: 有正文条目; 书名: string }> = [];
         const seenWorldbook = new Set<string>();
         for (const name of names) {
             if (seenWorldbook.has(name))
@@ -265,19 +301,19 @@ async function 读取世界书段(host: 世界书宿主, scanText: string, exclu
             }
             for (const entry of entries) {
                 if (isAlwaysIncluded(entry) && acceptsEntry(entry))
-                    alwaysEntries.push(entry);
+                    alwaysEntries.push({ entry, 书名: name });
             }
         }
         if (alwaysEntries.length > 0) {
-            const prioritized: Array<{ entry: 有正文条目 }> = [];
+            const prioritized: Array<{ entry: 有正文条目; 书名: string }> = [];
             const seenContent = new Set<string>();
-            for (const entry of alwaysEntries) {
-                const fingerprint = contentFingerprint(entry);
+            for (const item of alwaysEntries) {
+                const fingerprint = contentFingerprint(item.entry);
                 if (fingerprint && seenContent.has(fingerprint))
                     continue;
                 if (fingerprint)
                     seenContent.add(fingerprint);
-                prioritized.push({ entry });
+                prioritized.push(item);
             }
             // 激活条目里与常驻内容重复的去重, 其余保持在常驻条目之后
             const rest = activatedAll.filter(item => !seenContent.has(contentFingerprint(item.entry)));
@@ -305,7 +341,18 @@ async function 读取世界书段(host: 世界书宿主, scanText: string, exclu
     // 不设内容/条数上限: 截断会让发给 AI 的世界书内容不完整(宁多勿缺)
     const loggedMissingTables = new Set<string>();
     const lines: string[] = [];
-    for (const { entry } of activatedAll) {
+    /**
+     * 本轮**真的发出去**的条目身份（2026-11-20 C6）。
+     *
+     * 路径二（人设参考）拿它做**收集阶段的去重** —— 比渲染后用 `includes` 猜可靠：
+     * 同一条条目在两条路径里可能渲染出不同文本（`<if seed:>` 依赖 scanText），
+     * 但**身份不变**。
+     *
+     * ⚠ 只在 `text.trim()` 非空（真的进了 `lines`）时才记 —— 渲染出空串的条目
+     *   实际上没发给模型，路径二该有机会把它作为人设发出去。
+     */
+    const 已发身份 = new Set<string>();
+    for (const { entry, 书名 } of activatedAll) {
         // 条目名兼容两种形状: 激活数据在 comment/key, getWorldbook 在 name(strategy.keys)
         const label = 条目标签(entry);
         for (const table of 收集表格名([entry.content])) {
@@ -319,8 +366,9 @@ async function 读取世界书段(host: 世界书宿主, scanText: string, exclu
         if (!text.trim())
             continue;
         lines.push(text);
+        已发身份.add(条目身份(书名, entry));
     }
-    return { 文本: lines.join('\n\n'), 条数: lines.length };
+    return { 文本: lines.join('\n\n'), 条数: lines.length, 已发身份 };
 }
 /**
  * 按 NPC 名字收集其专属的绿灯(关键词触发)条目, 用于"人设参考"注入。
@@ -335,9 +383,13 @@ async function 读取世界书段(host: 世界书宿主, scanText: string, exclu
  * @param alias    NPC 曾用名(可选, 改名前的旧名, 同样会参与匹配)
  * @param excludeNames 用户配置的"注入世界书排除"名单
  * @param 已注入文本  本轮"世界书"段已经发出去的内容(可选): 同一条目若已在里面, 不再重复附到人设参考
+ * @param 已发身份   本轮"世界书"段**真的发过**的条目身份(2026-11-20 C6)。
+ *   **按身份去重，不按渲染文本** —— 见 `条目身份()` 的注释：
+ *   同一条条目在两条路径里可能渲染出不同文本（`<if seed:>` 依赖 scanText），但身份不变。
+ *   这是本函数与旧实现的关键差别：**在收集阶段就跳过**，于是同一条目**只求值一次**。
  * @returns 渲染后的条目内容(已做 EJS/宏/<if> 求值), 多条目用 \n\n 拼接; 无命中返回空串
  */
-async function getPersonaTextForNpc(host: 世界书宿主, npcName: unknown, alias: unknown = '', excludeNames: string[] = [], 已注入文本 = '') {
+async function getPersonaTextForNpc(host: 世界书宿主, npcName: unknown, alias: unknown = '', excludeNames: string[] = [], 已注入文本 = '', 已发身份: Set<string> = new Set()) {
     const 环境 = 彼方求值环境(host);
     const name = String(npcName ?? '').trim();
     if (!name)
@@ -388,7 +440,8 @@ async function getPersonaTextForNpc(host: 世界书宿主, npcName: unknown, ali
         return false;
     };
     // 收集所有命中条目
-    const matched: 有正文条目[] = [];
+    //  ⚠ 带上 `书名` —— 记录身份时要用（身份 = 书名 + 标签）
+    const matched: Array<{ entry: 有正文条目; 书名: string }> = [];
     const seenWorldbook = new Set<string>();
     const seenContent = new Set<string>();
     for (const wbName of names) {
@@ -409,32 +462,51 @@ async function getPersonaTextForNpc(host: 世界书宿主, npcName: unknown, ali
                 continue;
             if (!entryMatchesNpc(entry))
                 continue;
+            // ── 2026-11-20 C6：**按身份**跳过"世界书段已经发过"的条目 ──
+            //
+            //  这一步必须在**求值之前**（也就是在收集阶段）：
+            //  求值一次就是一次 `<if>`/EJS/表格解析，而且用空 scanText 求出来的
+            //  结果可能与路径一不同 → 那正是"同一条设定发两遍且内容不同"的来源。
+            //
+            //  跳过它 = 同一条目**只求值一次**（保留路径一的 scanText 上下文）。
+            if (已发身份.has(条目身份(wbName, entry)))
+                continue;
             const fingerprint = String(entry.content ?? '').trim();
             if (fingerprint && seenContent.has(fingerprint))
                 continue;
             if (fingerprint)
                 seenContent.add(fingerprint);
-            matched.push(entry);
+            matched.push({ entry, 书名: wbName });
         }
     }
     if (matched.length === 0)
         return '';
     // EJS 环境: 与主激活一致(失败时仍能渲染基础内容)
     const env = await 取EJS模板环境(环境);
-    const ctx = await 组装求值上下文('', 收集表格名(matched.map(e => e.content)), 环境);
+    const ctx = await 组装求值上下文('', 收集表格名(matched.map(m => m.entry.content)), 环境);
     const lines: string[] = [];
-    for (const entry of matched) {
+    for (const { entry, 书名 } of matched) {
         const label = entry.name || entry.comment || '(未命名条目)';
         const needsEjs = entry.content.includes('<%');
         const text = await 求值条目文本(entry.content, ctx, needsEjs ? env : null, label);
         if (!text.trim())
             continue;
-        // 同一条目往往已经被"世界书"段发过一次: 那条条目的关键词就是 NPC 名字, 而名字出现在最近正文里时
-        // 主 AI 的激活规则本来就会命中它。再附一份到人设参考 = 同一段设定发两遍, 白占 token,
-        // 还容易让模型当成两条独立信息(甚至以为有两个版本)。这里按渲染结果去重。
+        // ── 兜底：按渲染结果再挡一次（2026-11-20 C6）──
+        //
+        //  **主防线已经换成"收集阶段按身份跳过"**（见上面的 `已发身份`）——
+        //  那一条不依赖渲染产物，所以不受 `<if seed:>` 在两边展开不同文本的影响。
+        //
+        //  这里保留文本包含，是因为它还能挡住**另一种**重复：不同身份但渲染结果恰好相同的条目
+        //  （如同一段设定在两条条目里各写一遍）。它是**补充**，不是主判据。
+        //
+        //  ⚠ 它的失效方式已知：路径一文本是路径二文本的子串时会**过度**去重（少发）。
+        //    那种情况下少发一条重复设定，代价远小于"发两遍不同版本"。
         if (已注入文本 && 已注入文本.includes(text.trim()))
             continue;
         lines.push(text);
+        // 把它记进调用方传进来的身份集合 —— 于是**同一个 NPC 被重复调用**时也不会再发一次。
+        // （跨 NPC 的累积由调用方持有同一个 Set 完成，见 更新输入.ts）
+        已发身份.add(条目身份(书名, entry));
     }
     return lines.join('\n\n');
 }

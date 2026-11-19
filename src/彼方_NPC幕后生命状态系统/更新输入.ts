@@ -115,9 +115,11 @@ export async function 收集本轮输入(参数: 取料参数) {
     timing.前置 = Date.now() - timing.start;
     const worldbookStart = Date.now();
     // 世界书段与条数出自**同一次组装**: 条数不能靠事后按分隔符数(条目正文里本来就有空行)。
-    const { 文本: worldbook, 条数: worldbook条数 } = settings.更新.注入世界书
+    // 2026-11-20 C6: `已发身份` 一并取出来 —— 人设参考靠它**按身份**跳过已发条目，
+    // 而不是渲染完再用文本猜（两条路径的 `<if seed:>` 会展开出不同文本）。
+    const { 文本: worldbook, 条数: worldbook条数, 已发身份: 世界书已发身份 } = settings.更新.注入世界书
         ? await 读取世界书段(host, [rawContext, reply].filter(Boolean).join('\n\n'), settings.更新.注入世界书排除 ?? [], settings.更新.常驻世界书条目 ?? [])
-        : { 文本: '', 条数: 0 };
+        : { 文本: '', 条数: 0, 已发身份: new Set<string>() };
     timing.世界书 = Date.now() - worldbookStart;
     const storyTimeHint = 时间提示(worldbook, reply, context);
     // 批1·A2: 跨度由**代码算**, 不让模型自己回忆 —— 模型只看得到最近 N 条回复,
@@ -191,17 +193,29 @@ export async function 收集本轮输入(参数: 取料参数) {
     // 与整包 worldbook 注入的区别: 这里**跳过蓝灯常驻条目**——蓝灯无条件下发, 给所有 NPC 的都是同一份
     // "基础世界观", 失去按 NPC 区分人设的意义; 只保留"keys 数组里显式包含 NPC 名字(或曾用名)"的条目,
     // 保证每张卡附的人设参考真的是它自己的人设, 而不是基础世界观。
-    // 去重: 同一条目可能既被"世界书"段激活过、又被多个 NPC 的名字同时命中(如一条条目 keys 里写了
-    // 乔尔/汤米/艾莉), 所以这里累积"已经发出去的文本", 后面的人设条目只要已在里面就跳过。
+    //
+    // ── 去重（2026-11-20 C6 改）──
+    //
+    //  **原来**：累积"已经发出去的文本"，用 `已注入文本.includes(text)` 判重。
+    //  **那不可靠**：两条路径的求值上下文不同（路径一带 scanText、路径二传空串），
+    //  同一条条目里的 `<if seed:某词>` 会展开出**不同文本** → 包含判断失败 →
+    //  **同一条设定发两遍，而且内容不一样** → 模型可能当成两个版本。
+    //
+    //  **现在**：`已发身份`（书名 + 条目标签）在**收集阶段**就跳过已发条目 ——
+    //  不依赖渲染产物，所以不受上下文差异影响；而且同一条目**只求值一次**。
+    //  `已发文本` 保留作兜底（挡"不同身份但渲染结果恰好相同"的条目）。
     if (settings.更新.注入世界书 && tracked.length > 0) {
         let 已发文本 = worldbook;
+        // 跨 NPC 累积：第一个 NPC 发过的人设条目，后面的 NPC 不该再发一遍
+        // （一条 keys 写了三个名字的条目，三个人都被追踪时原来会被求值 1+3=4 遍）
+        const 已发身份 = new Set<string>(世界书已发身份);
         for (const name of tracked) {
             const card = currentCards[name];
             if (!card)
                 continue;
             const alias = String(card['曾用名'] ?? '').trim();
             try {
-                const personaText = await getPersonaTextForNpc(host, name, alias, settings.更新.注入世界书排除 ?? [], 已发文本);
+                const personaText = await getPersonaTextForNpc(host, name, alias, settings.更新.注入世界书排除 ?? [], 已发文本, 已发身份);
                 if (personaText && personaText.trim()) {
                     // 零截断原则: 全量发送, 不再截断到 1500 字(规模控制只做在源头的读取范围/条目排除)。
                     card['人设参考'] = personaText.trim();
