@@ -19,7 +19,7 @@ import './悬浮球界面';
  * 为什么要有: "发一条消息被调用多次"这类问题, 第一件事是确认**酒馆里跑的是哪一版**。
  * 控制台第一行的 `载入构建 xxx` 就是答案; 如果它和 dist 目录里的不一样, 说明导入的是旧文件。
  */
-export const 构建标记 = 'daoyan-2026-11-14-e7c79701-…+收拢已演场数v48+类型名对齐';
+export const 构建标记 = 'daoyan-2026-11-20-2e21bffd-C1接入楼层快照内核';
 
 setActivePinia(pinia);
 captureConsole();

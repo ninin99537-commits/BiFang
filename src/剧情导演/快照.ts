@@ -16,6 +16,10 @@ import { 错误文本 } from './世界书落点';
 // 这里 import 进来自己用; STORAGE_KEY 仍原样再导出(调用方从 快照 取它), DATA_VERSION 没有外部
 // 消费者就**不再转发** —— 转发没人用的名字, 只会让"这个符号谁拥有"多出一条假路径。
 import { STORAGE_KEY, DATA_VERSION } from './运行状态';
+// 楼层快照的索引/有效性/护栏已抽到共用层（2026-11-20 C1）。
+// ⚠ **只接了读路径**：写入路径有 consumeClearLayer / 手改锚点选择 / 本体裁剪那套，内核没有。
+import { 取最新有效 } from '../共用/楼层快照';
+import type { 快照存储 } from '../共用/楼层快照';
 export { STORAGE_KEY } from './运行状态';
 /** 楼层快照默认保留份数(设置「导演.快照保留份数」可调, 默认 30) */
 export const SNAPSHOT_LIMIT = 30;
@@ -77,65 +81,112 @@ export function loadData(): 导演账本 {
   try {
     const meta = loadMeta();
     const floors = [...meta.快照楼层].sort((a, b) => a - b);
-    let lastId = -1;
+    // 先单独探一次末层：**抛错**要单独计数（"宿主没就绪"与"聊天为空"是两件事，
+    // 否则永远查不出是谁在丢数据）。内核自己也会探一次，但内核不关心这个计数。
     try {
-      lastId = useHost().chat.lastMessageId();
-    } catch (error) {
-      // 抛错 = 宿主还没就绪（**不是**"聊天为空"）—— 两件事要分开报，否则永远查不出是谁在丢数据
-      lastId = -1;
+      useHost().chat.lastMessageId();
+    }
+    catch (error) {
       读取降级次数 += 1;
       console.warn('[剧情导演] 读取当前聊天楼层失败（宿主可能还没就绪）:', 错误文本(error));
     }
-    if (floors.length > 0 && lastId < 0) {
+
+    // ── 2026-11-20 C1：索引/有效性/护栏走共用内核 ──
+    //
+    //  ⚠ **这一批同时补上了导演缺的 I-S2 护栏**（需求方 #433 ①）：
+    //    原来导演**没有**"聊天未就绪 → 一个字节不写"这条 —— 而那正是
+    //    "打开聊天，账本没了"这个数据丢失洞。彼方 11-20 补过、烟火早就有，导演一直缺。
+    //
+    //  ⚠ 写入路径没接内核（导演的 `writeStateSnapshot` 有 `consumeClearLayer` / 手改锚点
+    //     选择 / 快照本体裁剪那套，内核没有对应能力）。
+    const 读结果 = 取最新有效(建快照存储());
+
+    if (读结果.未就绪) {
+      // 与原来的提示行为一致：计数 + 只提示一次
       读取降级次数 += 1;
       提示读取降级(`${floors.length} 份快照登记着, 但读不到当前聊天楼层`);
       return { ...emptyData(), 清空层: meta.清空层, 已剧终: !!meta.已剧终 };
     }
-    const missingFloors: number[] = [];
-    let result: 导演账本 | null = null;
-    for (let i = floors.length - 1; i >= 0; i--) {
-      const floorId = floors[i];
-      if (floorId > lastId) {
-        missingFloors.push(floorId);
-        continue;
+
+    if (读结果.载荷) {
+      // 内核判出"这些层真的被删了" → 清索引（与原来同一时机）
+      if (读结果.已删楼层.length > 0) {
+        meta.快照楼层 = meta.快照楼层.filter(楼层 => !读结果.已删楼层.includes(楼层));
+        // 2026-11-13 H-1: 登记失败要可见（这次只是清理脏楼层，失败不影响本次装载，但下次还会再清理一遍）
+        if (!saveMeta(meta)) console.error('[剧情导演] 清理失效快照楼层后, meta 没写回去 —— 下次装载会再清理一遍');
       }
-      let message = null;
-      try {
-        message = useHost().chat.messages(floorId)[0] ?? null;
-      } catch {
-        message = null;
-      }
-      if (!message) continue;
-      let snapshot = null;
-      try {
-        snapshot = useHost().vars.get({ type: 'message', message_id: floorId })?.[STORAGE_KEY] ?? null;
-      } catch {
-        snapshot = null;
-      }
-      if (!snapshot || typeof snapshot !== 'object' || snapshot.楼层 !== floorId) continue;
-      result = {
+      const snapshot = 读结果.载荷;
+      const 账: 导演账本 = {
         ...sanitizeSnapshot(snapshot),
-        锚点楼层: floorId,
+        锚点楼层: 读结果.楼层,
         处理到楼层: Number(snapshot.处理到楼层) || 0,
         清空层: meta.清空层,
         // 已剧终双写取"或": 账本侧随快照回退, meta 侧不会 → 剧终不该被删楼/回退悄悄撤销
         已剧终: !!snapshot.已剧终 || !!meta.已剧终,
       };
-      break;
+      // 第二轮方案 2.1: 用户对书纲的编辑/锁定/否决**不随快照回滚**, 每次装载都叠上来
+      账.书纲 = 叠加覆盖(账.书纲 ?? null, 读书纲覆盖());
+      return 账;
     }
-    if (missingFloors.length > 0) {
-      meta.快照楼层 = meta.快照楼层.filter(floor => !missingFloors.includes(floor));
-      // 2026-11-13 H-1: 登记失败要可见（这次只是清理脏楼层，失败不影响本次装载，但下次还会再清理一遍）
+
+    // 没有命中 → 清掉内核判出的已删楼层，返回空账本
+    if (读结果.已删楼层.length > 0) {
+      meta.快照楼层 = meta.快照楼层.filter(楼层 => !读结果.已删楼层.includes(楼层));
       if (!saveMeta(meta)) console.error('[剧情导演] 清理失效快照楼层后, meta 没写回去 —— 下次装载会再清理一遍');
     }
-    const 账 = result ?? { ...emptyData(), 清空层: meta.清空层, 已剧终: !!meta.已剧终 };
-    // 第二轮方案 2.1: 用户对书纲的编辑/锁定/否决**不随快照回滚**, 每次装载都叠上来
+    const 账 = { ...emptyData(), 清空层: meta.清空层, 已剧终: !!meta.已剧终 };
     账.书纲 = 叠加覆盖(账.书纲 ?? null, 读书纲覆盖());
     return 账;
   } catch (error) {
     console.warn('[剧情导演] 读取账本失败, 使用空账本:', error);
     return emptyData();
   }
+}
+
+/**
+ * 把导演的宿主接成内核的 `快照存储`（2026-11-20 C1）。
+ *
+ * ⚠ **只接读路径**：写入路径有 `consumeClearLayer` / 手改锚点选择 / 快照本体裁剪那套，
+ *    内核没有对应能力。硬接会改变行为。
+ */
+function 建快照存储(): 快照存储 {
+  return {
+    读索引: () => {
+      const meta = loadMeta();
+      return { 快照楼层: [...meta.快照楼层] };
+    },
+    // 读路径不该写索引 —— 真被调用说明逻辑有误
+    写索引: () => false,
+    楼层还在: (楼层) => {
+      try {
+        return !!useHost().chat.messages(楼层)[0];
+      }
+      catch {
+        return false;
+      }
+    },
+    读楼层: (楼层) => {
+      try {
+        const raw = useHost().vars.get({ type: 'message', message_id: 楼层 })?.[STORAGE_KEY];
+        return raw && typeof raw === 'object' ? raw as any : null;
+      }
+      catch {
+        return null;
+      }
+    },
+    写楼层: () => {
+      throw new Error('[剧情导演] 读路径不该写楼层');
+    },
+    删楼层: (楼层) => {
+      try {
+        useHost().vars.del(STORAGE_KEY, { type: 'message', message_id: 楼层 });
+      }
+      catch {
+        // 楼层可能已不存在
+      }
+    },
+    末层: () => useHost().chat.lastMessageId(),
+  };
 }
 
 function buildSnapshotPayload(data: 导演账本, anchorFloor: number, processedFloor: number): Record<string, any> | null {
