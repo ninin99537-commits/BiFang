@@ -119,37 +119,75 @@ export function 正文过滤(标签: unknown): (text: string) => string {
  * **只从正文与上下文提取, 不读世界书** —— 世界书里的"当前时间"表是其他系统或彼方上次写入的
  * 推断值, 可能滞后或与正文不符, 作为"务必以此为准"的提示反而会把剧情时间带偏。
  */
-export function 时间提示(_worldbook: string, reply: string, context: string): string {
+/**
+ * **时间提示的形状**（2026-11-20 C5，需求方 #482）。
+ *
+ * ── 为什么不是 `{ 日期?: string; 时: string }` ──
+ *
+ *  那只是把"缺日期"做成可选字段，**调用方照样会忘判** ——
+ *  它和现在返回一个裸字符串没有本质区别。
+ *
+ *  判别式联合的价值在于：`形: '完整'` 那支**在类型上就有完整日期**，
+ *  而 `形: '仅时分'` 那支**进不了只接受 `完整` 的函数**（编译期就挡住）。
+ *
+ * ── 底线 ──
+ *
+ *  `20:30` **永远不能出现在「务必以此为准」后面**。
+ *  "务必以此为准"配一个残缺值，比没有时间更糟 ——
+ *  模型会自己编个日期，而规则同时写着"严禁自创时间线"。
+ */
+export type 时间提示形状 =
+    | { 形: '完整'; 文本: string }
+    | { 形: '仅时分'; 文本: string }
+    | { 形: '无' };
+
+/**
+ * 从正文里提取剧情时间提示。
+ *
+ * 六个分支（见 `extractFrom` 的注释），按返回值的**完整度**分两档：
+ *  · ① 明确"当前时间"标签 ② 中文年月日 ③ 数字日期 → **完整**
+ *  · ④ `time:` 行的时分 ⑤ `☆` 标注后的时分 → **仅时分**
+ *  · ⑥ 都没匹配 → **无**
+ *
+ * ⚠ ④⑤ 是**有意设计**（特殊纪年/无标准日期），不是 bug：
+ *   那类卡片用特殊纪年，缺日期是**数据事实**。
+ *   所以本函数**不丢信息**（`文本` 里仍带着那个时分），只是标出它的完整度 ——
+ *   由调用方决定它能进哪里。
+ */
+export function 时间提示(_worldbook: string, reply: string, context: string): 时间提示形状 {
     // 参数名带下划线: worldbook 是**刻意不用**的(见函数注释 —— 世界书里的"当前时间"可能滞后),
-    // 但保留在签名里, 调用点(更新输入.ts:97)仍然照原样传三个实参。
+    // 但保留在签名里, 调用点(更新输入.ts)仍然照原样传三个实参。
     const pad = (n: string) => String(n).padStart(2, '0');
     // 正文时间**只从 reply(最近回复)里提取**——worldbook/context 含彼方自己写的
     // "当前时间"固定标签(会干扰), 且拼接在 reply 之后, 取"最后一次"会取到它们。
     // reply 拼接顺序是"较早回复在前、最新回复在后", 最新正文在末尾, 取 reply 内最后一次出现的时间。
-    const extractFrom = (text: string) => {
+    const extractFrom = (text: string): 时间提示形状 => {
         if (!text)
-            return '';
-        // 1. 明确的"当前时间"标签(时间表列), 取最后一次出现
+            return { 形: '无' };
+        // 1. 明确的"当前时间"标签(时间表列), 取最后一次出现 —— **完整**
         for (const pattern of [/当前时间[^\d]*(\d{3,6}[-/.]\d{1,2}[-/.]\d{1,2}(?:[ T]?\d{1,2}:\d{1,2})?)/g, /现在(?:是|为)?[^\d]*(\d{3,6}[-/.]\d{1,2}[-/.]\d{1,2}(?:[ T]?\d{1,2}:\d{1,2})?)/g]) {
             const matches = [...text.matchAll(pattern)];
             if (matches.length > 0)
-                return matches[matches.length - 1][1].replace(/[/.]/g, '-');
+                return { 形: '完整', 文本: matches[matches.length - 1][1].replace(/[/.]/g, '-') };
         }
-        // 2. 中文格式: 2025年11月15日 ... 19:20-19:25 (时间段取结束时刻), 取最后一次
+        // 2. 中文格式: 2025年11月15日 ... 19:20-19:25 (时间段取结束时刻), 取最后一次 —— **完整**
         const cnRe = /(\d{3,6})年(\d{1,2})月(\d{1,2})日[^\n]*?(\d{1,2}):(\d{1,2})(?:-(\d{1,2}):(\d{1,2}))?/g;
         const cnMatches = [...text.matchAll(cnRe)];
         if (cnMatches.length > 0) {
             const [, y, mo, d, h1, m1, h2, m2] = cnMatches[cnMatches.length - 1];
             const h = h2 ?? h1;
             const m = m2 ?? m1;
-            return `${y}-${pad(mo)}-${pad(d)} ${pad(h)}:${pad(m)}`;
+            return { 形: '完整', 文本: `${y}-${pad(mo)}-${pad(d)} ${pad(h)}:${pad(m)}` };
         }
-        // 3. 数字格式(日期+时间), 取最后一次
+        // 3. 数字格式(日期+时间), 取最后一次 —— **完整**
         const numericRe = /(\d{3,6}[-/.]\d{1,2}[-/.]\d{1,2}(?:[ T]?\d{1,2}:\d{1,2})?)/g;
         const numericMatches = [...text.matchAll(numericRe)];
         if (numericMatches.length > 0)
-            return numericMatches[numericMatches.length - 1][1].replace(/[/.]/g, '-');
-        // 4. 特殊纪年/无标准日期的时间标注: "time:" 行取最后一行, 时间段取结束时刻
+            return { 形: '完整', 文本: numericMatches[numericMatches.length - 1][1].replace(/[/.]/g, '-') };
+        // 4. 特殊纪年/无标准日期的时间标注: "time:" 行取最后一行, 时间段取结束时刻 —— **仅时分**
+        //
+        //    ⚠ 这是**有意设计**：那类卡片用特殊纪年（如"天启三年"），没有标准日期。
+        //      所以这里如实标成 `仅时分`，让调用方决定它不能进权威段、不能落持久字段。
         const timeLines = [...text.matchAll(/time:([^\n]*)/gi)].map(match => match[1]);
         const timeLine = timeLines[timeLines.length - 1];
         if (timeLine) {
@@ -158,24 +196,24 @@ export function 时间提示(_worldbook: string, reply: string, context: string)
                 const [, h1, m1, h2, m2] = hm;
                 const h = h2 ?? h1;
                 const m = m2 ?? m1;
-                return `${pad(h)}:${pad(m)}`;
+                return { 形: '仅时分', 文本: `${pad(h)}:${pad(m)}` };
             }
         }
-        // 5. 备选: 任意 "☆" 标注后的时分(时间段取结束时刻), 取最后一次
+        // 5. 备选: 任意 "☆" 标注后的时分(时间段取结束时刻), 取最后一次 —— **仅时分**
         const hm2Re = /☆[^\n]{0,80}?(\d{1,2}):(\d{1,2})(?:-(\d{1,2}):(\d{1,2}))?/g;
         const hm2Matches = [...text.matchAll(hm2Re)];
         if (hm2Matches.length > 0) {
             const [, h1, m1, h2, m2] = hm2Matches[hm2Matches.length - 1];
             const h = h2 ?? h1;
             const m = m2 ?? m1;
-            return `${pad(h)}:${pad(m)}`;
+            return { 形: '仅时分', 文本: `${pad(h)}:${pad(m)}` };
         }
-        return '';
+        return { 形: '无' };
     };
     // 优先 reply(最新正文), 其次 context(最近剧情上下文)——两者都是本聊天的
     // 实际剧情内容, 时间标注可信; 世界书不参与(见函数注释)
     const fromReply = extractFrom(reply);
-    if (fromReply)
+    if (fromReply.形 !== '无')
         return fromReply;
     return extractFrom(context);
 }
