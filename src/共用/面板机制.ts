@@ -380,6 +380,16 @@ const CLOSED_HEIGHT = 配置.球高度 ?? 配置.球直径;
     if (配置.面板布局 === 'capped') {
       const vw = viewportW();
       const vh = viewportH();
+      // ⚠ 这里的 `vw <= 800` 与 joint 分支的 `vw < 700` **是两个不同的阈值**，
+      //    **不是漏改**（需求方 #559 缺口 2 要求写清）。
+      //
+      //  | 布局 | 阈值 | 语义 |
+      //  |---|---|---|
+      //  | `joint` | `vw < 700` | 窄屏时面板"近乎全屏 + 底部标签栏"（手机布局） |
+      //  | `capped` | `vw <= 800` | 窄屏时面板"完全整屏"（彼方 `.bf-panel` 的口径） |
+      //
+      //  两者的边界值也不同（`<700` vs `<=800`）。将来谁想把它们统一，
+      //  **先想清楚为什么原本不同** —— 一个来自烟火的手机布局经验值，一个来自彼方的 CSS。
       isNarrow.value = vw <= 800;
       if (isNarrow.value) {
         panelW.value = vw;
@@ -418,18 +428,26 @@ const CLOSED_HEIGHT = 配置.球高度 ?? 配置.球直径;
 
     // ── 2026-11-20 C7 追加：capped 布局 ──
     //
-    //  与彼方 `面板矩形()` 的位置口径一致：**居中**（`(vw-w)/2, (vh-h)/2`），
-    //  且**不做重叠推开**（彼方没有这个行为）。
+    //  与彼方 `面板矩形()` 的位置口径**逐值一致**：
     //
-    //  拖动过（`panelPos` 非空）时仍用它 —— 但彼方的面板是 CSS 固定的，不会拖，所以实际走居中。
+    //      return { x: (vw - w) / 2, y: (vh - h) / 2, w, h };
+    //
+    //  ⚠ **不做 8px 夹取**（需求方 #559 裁定 (a)）。
+    //
+    //    第一版我写了 `clamp(raw, 8, vw - panelW - 8)` —— 那是从 `joint` 抄来的。
+    //    但 8px 夹取是为 **joint**（面板浮在球旁边、需要留边）设计的；
+    //    `capped` 是铺满式，**不需要**。
+    //
+    //    而且它在**极端尺寸**下会分叉：面板比视口宽时
+    //    彼方 `(vw-w)/2` 得**负值**（面板左边超出屏幕），我的 clamp 得 `8`（贴左边）。
+    //    分屏 / 小窗 / 手机横屏都可能触发 —— 那种 bug 最难复现。
+    //
+    //  > C7 的整个前提是"内核能表达彼方的几何"。**差一个夹取就不是表达了。**
     if (配置.面板布局 === 'capped') {
       const vw = viewportW();
       const vh = viewportH();
       const raw = panelPos.value ?? { x: (vw - panelW.value) / 2, y: (vh - panelH.value) / 2 };
-      return {
-        x: clamp(raw.x, 8, Math.max(8, vw - panelW.value - 8)),
-        y: clamp(raw.y, 8, Math.max(8, vh - panelH.value - 8)),
-      };
+      return { x: raw.x, y: raw.y };
     }
 
     const raw = panelPos.value ?? { x: (viewportW() - panelW.value) / 2, y: (viewportH() - panelH.value) / 2 };

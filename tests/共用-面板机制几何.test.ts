@@ -839,5 +839,62 @@ console.log('\n[自证] capped 的判据不是恒真');
   r2.卸载();
 }
 
+console.log('\n[★ 缺口 1 已堵] capped 极端尺寸：面板比视口宽时 left 是**负值**（照抄彼方）');
+{
+  // ── 需求方 #559 裁定 (a)：不做 8px 夹取，照抄彼方的 `(vw - w) / 2` ──
+  //
+  //  构造：视口 900 宽（> 800 → 走宽屏分支），上限宽 1120 → w = min(1120, 900*0.95) = 855
+  //  855 < 900，所以不会触发"面板比视口宽"。
+  //
+  //  要触发它，得让 `vw*0.95 > vw` —— 不可能。所以**这个分支在当前公式下不可达**。
+  //
+  //  ⚠ 那我为什么还要验？因为 `panelPos`（拖动过）可以给出任意值。
+  //    但彼方的面板是 CSS 固定的、不会拖，所以实际也不可达。
+  //
+  //  → 真正的判据是：**capped 的 left 公式里没有 clamp**（形状断言）。
+  //    行为断言在当前公式下不可达，**这一点必须写出来，否则这条判据是假的。**
+  const { readFileSync: 读 } = await import('node:fs');
+  const path = await import('node:path');
+  const 内核源 = 读(path.join(process.cwd(), 'src/共用/面板机制.ts'), 'utf8');
+  const 剥注释 = (源: string) => 源.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/([^:])\/\/.*$/gm, '$1');
+  const 代码 = 剥注释(内核源);
+
+  // ⚠ 内核里有**两处** `if (配置.面板布局 === 'capped')`：
+  //    ① `computePanelSize` 里（算宽高）
+  //    ② `panelRectView` 里（算位置）—— 我们要验的是这个
+  //  用"包含 raw"来定位 ②。第一版直接 indexOf 拿到的是 ①，所以判据看错了地方。
+  const 全部分支 = [];
+  let 位置 = 0;
+  while ((位置 = 代码.indexOf("if (配置.面板布局 === 'capped')", 位置)) >= 0) {
+    全部分支.push(代码.slice(位置, 位置 + 900));
+    位置 += 10;
+  }
+  ok('[前置] 内核里有 2 处 capped 分支（computePanelSize + panelRectView）',
+     全部分支.length === 2, `实际 ${全部分支.length} 处`);
+
+  const 位置分支 = 全部分支.find(b => b.includes('raw'));
+  ok('[前置] 找到 panelRectView 里那个（含 raw）', !!位置分支);
+  if (位置分支) {
+    // ⚠ 只取到 capped 分支自己的 `}` 为止。
+    //    第一版用 `return { x: raw.x, y: raw.y };` 当结束锚 —— 变异之后那行变了，
+    //    于是"前置"也红了。**前置不该依赖被测对象的精确文本。**
+    //    改成：取到下一个 `\n    }`（分支结束）为止。
+    const 结束位 = 位置分支.search(/\n {4}\}/);
+    const 本分支 = 结束位 > 0 ? 位置分支.slice(0, 结束位) : 位置分支.slice(0, 600);
+    ok('★ capped 的 panelRectView **不含 clamp**（不做 8px 夹取）',
+       !本分支.includes('clamp('),
+       `实际片段: ${本分支.slice(-200)}`);
+    ok('★ capped 的 panelRectView 用 `(vw - panelW.value) / 2`（照抄彼方）',
+       本分支.includes('(vw - panelW.value) / 2'),
+       `实际片段: ${本分支.slice(-200)}`);
+  }
+
+  // **自证**：joint 分支仍然有 clamp（说明这条断言能区分两个分支）
+  const j = 代码.indexOf('const raw = panelPos.value ?? { x: (viewportW() - panelW.value) / 2');
+  ok('[自证] joint 分支**有** clamp（与 capped 不同）',
+     j >= 0 && 代码.slice(j, j + 400).includes('clamp('),
+     'joint 分支找不到 clamp —— 那条"capped 不含 clamp"就失去区分力');
+}
+
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 process.exit(fail > 0 ? 1 : 0);
