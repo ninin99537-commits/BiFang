@@ -211,6 +211,41 @@ console.log('\n[结构] 两处守卫确实落地了');
   ok('[结构] persistOrbPos 有 球位有效 守卫', /if \(!球位有效\(anchorX\.value, anchorY\.value, vw, vh, CLOSED_SIZE\)\) return;/.test(壳源));
   ok('[结构] 读球位置 传了视口进去', /读球位置\(host, \{ w: viewportW\(\), h: viewportH\(\) \}, CLOSED_SIZE\)/.test(壳源));
 
+  // ── 2026-11-20 #504①：拖动 clamp 与落盘守卫**同口径** ──
+  //
+  //  这是本文件第 1 条判据的**另一半**：`球位有效` 判毒值（下界整球），
+  //  但**如果拖动能夹到"半露"的位置**，用户松手后那一格就落不了盘 ——
+  //  "我明明放好了"，下次启动回默认位。
+  //
+  //  所以判据是**两条一起看**：
+  //    ① `minAnchorX()` 的下界是整球（不是 `halfOrb()`）
+  //    ② 拖动夹取用的就是 `minAnchorX()`
+  //  任一条不成立，"拖得到但存不下"就回来了。
+  ok('★ [同口径] minAnchorX 的下界是 CLOSED_SIZE（整球），不是 halfOrb()',
+     /const minAnchorX = \(\): number => CLOSED_SIZE;/.test(壳源),
+     'minAnchorX 仍是 halfOrb() —— 球能拖到半露，而半露落不了盘');
+  ok('★ [同口径] minAnchorY 的下界是 CLOSED_HEIGHT（整球），不是 halfOrbHeight()',
+     /const minAnchorY = \(\): number => CLOSED_HEIGHT;/.test(壳源),
+     'minAnchorY 仍是 halfOrbHeight()');
+  ok('★ [同口径] 拖动夹取用的是 minAnchorX/minAnchorY（不是另写一套）',
+     /clamp\(startAnchorX \+ \(point\.x - startX\), minAnchorX\(\), maxAnchorX\(\)\)/.test(壳源)
+     && /clamp\(startAnchorY \+ \(point\.y - startY\), minAnchorY\(\), maxAnchorY\(\)\)/.test(壳源),
+     '拖动夹取没有引用 minAnchorX/minAnchorY');
+  // 挂载恢复与 resize 夹取也走同一对函数 —— 三处一致才算"同口径"
+  ok('★ [同口径] 挂载恢复也用 minAnchorX/minAnchorY',
+     /savedOrb\.x >= minAnchorX\(\) && savedOrb\.x <= maxAnchorX\(\)/.test(壳源)
+     && /savedOrb\.y >= minAnchorY\(\) && savedOrb\.y <= maxAnchorY\(\)/.test(壳源),
+     '挂载恢复没有引用 minAnchorX/minAnchorY');
+  ok('★ [同口径] resize 夹取也用 minAnchorX/minAnchorY',
+     /clamp\(anchorX\.value, minAnchorX\(\), maxAnchorX\(\)\)/.test(壳源)
+     && /clamp\(anchorY\.value, minAnchorY\(\), maxAnchorY\(\)\)/.test(壳源),
+     'resize 夹取没有引用 minAnchorX/minAnchorY');
+
+  // **自证**：旧写法（halfOrb - EDGE_GAP）不会被"下界是整球"那条匹配
+  ok('[自证] 旧的 `halfOrb() - EDGE_GAP` 写法不通过',
+     !/const minAnchorX = \(\): number => CLOSED_SIZE;/.test('const minAnchorX = (): number => halfOrb() - EDGE_GAP;'),
+     '正则抓不到旧写法 —— 它是恒真的');
+
   // **自证**：正则可以抓到旧写法
   ok('[自证] 正则能抓到"只查 null"的旧落盘守卫',
      !/if \(!视口可用\(vw, vh\)\) return;/.test('if (anchorX.value === null || anchorY.value === null) return;'));

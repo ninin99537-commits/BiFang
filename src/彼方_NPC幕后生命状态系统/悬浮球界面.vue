@@ -881,9 +881,37 @@ function 记视口尺寸(): void {
 const EDGE_GAP = 0;
 const halfOrb = (): number => CLOSED_SIZE / 2;
 const halfOrbHeight = (): number => CLOSED_HEIGHT / 2;
-const minAnchorX = (): number => halfOrb() - EDGE_GAP;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⚠ 锚点边界：**下界必须是整球**（需求方 #504①，2026-11-20）
+// ═══════════════════════════════════════════════════════════════════════════
+//
+//  ── 改之前的样子（这是个真 bug）──
+//
+//    minAnchorX() = halfOrb() - EDGE_GAP = 23      ← 球心能到 23，即球**半露**在屏幕外
+//    而 persistOrbPos 的落盘守卫是 球位有效()，下界 = CLOSED_SIZE = 46（**整球**）
+//
+//  于是：
+//    ① 用户把球拖到最左上角 → 夹到 (23, 29)（半露，视觉上"放好了"）
+//    ② 松手 → persistOrbPos 判"毒值" → **不落盘**
+//    ③ 下次启动 → 读不到合法值 → 回默认位
+//    → **"我明明放好了"**
+//
+//  ── 为什么两处必须引用同一个常量 ──
+//
+//  这已经不是第一次分叉了：注释里早就写着"与拖动夹取同口径"，但**那是愿望不是事实**。
+//  只要两处各写一个表达式，下次改阈值就还会分叉。
+//
+//  所以：**下界直接用 `CLOSED_SIZE` / `CLOSED_HEIGHT`**（与 `球位有效` 逐字相同），
+//  不再经过 `halfOrb()` —— 那个函数只用于"球心 → 左上角"的换算。
+//
+//  ── 用户看到什么 ──
+//
+//  拖到最左上角 → 球**弹回**到整球位置（而不是"停在那儿但不保存"）。
+//  **"拖不到"有当场反馈；"拖到了却不保存"没有。**
+const minAnchorX = (): number => CLOSED_SIZE;
 const maxAnchorX = (): number => viewportW() - halfOrb() + EDGE_GAP;
-const minAnchorY = (): number => halfOrbHeight() - EDGE_GAP;
+const minAnchorY = (): number => CLOSED_HEIGHT;
 const maxAnchorY = (): number => viewportH() - halfOrbHeight() + EDGE_GAP;
 
 const anchorX = ref<number | null>(null);
