@@ -68,7 +68,7 @@ console.log('\n[3] 注入表两列：存在、逐字一致、无值时不出现'
     '伤势/体力': '左小臂绷带渗血, 抬臂吃力',
     心事: '蒂娜还在生气',
   };
-  const 注入 = buildInjectionPrompt([['艾莉', 卡]], {}, '2039-09-17 11:35', false);
+  const 注入 = buildInjectionPrompt([['艾莉', 卡]], { 剧情时间: '2039-09-17 11:35', 生理监测: false });
   const 表头 = 注入.split('\n').find(l => l.startsWith('名字')) ?? '';
   const 数据 = 注入.split('\n').find(l => l.startsWith('艾莉')) ?? '';
   const 列们 = 表头.split(' | ');
@@ -80,7 +80,7 @@ console.log('\n[3] 注入表两列：存在、逐字一致、无值时不出现'
   check('衣着列逐字一致（V1 短字段）', 取列('衣着'), 卡['衣物/随身物']);
   check('伤情列逐字一致（V1 短字段）', 取列('伤情'), 卡['伤势/体力']);
 
-  const 空注入 = buildInjectionPrompt([['甲', { 当前在做: '坐着', 当前状态: '平静', 位置: '家' }]], {}, '2039-09-17 11:35', false);
+  const 空注入 = buildInjectionPrompt([['甲', { 当前在做: '坐着', 当前状态: '平静', 位置: '家' }]], { 剧情时间: '2039-09-17 11:35', 生理监测: false });
   const 空表头 = 空注入.split('\n').find(l => l.startsWith('名字')) ?? '';
   ok('无值时「衣着」列不出现（动态列）', !空表头.includes('衣着'), 空表头);
   ok('无值时「伤情」列不出现（动态列）', !空表头.includes('伤情'), 空表头);

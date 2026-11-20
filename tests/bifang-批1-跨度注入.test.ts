@@ -163,7 +163,7 @@ console.log('\n[9] A6：周期影响只写机制层 / 当前状态只写表现�
 console.log('\n[10] 注入一致性三档（V1：长字段前缀 / 生活状态相对化 / 批1 不偷加列）');
 {
   const 卡 = 造卡();
-  const 注入 = buildInjectionPrompt([['乔尔', 卡]], {}, '2026-11-10 20:00', true);
+  const 注入 = buildInjectionPrompt([['乔尔', 卡]], { 剧情时间: '2026-11-10 20:00', 生理监测: true });
   const 表头行 = 注入.split('\n').find(l => l.startsWith('名字')) ?? '';
   const 数据行 = 注入.split('\n').find(l => l.startsWith('乔尔')) ?? '';
   const 列们 = 表头行.split(' | ');
