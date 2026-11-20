@@ -237,7 +237,7 @@ import SettingsPage from './页面-设置.vue';
 import { 仪表盘面板键, 建仪表盘面板 } from './仪表盘面板';
 import { 日志面板键, 建日志面板 } from './日志面板';
 import { 设置面板键, 建设置面板 } from './设置面板';
-import { use面板主题, 读球位置, 存球位置 } from './悬浮球偏好';
+import { use面板主题, 读球位置, 存球位置, 球位有效, 视口可用 } from './悬浮球偏好';
 import { 构建标识 } from './构建';
 
 // 宿主由挂载器传入, 组件不直接构造平台边界。
@@ -791,10 +791,20 @@ watch(worldbookAlwaysDraft, value => {
 
 // ---- 编辑提示词功能(自定义提示词段)已于 2026-10 删除: 历史残留, 界面与设置项一并移除 ----
 
-const savedOrb = 读球位置(host);
-
 const viewportW = (): number => parentWin.value?.innerWidth ?? window.innerWidth;
 const viewportH = (): number => parentWin.value?.innerHeight ?? window.innerHeight;
+
+// ── 读球位：带上视口做毒值净化（2026-11-20 毒值小修，需求方 #469）──
+//
+//  原来只挡 `0,0` 哨兵 → `{20,20}` 这种历史毒值原样返回 →
+//  挂载恢复的下界是 `halfOrb()` ≈ 20，它刚好能通过 → **球被钉在左上角，永久**。
+//
+//  现在传视口进去，让 `读球位置` 用**与共用那份同口径**的有效性判定：
+//  下界是 `CLOSED_SIZE`（整球，不是半个球），`{20,20}` 一律判无效 → 返回 null →
+//  下面 `onMounted` 用**默认右下**。
+//
+//  ⚠ 必须放在 `viewportW/H` **之后**（它们要先用，否则是 TDZ）。
+const savedOrb = 读球位置(host, { w: viewportW(), h: viewportH() }, CLOSED_SIZE);
 
 /** 视口的响应式快照: 打开面板时球停靠位置需要跟着视口重算 */
 const 视口尺寸 = ref({ w: viewportW(), h: viewportH() });
@@ -1022,6 +1032,19 @@ function persistOrbPos() {
   orbSaveTimer = window.setTimeout(() => {
     orbSaveTimer = null;
     if (anchorX.value === null || anchorY.value === null) return;
+    // ── 落盘守卫（2026-11-20 毒值小修，需求方 #469）──
+    //
+    //  原来只查 `null` → clamp 后的 `(20,20)` 直接写全局。
+    //  于是毒值**每次都被写回**，永久钉住。
+    //
+    //  现在两道闸，与 `共用/面板机制.ts` 的 `persistPrefs` 同口径：
+    //    ① **视口不可用**（宽或高 < 200）→ 不落盘
+    //       否则会把"当帧的兜底结果"永久写进去
+    //    ② **球位不合法**（历史毒值 / 夹取产生的边界值）→ 不落盘
+    const vw = viewportW();
+    const vh = viewportH();
+    if (!视口可用(vw, vh)) return;
+    if (!球位有效(anchorX.value, anchorY.value, vw, vh, CLOSED_SIZE)) return;
     存球位置(host, { x: anchorX.value, y: anchorY.value });
   }, 200);
 }

@@ -157,17 +157,69 @@ export function use面板主题(host: 偏好宿主) {
     return { theme, toggleTheme };
 }
 
-/** 读球落点: 从没存过(或旧值认不出)就返回 null, 界面用自己的默认位 */
-export function 读球位置(host: 偏好宿主): 球位置 | null {
+/**
+ * 球位有效性判定 —— **与 `共用/面板机制.ts` 同口径**（2026-11-20 毒值小修，需求方 #469）。
+ *
+ * ── 为什么需要它 ──
+ *
+ *  原来 `读球位置` 只挡 `0,0` 这个迁移哨兵。于是 **`{20,20}` 这种毒值原样返回**：
+ *    · 挂载恢复的下界是 `halfOrb() - EDGE_GAP` = `CLOSED_SIZE/2` ≈ 20 → `{20,20}` 能通过
+ *    · `persistOrbPos` 只查 `null` → clamp 后的 `(20,20)` 直接写回全局
+ *  → **球被钉在左上角，永久**（毒值每次被读回、又被写回）。
+ *
+ * ── 判据（照抄共用那份）──
+ *
+ *  下界用 **`CLOSED_SIZE`** 而不是半个球 —— 与拖动夹取同口径，
+ *  于是 `{x:20, y:20}` 这类历史毒值一律判无效。
+ *
+ *  > **夹到边界不等于安全**：夹出来的 `20,20` 还是毒值。差一个阈值就是永久钉住。
+ */
+function 球位有效(x: unknown, y: unknown, vw: number, vh: number, 球直径: number): boolean {
+    const 半 = 球直径 / 2;
+    return (
+        typeof x === 'number' && typeof y === 'number'
+        && Number.isFinite(x) && Number.isFinite(y)
+        && x >= 球直径 && y >= 球直径
+        && x <= vw - 半 && y <= vh - 半
+    );
+}
+
+/** 视口可用吗 —— 量不出宽高时**绝不落盘**（否则会把当帧的兜底结果永久写进去） */
+function 视口可用(vw: number, vh: number): boolean {
+    return vw >= 200 && vh >= 200;
+}
+
+/**
+ * 读球落点: 从没存过(或旧值认不出/是毒值)就返回 null, 界面用自己的默认位。
+ *
+ * @param 视口 当前视口尺寸（宽/高）。量不出时（宽或高 < 200）**一律返回 null** ——
+ *   那时任何坐标都不可信，界面的默认位比一个瞎猜的值安全。
+ * @param 球直径 悬浮球直径（`theme.ts` 的 `悬浮球直径`）。有效性判定的下界是它。
+ */
+export function 读球位置(host: 偏好宿主, 视口?: { w: number, h: number }, 球直径 = 44): 球位置 | null {
     const 偏好 = 读偏好(host);
     if (!偏好 || typeof 偏好.x !== 'number' || typeof 偏好.y !== 'number')
         return null;
     // 0,0 是迁移时的哨兵(只迁了主题、没存过位置), 不算"存过"
     if (偏好.x === 0 && 偏好.y === 0)
         return null;
+    // ── 毒值净化（2026-11-20 新增）──
+    //  给了视口就必须过有效性判定；没给视口（旧调用方）则只做"有限数字"这一档，
+    //  避免把"没传视口"误判成"毒值"。
+    if (视口) {
+        if (!视口可用(视口.w, 视口.h))
+            return null;
+        if (!球位有效(偏好.x, 偏好.y, 视口.w, 视口.h, 球直径))
+            return null;
+    }
+    else if (!Number.isFinite(偏好.x) || !Number.isFinite(偏好.y)) {
+        return null;
+    }
     return { x: 偏好.x, y: 偏好.y };
 }
 
 export function 存球位置(host: 偏好宿主, pos: 球位置): void {
     存偏好(host, { x: pos.x, y: pos.y });
 }
+
+export { 球位有效, 视口可用 };
