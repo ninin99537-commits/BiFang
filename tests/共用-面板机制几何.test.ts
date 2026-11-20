@@ -268,6 +268,9 @@ async function 跑一次(配置: {
   面板高: number;
   视口: { 宽: number; 高: number };
   预置存储?: any;
+  /** 2026-11-20 C7 新增的两个可选配置 */
+  面板布局?: 'joint' | 'fullscreen';
+  打开态球?: '跟随锚点' | '贴边书签';
 }): Promise<跑结果> {
   const { win: 父窗口 } = 造父窗口(配置.视口.宽, 配置.视口.高);
   const iframe = 造iframe();
@@ -302,6 +305,9 @@ async function 跑一次(配置: {
           读本地: () => null,
           写本地: () => {},
         },
+        // 2026-11-20 C7：两个新增可选配置（不传时走老分支）
+        ...(配置.面板布局 ? { 面板布局: 配置.面板布局 } : {}),
+        ...(配置.打开态球 ? { 打开态球: 配置.打开态球 } : {}),
       });
       面板.value = p;
       // rootEl 要指向一个"ownerDocument.defaultView = frameWin"的元素；
@@ -574,6 +580,81 @@ console.log('\n[★ 自证] 判据能抓到"改内核"');
   eq('[自证] 球直径改成 56 → iframe 宽跟着变（不是写死 44）', r2.iframe.style.width, '56px');
   ok('[自证] 两次的宽确实不同（说明球直径真的参与计算）', 关态宽 !== r2.iframe.style.width);
   r2.卸载();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2026-11-20 C7 闸 1：两个新增可选配置的行为
+// ═══════════════════════════════════════════════════════════════════════════
+//
+//  这两段**只测新分支**，不碰上面的 66 条老基准 ——
+//  老基准全绿 = "不传新键时行为不变" 的证据（已在本文件前半段证明）。
+
+console.log('\n[★ C7 新配置 ①] 面板布局 = fullscreen');
+{
+  const r = await 跑一次({ ...烟火配置, 面板布局: 'fullscreen' });
+  r.面板.panelOpen.value = true;
+  await nextTick();
+  await nextTick();
+  const s = r.iframe.style;
+
+  eq('★ fullscreen：iframe left = 0', s.left, '0px');
+  eq('★ fullscreen：iframe top = 0', s.top, '0px');
+  eq('★ fullscreen：iframe 宽 = 视口宽', s.width, '1440px');
+  eq('★ fullscreen：iframe 高 = 视口高', s.height, '900px');
+  eq('★ fullscreen：无圆角', s.borderRadius, '0px');
+  eq('★ fullscreen：**不裁** clip-path（命中交给核外遮罩）', s.clipPath, 'none');
+  eq('★ fullscreen：面板铺满视口（不是 880）', r.面板.panelStyleRef.value.width, '1440px');
+  eq('★ fullscreen：面板高 = 视口高', r.面板.panelStyleRef.value.height, '900px');
+  eq('★ fullscreen：面板位置 (0,0)', r.面板.panelStyleRef.value.left, '0px');
+  r.卸载();
+
+  // **自证**：同样的配置不传 `面板布局` 时，必须走 joint（宽度是 880）
+  const r2 = await 跑一次(烟火配置);
+  r2.面板.panelOpen.value = true;
+  await nextTick();
+  await nextTick();
+  eq('[自证] 不传面板布局 → 走 joint（面板宽 = 880）',
+     r2.面板.panelStyleRef.value.width, '880px');
+  ok('[自证] 两个分支的结果确实不同（不是同一个分支跑两遍）',
+     r2.面板.panelStyleRef.value.width !== '1440px');
+  r2.卸载();
+}
+
+console.log('\n[★ C7 新配置 ②] 打开态球 = 贴边书签');
+{
+  // 宽屏 1440、面板 880 居中 → 左右各 (1440-880)/2 = 280 的边距
+  // 边距阈值 = CLOSED_SIZE + 16 = 60，280 >= 60 → 贴右边
+  const r = await 跑一次({ ...烟火配置, 打开态球: '贴边书签' });
+  r.面板.panelOpen.value = true;
+  await nextTick();
+  await nextTick();
+  const orb = r.面板.orbStyle.value;
+
+  ok('★ 贴边书签：球可见（display 不是 none）', orb.display !== 'none', JSON.stringify(orb));
+  // 面板矩形 (280, 140, 880, 620) → 右余 = 1440 - (280+880) = 280
+  // 球 left = vw - 边距 - frameOrigin.x = 1440 - 60 - 276 = 1104
+  eq('★ 贴边书签：球贴右边（left 写死基准）', orb.left, '1104px');
+  r.卸载();
+
+  // 窄屏：面板铺满 → 两侧都没边距 → 必须隐藏
+  const r2 = await 跑一次({ ...烟火配置, 打开态球: '贴边书签', 视口: { 宽: 600, 高: 800 } });
+  r2.面板.panelOpen.value = true;
+  await nextTick();
+  await nextTick();
+  eq('★ 贴边书签 + 窄屏（面板占满）→ 球隐藏', r2.面板.orbStyle.value.display, 'none');
+  r2.卸载();
+
+  // **自证**：不传这个配置时，球必须还在锚点位置（不是被推去贴边）
+  const r3 = await 跑一次(烟火配置);
+  r3.面板.panelOpen.value = true;
+  await nextTick();
+  await nextTick();
+  const 跟随 = r3.面板.orbStyle.value;
+  eq('[自证] 不传打开态球 → 走跟随锚点（left = 1082，不是 1104）', 跟随.left, '1082px');
+  ok('[自证] 两个分支的 left 确实不同', 跟随.left !== '1104px');
+  ok('[自证] 跟随锚点分支**没有** display 键（形状不变）',
+     !('display' in 跟随), JSON.stringify(跟随));
+  r3.卸载();
 }
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
