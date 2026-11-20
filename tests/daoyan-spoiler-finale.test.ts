@@ -34,6 +34,8 @@ import 命令源码 from '../src/剧情导演/导演命令.ts?raw';
 import 终局源码 from '../src/剧情导演/终局.ts?raw';
 import 快照源 from '../src/剧情导演/快照.ts?raw';
 import updateSource from '../src/剧情导演/update.ts?raw';
+// 2026-11-20：`剥注释` 抽到共用（今天三次断言被注释干扰，不再各处手写）
+import { 剥注释 } from './helpers/源码扫描';
 
 (globalThis as any)._ = {
   clamp: (value: number, lower: number, upper: number) => Math.min(Math.max(value, lower), upper),
@@ -343,9 +345,9 @@ async function 主流程() {
     //  ⚠ 第一条必须**先剥注释** —— 终局.ts 的文档注释里写着
     //    "落盘由调用方 `saveData` 负责"，那是在**说明**纯函数约束，
     //    扫全文会把它当成"平台调用"。这是本批自己踩的第二个坑（同一条断言两次假红）。
-    const 剥注释 = (源: string) => 源
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/^\s*\/\/.*$/gm, '');
+    //
+    //  2026-11-20 #539：`剥注释` 已抽到 `tests/helpers/源码扫描.ts` ——
+    //  今天**三次**断言被注释干扰，抽成单一构造点，不再各处手写（否则改一处漏两处）。
     const 终局代码 = 剥注释(终局源码);
     ok('★ 落定剧终 是纯函数（终局.ts 的**代码**里不碰平台）',
        !/写已剧终|toast|saveData|getVariables|replaceVariables/.test(终局代码),
@@ -360,6 +362,29 @@ async function 主流程() {
     ok('[自证] 注释里的 saveData 会被剥掉（否则第一条永远红）',
        !/saveData/.test(剥注释('// 落盘由调用方 saveData 负责\nexport function f() {}')),
        '剥注释没生效');
+
+    // ── 2026-11-20 #539①：钉住"落定剧终 定义在哪个文件" ──
+    //
+    //  ⚠ 这是本批自曝的缺口：上面的"纯函数"断言看的是 `终局源码`。
+    //    如果将来有人把 `落定剧终` 挪回 `快照.ts`，那条会**假绿** ——
+    //    因为 `终局源码` 里还是干净的（函数已经不在了，但正则照样不命中平台调用）。
+    //
+    //  **"函数不在这个文件里" 和 "函数在这个文件里但没碰平台" 是两件事**，
+    //  前者必须单独断言。
+    ok('★ 落定剧终 的定义就在 终局.ts',
+       /export function 落定剧终\s*\(/.test(剥注释(终局源码)),
+       '终局.ts 里找不到 `export function 落定剧终(` —— 它被挪走了？');
+    ok('★ 快照.ts 里只有 re-export，没有 落定剧终 的**定义**',
+       !/function 落定剧终\s*\(/.test(剥注释(快照源)),
+       '快照.ts 里出现了 `function 落定剧终(` —— 定义被挪回存储层了');
+    ok('★ 快照.ts 确实 re-export 了它（调用方不用改 import）',
+       /export\s*\{[^}]*落定剧终[^}]*\}\s*from\s*'\.\/终局'/.test(剥注释(快照源)),
+       '快照.ts 里没有 `export { ... 落定剧终 ... } from \'./终局\'`');
+    // **自证**：把定义写进快照.ts 的"代码"，上面第二条必须红
+    ok('[自证] 快照.ts 里若真写了 `function 落定剧终(`，那条会红',
+       /function 落定剧终\s*\(/.test(剥注释('export function 落定剧终(账本) { return 账本; }')),
+       '那条正则抓不到定义 —— 它是假的');
+
     const 行 = 终值日志行(账.指标.终值);
     ok('成绩单同时写一行进日志页(清除已剧终后仍可回看)', ['已结算 2 章', '伏笔回收 5/9', '张力峰 9', '起伏 4 次', '冲突推进 3', '受挫 2', '指令执行率 75%'].every(片段 => 行.includes(片段)));
     ok('剧终时确实打了这一行', 命令源码.includes('终值日志行(当前.指标?.终值)'));

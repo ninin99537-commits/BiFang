@@ -24,6 +24,8 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { buildInjectionPrompt, buildUpdateMessages } from '../src/彼方_NPC幕后生命状态系统/prompts';
+// ⚠ "源码里有没有 X" 类断言必须先剥注释 —— 见 tests/helpers/源码扫描.ts 顶部那三次事故
+import { 剥注释 } from './helpers/源码扫描';
 
 // 与生成器**同一个**序列化函数（从 .mjs import 它的源码版不现实，
 // 所以这里把那个函数**逐字抄**过来，并断言两边产出相同 —— 见文件末尾 [自证]）。
@@ -381,7 +383,80 @@ console.log('\n[★ 覆盖矩阵] 世界书段与轨迹段各有**两组**覆盖
   // 场景判断段与自定义段仍是⑤独占 —— 那是**已知的**单点，写在这里备查
   const 场景判断组 = 出现在哪些组(t => /【最新用户输入·仅供场景判断】/.test(t));
   ok('[已知单点] 场景判断段目前只有第⑤组覆盖', 场景判断组.length === 1, `实际 ${JSON.stringify(场景判断组)}`);
-  console.log('      （场景判断/自定义锚点/权威时间仍是⑤独占 —— 需求方 #513 说这三处不加组，收益小于成本）');
+  console.log('      （场景判断/自定义锚点仍是⑤独占 —— 需求方 #513 说这两处不加组，收益小于成本）');
+}
+
+// ═════════════════════════════════════════════════════════════
+// Q3 三处条件收尾 —— 2026-11-20（需求方 #531）
+// ═════════════════════════════════════════════════════════════
+//
+//  验收裁定：`prompts.ts` 里 13 处三元，**10 处是正文内容**（教模型的格式说明、`?? '无'` 空值兜底），
+//  **只有 3 处是逻辑**，该提升成段级 `当`：
+//
+//  | 位置 | 原来 | 现在 |
+//  |---|---|---|
+//  | L154 | 第一段正文里挂着 `${physioEnabled ? PHYSIO_AUTHORITY_BLOCK : ''}` | **拆成独立段** `当: () => physioEnabled` |
+//  | L496 | `storyTimeHint` 的整段条件写在正文三元里 | **三支各成一段**，条件进 `当` |
+//  | L304 | 台账账况的后缀拼接（函数体内部） | **显式 if 拼装**（不提升成段） |
+//
+//  > 验收这次的分辨值得记：**它没有按"三元数量超了就该改"去判**，而是逐个看
+//  > "这是逻辑还是正文内容"。**如果按数量硬改，那 10 处正文会被拆碎，产物就变了。**
+console.log('\n[★ Q3] 三处条件收尾：条件真的在 `当` 里，不在正文里');
+{
+  const { readFileSync: 读 } = await import('node:fs');
+  const path = await import('node:path');
+  const 原源 = 读(path.join(process.cwd(), 'src/彼方_NPC幕后生命状态系统/prompts.ts'), 'utf8');
+  // ⚠ **先剥注释** —— prompts.ts 的文档注释里大量引用了"原来的三元长什么样"，
+  //   直接扫全文会把那些**说明**当成"还在用"。（本批实际踩过，见 tests/helpers/源码扫描.ts）
+  const 源 = 剥注释(原源);
+
+  // ── ① L154：生理权威块必须是独立段，且 `当` 用 physioEnabled ──
+  ok('★ [Q3①] 有独立的「生理权威块」段',
+     /名: '生理权威块'/.test(源));
+  ok('★ [Q3①] 它的条件在 `当` 里（不是正文三元）',
+     /名: '生理权威块',\s*\n\s*当: \(\) => physioEnabled,\s*\n\s*正文: PHYSIO_AUTHORITY_BLOCK,/.test(源));
+  ok('★ [Q3①] **代码里**不再有 `${physioEnabled ? PHYSIO_AUTHORITY_BLOCK : \'\'}`',
+     !/\$\{physioEnabled \? PHYSIO_AUTHORITY_BLOCK : ''\}/.test(源));
+
+  // ── ② L496：storyTimeHint 三支各成一段，条件在 `当` ──
+  ok('★ [Q3②] 三支各有自己的段名',
+     ['权威时间(完整)', '权威时间(仅时分)', '权威时间(兜底)'].every(名 => 源.includes(`名: '${名}'`)));
+  ok('★ [Q3②] 「完整」那支的条件在 `当` 里',
+     /名: '权威时间\(完整\)',\s*\n\s*当: i => !!i\.storyTimeHint,/.test(源));
+  ok('★ [Q3②] 「仅时分」那支的条件在 `当` 里',
+     /名: '权威时间\(仅时分\)',\s*\n\s*当: i => !i\.storyTimeHint && !!i\.storyTimeHint仅时分,/.test(源));
+  ok('★ [Q3②] **代码里**不再有 `${input.storyTimeHint ? \`【★正文当前时间`',
+     !/\$\{input\.storyTimeHint \? `【★正文当前时间/.test(源));
+
+  // ── ③ L304：台账账况改成显式拼装 ──
+  ok('★ [Q3③] 台账账况用显式拼装（有 `行文本 +=`）',
+     /let 行文本 = `\$\{名\} 进行中 \$\{进行中\.length\} 条`;/.test(源) && /行文本 \+= `（最早写下/.test(源));
+  ok('★ [Q3③] 它**没有**被提升成段（它不是整块开关，是函数体内部拼接）',
+     !/名: '台账账况'/.test(源));
+
+  // ── 自证：这三条判据能抓到"改回去" ──
+  //
+  //  ⚠ 需求方 #531 明确要求这条自证：
+  //    "把 L154 改回段内三元 → 某条结构判据必须红（否则这条判据是假的）"
+  //
+  //  两半都要验：① 改回去之后那条正则**能命中**（不是恒 false）
+  //             ② 剥注释**不会**把改回去的代码剥掉
+  const 改回段内三元 = 剥注释(原源.replace(
+    /            名: '生理权威块',\n            当: \(\) => physioEnabled,\n            正文: PHYSIO_AUTHORITY_BLOCK,/,
+    "            名: '开场+生理权威块',\n            正文: `...${physioEnabled ? PHYSIO_AUTHORITY_BLOCK : ''}`,",
+  ));
+  ok('[自证] 把 L154 改回段内三元，「不在正文里」那条会红',
+     改回段内三元 !== 源
+     && /\$\{physioEnabled \? PHYSIO_AUTHORITY_BLOCK : ''\}/.test(改回段内三元)
+     && !/名: '生理权威块',\s*\n\s*当: \(\) => physioEnabled,/.test(改回段内三元));
+
+  // ── 自证：剥注释本身有效（否则上面三条"不再有"全是假绿）──
+  const 注释样本 = "// 原来是 `${physioEnabled ? PHYSIO_AUTHORITY_BLOCK : ''}`\nexport const a = 1;";
+  const 代码样本 = "const x = `${physioEnabled ? PHYSIO_AUTHORITY_BLOCK : ''}`;";
+  ok('[自证] 剥注释后，**注释里**的三元不会被当成"还在用"',
+     !/\$\{physioEnabled \? PHYSIO_AUTHORITY_BLOCK : ''\}/.test(剥注释(注释样本)));
+  ok('[自证] 剥注释后，**代码里**的三元仍然被命中（剥过头也会假绿）',
+     /\$\{physioEnabled \? PHYSIO_AUTHORITY_BLOCK : ''\}/.test(剥注释(代码样本)));
 }
 
 // ═════════════════════════════════════════════════════════════
