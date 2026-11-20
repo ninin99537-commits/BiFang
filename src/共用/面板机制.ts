@@ -90,11 +90,23 @@ export interface 面板机制配置 {
    *
    * · `'joint'`      —— 面板按配置宽高居中（窄屏近乎全屏），球留在原地，iframe 罩住两者的联合矩形。
    * · `'fullscreen'` —— 面板铺满整个视口（`iframe` 就是视口），**不做重叠推开、不做宽屏夹取**。
-   *   彼方的 `.bf-panel` 用的是这个口径（≤800px 整屏 / 宽屏 1120×760）。
+   * · `'capped'`     —— **窄屏整屏、宽屏最多 `面板上限宽/高` 并居中**（2026-11-20 C7 追加，彼方的口径）。
+   *   需要配合 `面板上限宽` / `面板上限高`。
    *
-   * ⚠ `fullscreen` 是**新增分支**，不改 `joint` 的任何一行。
+   * ⚠ 后两个都是**新增分支**，不改 `joint` 的任何一行。
    */
-  面板布局?: 'joint' | 'fullscreen';
+  面板布局?: 'joint' | 'fullscreen' | 'capped';
+
+  /**
+   * `capped` 布局的面板上限宽（px）。
+   *
+   * ⚠ **只有 `面板布局: 'capped'` 时才被读**。其他布局传了也没用。
+   *   不传时退回 `面板宽`（配置值）。
+   */
+  面板上限宽?: number;
+
+  /** `capped` 布局的面板上限高（px）。不传时退回 `面板高`。 */
+  面板上限高?: number;
 
   /**
    * 面板打开时球怎么放（默认 `'跟随锚点'` = 球留在用户拖到的位置，烟火/导演现行为）。
@@ -352,6 +364,36 @@ const CLOSED_HEIGHT = 配置.球高度 ?? 配置.球直径;
       //    "看起来正确的值"比"明确的 (0,0)"更危险 —— 那会把猜测伪装成契约。
       return;
     }
+
+    // ── 2026-11-20 C7 追加：capped 布局（彼方的口径）──
+    //
+    //  **窄屏整屏、宽屏最多"上限宽/高"并居中。**
+    //
+    //  ⚠ 这里的 800 / 0.95 / 56 **必须与彼方 `面板矩形()` 逐值相同**：
+    //
+    //      if (vw <= 800) return { x: 0, y: 0, w: vw, h: vh };
+    //      const w = Math.min(1120, vw * 0.95);
+    //      const h = Math.min(760, vh - 56);
+    //      return { x: (vw - w) / 2, y: (vh - h) / 2, w, h };
+    //
+    //  改任何一个数字都会让"内核接管后球的位置变了"。
+    if (配置.面板布局 === 'capped') {
+      const vw = viewportW();
+      const vh = viewportH();
+      isNarrow.value = vw <= 800;
+      if (isNarrow.value) {
+        panelW.value = vw;
+        panelH.value = vh;
+      }
+      else {
+        const 上限宽 = 配置.面板上限宽 ?? 配置.面板宽;
+        const 上限高 = 配置.面板上限高 ?? 配置.面板高;
+        panelW.value = Math.min(上限宽, vw * 0.95);
+        panelH.value = Math.min(上限高, vh - 56);
+      }
+      return;
+    }
+
     isNarrow.value = viewportW() < 700;
     if (isNarrow.value) {
       // 窄屏: 面板铺满视口(只留安全边距), 高度给到可用高度的 94%——手机上小窗没有意义,
@@ -373,6 +415,23 @@ const CLOSED_HEIGHT = 配置.球高度 ?? 配置.球直径;
     //  ⚠ 这里**不改下面 joint 的任何一行**，只是在前面多一个 return。
     if (配置.面板布局 === 'fullscreen')
       return { x: 0, y: 0 };
+
+    // ── 2026-11-20 C7 追加：capped 布局 ──
+    //
+    //  与彼方 `面板矩形()` 的位置口径一致：**居中**（`(vw-w)/2, (vh-h)/2`），
+    //  且**不做重叠推开**（彼方没有这个行为）。
+    //
+    //  拖动过（`panelPos` 非空）时仍用它 —— 但彼方的面板是 CSS 固定的，不会拖，所以实际走居中。
+    if (配置.面板布局 === 'capped') {
+      const vw = viewportW();
+      const vh = viewportH();
+      const raw = panelPos.value ?? { x: (vw - panelW.value) / 2, y: (vh - panelH.value) / 2 };
+      return {
+        x: clamp(raw.x, 8, Math.max(8, vw - panelW.value - 8)),
+        y: clamp(raw.y, 8, Math.max(8, vh - panelH.value - 8)),
+      };
+    }
+
     const raw = panelPos.value ?? { x: (viewportW() - panelW.value) / 2, y: (viewportH() - panelH.value) / 2 };
     let x = clamp(raw.x, 8, Math.max(8, viewportW() - panelW.value - 8));
     let y = clamp(raw.y, 8, Math.max(8, viewportH() - panelH.value - 8));

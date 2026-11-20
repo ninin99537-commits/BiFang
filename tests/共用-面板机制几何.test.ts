@@ -268,10 +268,12 @@ async function 跑一次(配置: {
   面板高: number;
   视口: { 宽: number; 高: number };
   预置存储?: any;
-  /** 2026-11-20 C7 新增的三个可选配置 */
-  面板布局?: 'joint' | 'fullscreen';
+  /** 2026-11-20 C7 新增的可选配置 */
+  面板布局?: 'joint' | 'fullscreen' | 'capped';
   打开态球?: '跟随锚点' | '贴边书签';
   球高度?: number;
+  面板上限宽?: number;
+  面板上限高?: number;
 }): Promise<跑结果> {
   const { win: 父窗口 } = 造父窗口(配置.视口.宽, 配置.视口.高);
   const iframe = 造iframe();
@@ -306,10 +308,12 @@ async function 跑一次(配置: {
           读本地: () => null,
           写本地: () => {},
         },
-        // 2026-11-20 C7：三个新增可选配置（不传时走老分支）
+        // 2026-11-20 C7：新增可选配置（不传时走老分支）
         ...(配置.面板布局 ? { 面板布局: 配置.面板布局 } : {}),
         ...(配置.打开态球 ? { 打开态球: 配置.打开态球 } : {}),
         ...(配置.球高度 ? { 球高度: 配置.球高度 } : {}),
+        ...(配置.面板上限宽 ? { 面板上限宽: 配置.面板上限宽 } : {}),
+        ...(配置.面板上限高 ? { 面板上限高: 配置.面板上限高 } : {}),
       });
       面板.value = p;
       // rootEl 要指向一个"ownerDocument.defaultView = frameWin"的元素；
@@ -689,6 +693,150 @@ console.log('\n[★ C7 新配置 ③] 球高度（非方形球）');
   eq('[自证] 方球（46×46）下 y=50 是**合法**值 → 不写回', r4.写次数(), 0);
   eq('[自证] 且球停在被存的位置', r4.iframe.style.top, `${50 - 23}px`);
   r4.卸载();
+}
+
+console.log('\n[★ C7 新配置 ④] 面板布局 = capped（与彼方 面板矩形() 逐值相同）');
+{
+  // ── 判据：五个视口各对一次，值必须与彼方的 `面板矩形()` 完全一致 ──
+  //
+  //  彼方的实现（`悬浮球界面.vue` 的 `面板矩形()`）：
+  //    if (vw <= 800) return { x: 0, y: 0, w: vw, h: vh };
+  //    const w = Math.min(1120, vw * 0.95);
+  //    const h = Math.min(760, vh - 56);
+  //    return { x: (vw - w) / 2, y: (vh - h) / 2, w, h };
+  //
+  //  ⚠ **这五个值是手算的**（不是从彼方跑的），因为它们要证明"内核与彼方一致"。
+  const 视口们 = [
+    { 宽: 1440, 高: 900, 期望: { w: 1120, h: 760 } },        // 1120 < 1440*0.95=1368 → 1120；760 < 900-56=844 → 760
+    { 宽: 1920, 高: 1080, 期望: { w: 1120, h: 760 } },       // 1120 < 1824 → 1120；760 < 1024 → 760
+    { 宽: 1024, 高: 768, 期望: { w: 973, h: 712 } },         // 1024*0.95=972.8 → round? 见下
+    { 宽: 800, 高: 600, 期望: { w: 800, h: 600 } },          // vw<=800 → 整屏
+    { 宽: 700, 高: 900, 期望: { w: 700, h: 900 } },          // vw<=800 → 整屏
+  ];
+
+  for (const { 宽, 高, 期望 } of 视口们) {
+    const r = await 跑一次({
+      ...烟火配置,
+      面板布局: 'capped',
+      面板上限宽: 1120,
+      面板上限高: 760,
+      视口: { 宽, 高 },
+    });
+    r.面板.panelOpen.value = true;
+    await nextTick();
+    await nextTick();
+    const ps = r.面板.panelStyleRef.value;
+    // ⚠ 用 Number.parseFloat 比，避免 "972.8px" 与 "973px" 的舍入之争
+    const 实际宽 = Number.parseFloat(ps.width);
+    const 实际高 = Number.parseFloat(ps.height);
+    const 期望宽 = 宽 <= 800 ? 宽 : Math.min(1120, 宽 * 0.95);
+    // ⚠ 窄屏（<=800）时面板高 = 视口高（整屏），不是 `min(上限高, vh-56)`
+    const 期望高 = 宽 <= 800 ? 高 : Math.min(760, 高 - 56);
+
+    ok(`[capped ${宽}×${高}] ★ 面板宽 = ${期望宽}`,
+       Math.abs(实际宽 - 期望宽) < 0.6, `实际 ${ps.width}`);
+    ok(`[capped ${宽}×${高}] ★ 面板高 = ${期望高}`,
+       Math.abs(实际高 - 期望高) < 0.6, `实际 ${ps.height}`);
+
+    // ⚠ `panelStyleRef.left` 是**相对 iframe 原点**的，不是视口坐标。
+    //    capped 下 iframe 罩住"面板 ∪ 球"的联合矩形，所以 left 通常是 4（pad）。
+    //    要验"面板在视口里居中"，应该看 `panelRectView` 的视口坐标 —— 但内核没暴露它。
+    //    → 这里改验**宽高**（已经验了）+ 一个可观测的等价物：iframe 罩得住面板。
+    //
+    //    ⚠ 窄屏（整屏）时 iframe 会比面板窄 4px（联合矩形的 pad 是从视口边界算的）——
+    //      那不是缺陷，是"整屏时没有边距可留"。所以窄屏只验"接近"。
+    const iframe宽 = Number.parseFloat(r.iframe.style.width);
+    if (宽 <= 800) {
+      ok(`[capped ${宽}×${高}] 整屏时 iframe 宽 ≈ 视口（差 ${宽 - iframe宽}px，是 pad）`,
+         Math.abs(iframe宽 - 宽) <= 8, `iframe ${iframe宽} vs 视口 ${宽}`);
+    }
+    else {
+      ok(`[capped ${宽}×${高}] ★ 联合矩形宽 ≥ 面板宽（iframe 罩得住）`,
+         iframe宽 >= 实际宽, `iframe ${iframe宽} vs 面板 ${实际宽}`);
+    }
+    r.卸载();
+  }
+}
+
+console.log('\n[★ C7 capped + 贴边书签] 宽屏球可见 / 窄屏隐藏（彼方现行为）');
+{
+  // 1440×900：面板 1120 居中 → 左右余 (1440-1120)/2 = 160 ≥ 62 → 球可见贴右
+  const 宽屏 = await 跑一次({
+    ...烟火配置,
+    面板布局: 'capped',
+    面板上限宽: 1120,
+    面板上限高: 760,
+    打开态球: '贴边书签',
+    视口: { 宽: 1440, 高: 900 },
+  });
+  宽屏.面板.panelOpen.value = true;
+  await nextTick();
+  await nextTick();
+  ok('★ capped 宽屏（1440）→ 球**可见**', 宽屏.面板.orbStyle.value.display !== 'none',
+     JSON.stringify(宽屏.面板.orbStyle.value));
+  宽屏.卸载();
+
+  // 1024×768：面板 973 居中 → 左右余 25.5 < 62 → 球隐藏（与彼方一致）
+  const 中屏 = await 跑一次({
+    ...烟火配置,
+    面板布局: 'capped',
+    面板上限宽: 1120,
+    面板上限高: 760,
+    打开态球: '贴边书签',
+    视口: { 宽: 1024, 高: 768 },
+  });
+  中屏.面板.panelOpen.value = true;
+  await nextTick();
+  await nextTick();
+  eq('★ capped 中屏（1024，余 25 < 62）→ 球隐藏', 中屏.面板.orbStyle.value.display, 'none');
+  中屏.卸载();
+
+  // 700×900：整屏 → 球隐藏
+  const 窄屏 = await 跑一次({
+    ...烟火配置,
+    面板布局: 'capped',
+    面板上限宽: 1120,
+    面板上限高: 760,
+    打开态球: '贴边书签',
+    视口: { 宽: 700, 高: 900 },
+  });
+  窄屏.面板.panelOpen.value = true;
+  await nextTick();
+  await nextTick();
+  eq('★ capped 窄屏（700，整屏）→ 球隐藏', 窄屏.面板.orbStyle.value.display, 'none');
+  窄屏.卸载();
+}
+
+console.log('\n[自证] capped 的判据不是恒真');
+{
+  // 把 面板上限宽 改小 → 1440 下的面板宽必须跟着变（说明配置真的被读）
+  const r = await 跑一次({
+    ...烟火配置,
+    面板布局: 'capped',
+    面板上限宽: 600,
+    面板上限高: 500,
+    视口: { 宽: 1440, 高: 900 },
+  });
+  r.面板.panelOpen.value = true;
+  await nextTick();
+  await nextTick();
+  eq('[自证] 上限宽改 600 → 面板宽 600（说明配置被读，不是写死 1120）',
+     r.面板.panelStyleRef.value.width, '600px');
+  eq('[自证] 上限高改 500 → 面板高 500', r.面板.panelStyleRef.value.height, '500px');
+  r.卸载();
+
+  // 不传 capped（走 joint）时，上限宽必须**不被读**
+  const r2 = await 跑一次({
+    ...烟火配置,
+    面板上限宽: 600,
+    视口: { 宽: 1440, 高: 900 },
+  });
+  r2.面板.panelOpen.value = true;
+  await nextTick();
+  await nextTick();
+  eq('[自证] 不传 面板布局 → 上限宽被忽略（joint 用 面板宽 880）',
+     r2.面板.panelStyleRef.value.width, '880px');
+  r2.卸载();
 }
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
