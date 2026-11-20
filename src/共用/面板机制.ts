@@ -39,18 +39,6 @@ export interface 面板机制配置 {
   阴影变量: string;
   /** 悬浮球直径(px): 球宽高、锚点偏移、外层 iframe 尺寸、贴球定位都该用它 */
   球直径: number;
-  /**
-   * 悬浮球**高度**(px)。不传 = 等于 `球直径`（正方形球，烟火/导演现行为）。
-   *
-   * 2026-11-20 C7 闸 1 追加（需求方裁定）：彼方的球是 **46×58 的非方形**，
-   * 而内核原来是"单尺寸"—— 球宽高、锚点偏移、iframe 尺寸、贴球定位全用 `球直径`。
-   * 设计文档 §5 第 4 条点名这是"内核表达不了"之一。
-   *
-   * ⚠ **只增不改**：不传时 `球高度 = 球直径`，所有既有分支的算术**一个数都不变**。
-   *   凡是原来用 `CLOSED_SIZE` 当"高度"的地方，改成 `CLOSED_HEIGHT`；
-   *   不传时 `CLOSED_HEIGHT === CLOSED_SIZE`，结果逐字符相同（几何基准会证明）。
-   */
-  球高度?: number;
   /** 酒馆页面上阴影层的 z-index */
   阴影层序: number;
   /** 面板默认尺寸(窄屏另有规则, 不受这两个数影响) */
@@ -69,55 +57,6 @@ export interface 面板机制配置 {
   };
   /** 偏好存储接缝(全局变量 + localStorage) */
   存储: 偏好存储;
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // 以下两个是 **2026-11-20 C7 新增的可选配置**（需求方 #544 闸 1）
-  // ═══════════════════════════════════════════════════════════════════════════
-  //
-  //  ── 为什么是"可选 + 默认值 = 老行为" ──
-  //
-  //  烟火 / 导演 两家在跑这个内核。**扩接口的第一原则是它们零影响** ——
-  //  不传新键 → 走原来的分支，一行代码都不经过。内核已有先例：`提示条.设抑制?`。
-  //
-  //  ⚠ **不许改任何现有必填字段的语义，不许改 `computePanelSize` / `applyFrame` 的既有分支。**
-  //    只加新分支。
-  //
-  //  验证方式：扩完、彼方还没接的时候跑全量 ——
-  //  烟火/导演的测试（含 `tests/共用-面板机制几何.test.ts` 的 66 条基准）必须**一条不变**。
-
-  /**
-   * 面板布局（默认 `'joint'` = 面板 ∪ 球的联合矩形，烟火/导演现行为）。
-   *
-   * · `'joint'`      —— 面板按配置宽高居中（窄屏近乎全屏），球留在原地，iframe 罩住两者的联合矩形。
-   * · `'fullscreen'` —— 面板铺满整个视口（`iframe` 就是视口），**不做重叠推开、不做宽屏夹取**。
-   * · `'capped'`     —— **窄屏整屏、宽屏最多 `面板上限宽/高` 并居中**（2026-11-20 C7 追加，彼方的口径）。
-   *   需要配合 `面板上限宽` / `面板上限高`。
-   *
-   * ⚠ 后两个都是**新增分支**，不改 `joint` 的任何一行。
-   */
-  面板布局?: 'joint' | 'fullscreen' | 'capped';
-
-  /**
-   * `capped` 布局的面板上限宽（px）。
-   *
-   * ⚠ **只有 `面板布局: 'capped'` 时才被读**。其他布局传了也没用。
-   *   不传时退回 `面板宽`（配置值）。
-   */
-  面板上限宽?: number;
-
-  /** `capped` 布局的面板上限高（px）。不传时退回 `面板高`。 */
-  面板上限高?: number;
-
-  /**
-   * 面板打开时球怎么放（默认 `'跟随锚点'` = 球留在用户拖到的位置，烟火/导演现行为）。
-   *
-   * · `'跟随锚点'` —— 球留在 `anchorX/anchorY`，随面板一起进联合矩形。
-   * · `'贴边书签'` —— 球被推到面板两侧的边距里（贴边），**两侧都没空间时隐藏**
-   *   （`orbStyle.display = 'none'`）。彼方用的是这个（避免球压住面板内容）。
-   *
-   * ⚠ 同样是**新增分支**：`'跟随锚点'` 走原来的 `orbStyle` 计算，一行不改。
-   */
-  打开态球?: '跟随锚点' | '贴边书签';
 }
 
 /**
@@ -126,14 +65,6 @@ export interface 面板机制配置 {
  */
 export function 使用面板机制(配置: 面板机制配置) {
   const CLOSED_SIZE = 配置.球直径;
-/**
- * 球的**高度**。不传 `球高度` 时等于 `球直径`（正方形球 = 烟火/导演现行为）。
- *
- * 2026-11-20 C7 闸 1 追加：彼方的球是 46×58 的非方形。
- * ⚠ 下面凡是"纵向"的算术都用它；横向仍用 `CLOSED_SIZE`。
- *   不传时两者相等，**所有既有结果逐字符不变**。
- */
-const CLOSED_HEIGHT = 配置.球高度 ?? 配置.球直径;
   const 偏好 = 建偏好会话(配置.存储);
 
   // ---------------------------------------------------------------------------
@@ -314,14 +245,12 @@ const CLOSED_HEIGHT = 配置.球高度 ?? 配置.球直径;
    * 于是 {x:20,y:20} 这类历史毒值一律判无效 → 走默认右下角(读取时净化)。
    */
   function 球位有效(x: unknown, y: unknown, vw: number, vh: number): boolean {
-    // x 用宽度、y 用高度（非方形球时两者不同）
-    const 半宽 = CLOSED_SIZE / 2;
-    const 半高 = CLOSED_HEIGHT / 2;
+    const 半 = CLOSED_SIZE / 2;
     return (
       typeof x === 'number' && typeof y === 'number' &&
       Number.isFinite(x) && Number.isFinite(y) &&
-      x >= CLOSED_SIZE && y >= CLOSED_HEIGHT &&
-      x <= vw - 半宽 && y <= vh - 半高
+      x >= CLOSED_SIZE && y >= CLOSED_SIZE &&
+      x <= vw - 半 && y <= vh - 半
     );
   }
 
@@ -332,8 +261,7 @@ const CLOSED_HEIGHT = 配置.球高度 ?? 配置.球直径;
     const vh = viewportH();
     if (!球位有效(anchorX.value, anchorY.value, vw, vh)) {
       anchorX.value = Math.max(CLOSED_SIZE, vw - 60);
-      // 纵向下界用高度：非方形球时 y 不能小于整球高
-      anchorY.value = Math.max(CLOSED_HEIGHT, vh - 130);
+      anchorY.value = Math.max(CLOSED_SIZE, vh - 130);
     }
   }
 
@@ -343,67 +271,6 @@ const CLOSED_HEIGHT = 配置.球高度 ?? 配置.球直径;
   /** 是否窄屏(手机/窄窗口): 触发"面板近乎全屏 + 底部标签栏"的手机布局 */
   const isNarrow = ref(false);
   function computePanelSize() {
-    // ── 2026-11-20 C7 新增分支：fullscreen 布局 ──
-    //
-    //  面板铺满整个视口（不留边距）—— 这是彼方的口径（整屏 iframe + 内部 CSS 定位面板）。
-    //  ⚠ **不改下面 joint 的任何一行**。
-    if (配置.面板布局 === 'fullscreen') {
-      isNarrow.value = false;
-      panelW.value = viewportW();
-      panelH.value = viewportH();
-      // ── ⚠ fullscreen 下 `panelStyleRef` 返回 (0,0) —— 这是**有意的**，不是漏算 ──
-      //
-      //  `panelRectView` 在 fullscreen 分支返回 `{x:0, y:0}`，于是
-      //  `panelStyleRef.left/top` 都是 `0px`。
-      //
-      //  **彼方不读这个值** —— 它的面板位置由自己的 CSS 决定
-      //  （`.bf-panel { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%) }`）。
-      //
-      //  ⚠ **若将来有人要用这个值，先确认它该是 (0,0) 还是居中**：
-      //    现在没有消费者，**没人验证过哪个是对的**。
-      //    "看起来正确的值"比"明确的 (0,0)"更危险 —— 那会把猜测伪装成契约。
-      return;
-    }
-
-    // ── 2026-11-20 C7 追加：capped 布局（彼方的口径）──
-    //
-    //  **窄屏整屏、宽屏最多"上限宽/高"并居中。**
-    //
-    //  ⚠ 这里的 800 / 0.95 / 56 **必须与彼方 `面板矩形()` 逐值相同**：
-    //
-    //      if (vw <= 800) return { x: 0, y: 0, w: vw, h: vh };
-    //      const w = Math.min(1120, vw * 0.95);
-    //      const h = Math.min(760, vh - 56);
-    //      return { x: (vw - w) / 2, y: (vh - h) / 2, w, h };
-    //
-    //  改任何一个数字都会让"内核接管后球的位置变了"。
-    if (配置.面板布局 === 'capped') {
-      const vw = viewportW();
-      const vh = viewportH();
-      // ⚠ 这里的 `vw <= 800` 与 joint 分支的 `vw < 700` **是两个不同的阈值**，
-      //    **不是漏改**（需求方 #559 缺口 2 要求写清）。
-      //
-      //  | 布局 | 阈值 | 语义 |
-      //  |---|---|---|
-      //  | `joint` | `vw < 700` | 窄屏时面板"近乎全屏 + 底部标签栏"（手机布局） |
-      //  | `capped` | `vw <= 800` | 窄屏时面板"完全整屏"（彼方 `.bf-panel` 的口径） |
-      //
-      //  两者的边界值也不同（`<700` vs `<=800`）。将来谁想把它们统一，
-      //  **先想清楚为什么原本不同** —— 一个来自烟火的手机布局经验值，一个来自彼方的 CSS。
-      isNarrow.value = vw <= 800;
-      if (isNarrow.value) {
-        panelW.value = vw;
-        panelH.value = vh;
-      }
-      else {
-        const 上限宽 = 配置.面板上限宽 ?? 配置.面板宽;
-        const 上限高 = 配置.面板上限高 ?? 配置.面板高;
-        panelW.value = Math.min(上限宽, vw * 0.95);
-        panelH.value = Math.min(上限高, vh - 56);
-      }
-      return;
-    }
-
     isNarrow.value = viewportW() < 700;
     if (isNarrow.value) {
       // 窄屏: 面板铺满视口(只留安全边距), 高度给到可用高度的 94%——手机上小窗没有意义,
@@ -417,47 +284,14 @@ const CLOSED_HEIGHT = 配置.球高度 ?? 配置.球直径;
   }
   /** 面板的视口位置(未拖动时居中); 若与悬浮球重叠, 自动沿有空间的方向推开 */
   const panelRectView = computed(() => {
-    // ── 2026-11-20 C7 新增分支：fullscreen 布局 ──
-    //
-    //  `'fullscreen'` 时面板铺满整个视口 —— **不做重叠推开、不做宽屏夹取**。
-    //  这是彼方的口径（它的 `.bf-panel` 在 ≤800px 时是整屏）。
-    //
-    //  ⚠ 这里**不改下面 joint 的任何一行**，只是在前面多一个 return。
-    if (配置.面板布局 === 'fullscreen')
-      return { x: 0, y: 0 };
-
-    // ── 2026-11-20 C7 追加：capped 布局 ──
-    //
-    //  与彼方 `面板矩形()` 的位置口径**逐值一致**：
-    //
-    //      return { x: (vw - w) / 2, y: (vh - h) / 2, w, h };
-    //
-    //  ⚠ **不做 8px 夹取**（需求方 #559 裁定 (a)）。
-    //
-    //    第一版我写了 `clamp(raw, 8, vw - panelW - 8)` —— 那是从 `joint` 抄来的。
-    //    但 8px 夹取是为 **joint**（面板浮在球旁边、需要留边）设计的；
-    //    `capped` 是铺满式，**不需要**。
-    //
-    //    而且它在**极端尺寸**下会分叉：面板比视口宽时
-    //    彼方 `(vw-w)/2` 得**负值**（面板左边超出屏幕），我的 clamp 得 `8`（贴左边）。
-    //    分屏 / 小窗 / 手机横屏都可能触发 —— 那种 bug 最难复现。
-    //
-    //  > C7 的整个前提是"内核能表达彼方的几何"。**差一个夹取就不是表达了。**
-    if (配置.面板布局 === 'capped') {
-      const vw = viewportW();
-      const vh = viewportH();
-      const raw = panelPos.value ?? { x: (vw - panelW.value) / 2, y: (vh - panelH.value) / 2 };
-      return { x: raw.x, y: raw.y };
-    }
-
     const raw = panelPos.value ?? { x: (viewportW() - panelW.value) / 2, y: (viewportH() - panelH.value) / 2 };
     let x = clamp(raw.x, 8, Math.max(8, viewportW() - panelW.value - 8));
     let y = clamp(raw.y, 8, Math.max(8, viewportH() - panelH.value - 8));
     // 球的外扩矩形(含 6px 呼吸空间)
     const orbL = anchorX.value - CLOSED_SIZE / 2 - 6;
     const orbR = anchorX.value + CLOSED_SIZE / 2 + 6;
-    const orbT = anchorY.value - CLOSED_HEIGHT / 2 - 6;
-    const orbB = anchorY.value + CLOSED_HEIGHT / 2 + 6;
+    const orbT = anchorY.value - CLOSED_SIZE / 2 - 6;
+    const orbB = anchorY.value + CLOSED_SIZE / 2 + 6;
     const overlaps = () => orbR > x && orbL < x + panelW.value && orbB > y && orbT < y + panelH.value;
     if (overlaps()) {
       const spaceRight = viewportW() - orbR - 8;
@@ -506,10 +340,9 @@ const CLOSED_HEIGHT = 配置.球高度 ?? 配置.球直径;
       // iframe 元素本身也裁成圆形——否则四个透明方角会把底下(可能是浅色的)楼层界面露出来,
       // 看起来就像球自带一个方形背景
       const left = clamp(anchorX.value - CLOSED_SIZE / 2, 2, Math.max(2, viewportW() - CLOSED_SIZE - 2));
-      // 纵向用高度：非方形球的 iframe 高度不等于宽度
-      const top = clamp(anchorY.value - CLOSED_HEIGHT / 2, 2, Math.max(2, viewportH() - CLOSED_HEIGHT - 2));
+      const top = clamp(anchorY.value - CLOSED_SIZE / 2, 2, Math.max(2, viewportH() - CLOSED_SIZE - 2));
       target.style.width = `${CLOSED_SIZE}px`;
-      target.style.height = `${CLOSED_HEIGHT}px`;
+      target.style.height = `${CLOSED_SIZE}px`;
       target.style.left = `${left}px`;
       target.style.top = `${top}px`;
       target.style.borderRadius = '50%';
@@ -521,31 +354,12 @@ const CLOSED_HEIGHT = 配置.球高度 ?? 配置.球直径;
     // 打开: iframe 罩住"面板+球"的联合矩形, 其余区域酒馆照常可点
     computePanelSize();
     const panel = panelRectView.value;
-
-    // ── 2026-11-20 C7 新增分支：fullscreen 布局 ──
-    //
-    //  面板铺满视口时，iframe 就是整个视口 —— **不需要联合矩形、不需要 clip-path**。
-    //  彼方的口径正是这样（整屏 iframe + `clipPath = 'none'`，命中交给核外的遮罩层）。
-    //
-    //  ⚠ **不改下面 joint 的任何一行**，只是在前面多一个分支。
-    if (配置.面板布局 === 'fullscreen') {
-      target.style.left = '0px';
-      target.style.top = '0px';
-      target.style.width = `${viewportW()}px`;
-      target.style.height = `${viewportH()}px`;
-      target.style.borderRadius = '0px';
-      target.style.clipPath = 'none';
-      frameOrigin.value = { x: 0, y: 0 };
-      syncPanelShadow();
-      return;
-    }
-
     const orbL = clamp(anchorX.value - CLOSED_SIZE / 2, 0, Math.max(0, viewportW() - CLOSED_SIZE));
-    const orbT = clamp(anchorY.value - CLOSED_HEIGHT / 2, 0, Math.max(0, viewportH() - CLOSED_HEIGHT));
+    const orbT = clamp(anchorY.value - CLOSED_SIZE / 2, 0, Math.max(0, viewportH() - CLOSED_SIZE));
     const left = Math.max(0, Math.min(orbL, panel.x) - 4);
     const top = Math.max(0, Math.min(orbT, panel.y) - 4);
     const right = Math.min(viewportW(), Math.max(orbL + CLOSED_SIZE, panel.x + panelW.value) + 4);
-    const bottom = Math.min(viewportH(), Math.max(orbT + CLOSED_HEIGHT, panel.y + panelH.value) + 4);
+    const bottom = Math.min(viewportH(), Math.max(orbT + CLOSED_SIZE, panel.y + panelH.value) + 4);
     target.style.left = `${left}px`;
     target.style.top = `${top}px`;
     target.style.width = `${right - left}px`;
@@ -574,7 +388,7 @@ const CLOSED_HEIGHT = 配置.球高度 ?? 配置.球直径;
     // 下界必须与 球位有效() 同口径(CLOSED_SIZE, 不是半个球): 夹到 20 这种值会被判毒值,
     // 紧接着 兜底球心 把球弹到右下角 —— 窗口一缩小球就"跳"走。
     anchorX.value = clamp(anchorX.value, CLOSED_SIZE, Math.max(CLOSED_SIZE, viewportW() - CLOSED_SIZE / 2));
-    anchorY.value = clamp(anchorY.value, CLOSED_HEIGHT, Math.max(CLOSED_HEIGHT, viewportH() - CLOSED_HEIGHT / 2));
+    anchorY.value = clamp(anchorY.value, CLOSED_SIZE, Math.max(CLOSED_SIZE, viewportH() - CLOSED_SIZE / 2));
     // 拖动过的面板跟随视口收回可视范围
     if (panelPos.value) {
       computePanelSize();
@@ -620,38 +434,12 @@ const CLOSED_HEIGHT = 配置.球高度 ?? 配置.球直径;
   /** 球在 iframe 内的位置: 关闭时填满小 iframe, 打开时按锚点相对 iframe 原点定位 */
   const orbStyle = computed(() => {
     兜底球心();
-    if (!panelOpen.value)
-      return { left: '0px', top: '0px' };
-
-    // ── 2026-11-20 C7 新增分支：打开态球 = '贴边书签' ──
-    //
-    //  球被推到面板两侧的边距里（贴边），**两侧都没空间时隐藏**。
-    //  这是彼方的口径（避免球压住面板内容）。
-    //
-    //  ⚠ **不改下面 '跟随锚点' 的任何一行** —— 包括返回形状（那里是两键，没有 display）。
-    //    第一版我给两个分支都加了 `display: ''`，结果几何测试的 orbStyle 基准立刻红了
-    //    （基准是 `{left, top}` 两键）。**那正是"只增不改"要拦的东西。**
-    if (配置.打开态球 === '贴边书签') {
-      const vw = viewportW();
-      const vh = viewportH();
-      const p = panelRectView.value;
-      // 球直径 + 16 的呼吸空间才算"有边距"
-      const 边距 = CLOSED_SIZE + 16;
-      const 右余 = vw - (p.x + panelW.value);
-      const 左余 = p.x;
-      const top = clamp(anchorY.value - CLOSED_HEIGHT / 2, 8, Math.max(8, vh - CLOSED_HEIGHT - 8));
-      if (右余 >= 边距)
-        return { left: `${Math.round(vw - 边距 - frameOrigin.value.x)}px`, top: `${Math.round(top - frameOrigin.value.y)}px`, display: '' };
-      if (左余 >= 边距)
-        return { left: `${Math.round(8 - frameOrigin.value.x)}px`, top: `${Math.round(top - frameOrigin.value.y)}px`, display: '' };
-      // 两侧都没空间 → 隐藏（否则会压住面板内容）
-      return { left: '0px', top: '0px', display: 'none' };
-    }
-
-    return {
-      left: `${clamp(anchorX.value - CLOSED_SIZE / 2, 0, Math.max(0, viewportW() - CLOSED_SIZE)) - frameOrigin.value.x}px`,
-      top: `${clamp(anchorY.value - CLOSED_HEIGHT / 2, 0, Math.max(0, viewportH() - CLOSED_HEIGHT)) - frameOrigin.value.y}px`,
-    };
+    return panelOpen.value
+      ? {
+          left: `${clamp(anchorX.value - CLOSED_SIZE / 2, 0, Math.max(0, viewportW() - CLOSED_SIZE)) - frameOrigin.value.x}px`,
+          top: `${clamp(anchorY.value - CLOSED_SIZE / 2, 0, Math.max(0, viewportH() - CLOSED_SIZE)) - frameOrigin.value.y}px`,
+        }
+      : { left: '0px', top: '0px' };
   });
 
   let startX = 0;
@@ -701,7 +489,7 @@ const CLOSED_HEIGHT = 配置.球高度 ?? 配置.球直径;
     if (Math.abs(point.x - startX) + Math.abs(point.y - startY) > 4) moved = true;
     // 下界与 球位有效() 同口径(CLOSED_SIZE 而不是半个球): 拖到的位置必须能通过读取时的净化
     anchorX.value = clamp(startAnchorX + (point.x - startX), CLOSED_SIZE, viewportW() - CLOSED_SIZE / 2);
-    anchorY.value = clamp(startAnchorY + (point.y - startY), CLOSED_HEIGHT, viewportH() - CLOSED_HEIGHT / 2);
+    anchorY.value = clamp(startAnchorY + (point.y - startY), CLOSED_SIZE, viewportH() - CLOSED_SIZE / 2);
   }
 
   function onOrbUp() {

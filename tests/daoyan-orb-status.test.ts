@@ -189,19 +189,18 @@ async function 主流程() {
   ok('球心兜底进了取球位路径（装饰步骤抛错也不会把球留在原点）', /function 兜底球心\(\): void \{/.test(面板源) && /const orbStyle = computed\(\(\) => \{\s*\n\s*兜底球心\(\);/.test(面板源) && /if \(!球位有效\(anchorX\.value, anchorY\.value, vw, vh\)\)/.test(面板源));
   // dsh 复测追出的毒值根因：早期"视口未知"时算出的 (20,20) 被写进存储, 而 20>0 让旧守卫永不触发
   //
-  // ⚠ 2026-11-20 C7：这条原来钉的是 `x >= CLOSED_SIZE && y >= CLOSED_SIZE`。
-  //   C7 给内核加了可选的 `球高度`（彼方的球是 46×58 非方形），于是 y 的下界改成了 `CLOSED_HEIGHT`。
-  //   **判据的意图没变**（"下界用整球尺寸，20 这种漏不过去"），变的是形态。
-  //   改成：x 用宽度、y 用高度，两者都必须是"整球尺寸"而不是半个球。
+  // ⚠ 2026-11-20 C7 期间这条曾被改成匹配 `CLOSED_HEIGHT`（那时内核支持非方形球）。
+  //   **C7 已整体回退**（需求方 #565），内核回到单尺寸，所以这里改回 `CLOSED_SIZE`。
+  //   判据的意图从头到尾没变：**下界用整球尺寸，20 这种漏不过去**。
   ok('读取时净化：坏位置一律判无效（下界用整球尺寸，20 这种漏不过去）',
-     /function 球位有效\(x: unknown, y: unknown, vw: number, vh: number\): boolean \{[\s\S]{0,400}x >= CLOSED_SIZE && y >= CLOSED_HEIGHT/.test(面板源));
+     /function 球位有效\(x: unknown, y: unknown, vw: number, vh: number\): boolean \{[\s\S]{0,400}x >= CLOSED_SIZE && y >= CLOSED_SIZE/.test(面板源));
   ok('视口量不出来时只当帧渲染、绝不落盘（否则会永久写进毒值）', /function 视口可用\(vw = viewportW\(\), vh = viewportH\(\)\): boolean \{[\s\S]{0,80}vw >= 200 && vh >= 200/.test(面板源) && /!视口可用\(\) \|\| !球位有效\(anchorX\.value, anchorY\.value, viewportW\(\), viewportH\(\)\)\) return;/.test(面板源));
   ok('读到坏值会纠正 + 回写存储（刷新一次不会再读到毒值）', /const 存过坏值 = !!saved[\s\S]{0,200}球位有效\(saved\.x, saved\.y, vw, vh\)/.test(面板源) && /if \(存过坏值\) \{[\s\S]{0,220}persistPrefs\(\);/.test(面板源));
-  // ⚠ 2026-11-20 C7：y 的下界从 `CLOSED_SIZE` 改成 `CLOSED_HEIGHT`（非方形球）。
-  //   意图不变（默认落右下角），形态变了。
+  // ⚠ 2026-11-20 C7 期间这条曾被改成匹配 `CLOSED_HEIGHT`；C7 回退后改回 `CLOSED_SIZE`。
+  //   意图不变（默认落右下角）。
   ok('默认落右下角（2048×972 下 x>1900、y>780）',
      /anchorX\.value = Math\.max\(CLOSED_SIZE, vw - 60\)/.test(面板源)
-     && /anchorY\.value = Math\.max\(CLOSED_HEIGHT, vh - 130\)/.test(面板源));
+     && /anchorY\.value = Math\.max\(CLOSED_SIZE, vh - 130\)/.test(面板源));
   ok('拖动夹取与净化同口径（下界 CLOSED_SIZE）', /clamp\(startAnchorX \+ \(point\.x - startX\), CLOSED_SIZE, viewportW\(\) - CLOSED_SIZE \/ 2\)/.test(面板源));
   ok('默认落在右下角附近（vw-60 / vh-130，不是左上角）', 面板源.includes('vw - 60') && 面板源.includes('vh - 130'));
   ok('onMounted 里先定球位再装饰（且装饰各自 try 掉）', /兜底球心\(\);\s*\n\s*applyFrame\(\);\s*\n\s*同步贴球锚点\(true\);/.test(面板源) && (面板源.match(/catch \(error\) \{/g) || []).length >= 2);
