@@ -117,7 +117,6 @@ export type NPC面板 = {
   autoTrackEnabled: ComputedRef<boolean>;
   updating: ComputedRef<boolean>;
   /** 展示用的小工具 */
-  fmtTime: (ts?: number) => string;
   头像色号: (名?: string | null) => number;
   cleanText: (text: string) => string;
   /** 编辑会话 */
@@ -142,8 +141,6 @@ export type NPC面板 = {
   /** 卡上还留着恋爱数值/名分, 但标记已取消 → 详情页提示"恋爱已暂停" */
   有恋爱数据: ComputedRef<boolean>;
   切换恋爱对象: () => void;
-  情感倾向选项: string[];
-  名分词表: typeof 名分词表;
   /** 受控字段的控件形态表(附表 B): 页面按 type 渲染, 词表与区间都已从数据源派生 */
   字段控件表: Record<string, 字段控件>;
   /** 胶囊多选的本地选中态(编辑态点一下切换; 保存时归一成逗号串写回) */
@@ -183,7 +180,6 @@ export function 建NPC面板(源: {
   更新中: ComputedRef<boolean>;
   自动建档: ComputedRef<boolean>;
   头像色号: (名?: string | null) => number;
-  fmtTime: (ts?: number) => string;
   建变更: () => 变更环境;
   切换恋爱对象: () => void;
 }): NPC面板 {
@@ -412,7 +408,6 @@ export function 建NPC面板(源: {
     selectedNpcCard: 选中卡,
     autoTrackEnabled: 源.自动建档,
     updating: 源.更新中,
-    fmtTime: 源.fmtTime,
     头像色号: 源.头像色号,
     cleanText,
     editingNpc,
@@ -432,8 +427,6 @@ export function 建NPC面板(源: {
     是恋爱对象,
     有恋爱数据,
     切换恋爱对象: 源.切换恋爱对象,
-    情感倾向选项: Object.keys(情感倾向表),
-    名分词表,
     字段控件表: 建字段控件表(),
     切换标签,
     草稿标签,

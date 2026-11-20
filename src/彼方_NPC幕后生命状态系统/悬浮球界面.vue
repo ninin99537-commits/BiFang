@@ -1629,7 +1629,6 @@ provide(NPC面板键, 建NPC面板({
   更新中: updating,
   自动建档: autoTrackEnabled,
   头像色号,
-  fmtTime,
   建变更: () => 建变更环境(host),
   切换恋爱对象,
 }));

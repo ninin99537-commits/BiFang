@@ -30,11 +30,9 @@ export type 日志面板 = {
   mainPromptTime: Ref<number>;
   mainPromptCount: Ref<number>;
   consoleLines: Ref<Array<Record<string, any>>>;
-  consoleLinesReversed: ComputedRef<Array<Record<string, any>>>;
   consoleStore: ReturnType<typeof useConsoleStore>;
-  /** 时间格式化 / 复制(带降级链) / 复制诊断报告 */
+  /** 时间格式化 / 复制诊断报告 */
   fmtTime: (ts?: number) => string;
-  copyText: (text: string) => Promise<void>;
   copyErrorReport: () => Promise<void>;
   /** 规模行的警示标记: 超建议线(20 个 NPC 或状态卡合计 60000 字)时为真 —— 只是提醒, 不阻止发送 */
   规模超线: ComputedRef<boolean>;
@@ -85,7 +83,17 @@ export function 建日志面板(源: {
   consoleLines: 日志面板['consoleLines'];
   consoleStore: 日志面板['consoleStore'];
   fmtTime: 日志面板['fmtTime'];
-  copyText: 日志面板['copyText'];
+  /**
+   * ⚠ **入参里有，返回里没有**（2026-11-20 C9 后续）。
+   *
+   * 它是"复制到剪贴板"的底层动作，**面板内部的 `复制排障头`/`复制返回开头` 要用它**，
+   * 但页面从不需要直接调它（页面用的是那两个封装好的动作）。
+   *
+   * 所以：**留在入参、不进返回** —— 这样接口里没有"页面永远不用的键"，
+   * 而面板内部仍然拿得到它。这是需求方 #474 说的 (b) 类：
+   * "让面板内部自己拿，页面不碰"。
+   */
+  copyText: (text: string) => Promise<void>;
   copyErrorReport: 日志面板['copyErrorReport'];
 }): 日志面板 {
   // 控制台按"最新在上"展示: 这一页的规矩, 放在这里而不是让模板自己 reverse()
@@ -178,8 +186,22 @@ export function 建日志面板(源: {
   }
 
   return {
-    ...源,
-    consoleLinesReversed,
+    // ⚠ **不能用 `...源`**（2026-11-20 C9 后续，需求方 #474）
+    //
+    //  `...源` 会把入参里的 `copyText` 也摊进返回 ——
+    //  而 `copyText` 是"面板内部用的底层动作"，页面不该拿到它。
+    //  摊开之后，面板契约判据（"解构 == 面板类型键"）就会看到接口比实际需要的大。
+    //
+    //  所以这里**显式列出**每一个返回键。多写几行，换来"接口里没有死键"。
+    debugLog: 源.debugLog,
+    debugStore: 源.debugStore,
+    mainPrompt: 源.mainPrompt,
+    mainPromptTime: 源.mainPromptTime,
+    mainPromptCount: 源.mainPromptCount,
+    consoleLines: 源.consoleLines,
+    consoleStore: 源.consoleStore,
+    fmtTime: 源.fmtTime,
+    copyErrorReport: 源.copyErrorReport,
     规模超线,
     可复制,
     token口径: '中日韩字符 1 字≈1 token, 其余 4 字符≈1 token(粗估)',
