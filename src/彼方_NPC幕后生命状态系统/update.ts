@@ -137,7 +137,11 @@ async function updateNpcStates(host: Host, force = false) {
         // 同步幕后状态到世界书(蓝灯常驻条目), 供主AI与数据库剧情推进读取。
         // 失败必须让玩家看见: 这条链路跑在 AI 更新之后, 玩家最容易误以为"状态更新成功 = 世界书也更新了"。
         if (settings.更新.世界书写入 !== '关闭') {
-            syncNpcStatesWorldbook(host, newData, settings.更新.世界书写入, 摘要.未回票, settings.更新.生理监测).catch(error => 报告世界书失败(host, error));
+            syncNpcStatesWorldbook(host, newData, settings.更新.世界书写入, {
+            // 逐轮上下文：这三个量都是"本轮临时、不落库"的
+            未回票: 摘要.未回票,
+            生理监测: settings.更新.生理监测,
+        }).catch(error => 报告世界书失败(host, error));
         }
         timing.收尾 = Date.now() - finalizeStart;
         const secs = (ms: number) => (ms / 1000).toFixed(1);

@@ -1,6 +1,7 @@
 import type { Host } from './host';
 // 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
 import { buildInjectionPrompt } from './prompts';
+import type { 逐轮上下文 } from './prompts';
 import { BIFANG_WORLDBOOK_ENTRY_NAME, isBifangEntry, sanitizeBifangEntryName } from './彼方条目';
 import { useMainPromptStore } from './日志仓';
 import type { 彼方数据 } from './快照';
@@ -72,7 +73,14 @@ function 报告世界书失败(host: Pick<Host, 'toast'>, error: unknown): void 
     host.toast.warn(世界书失败文案(error), '彼方');
 }
 
-async function syncNpcStatesWorldbook(host: Pick<Host, 'worldbook'>, data: 彼方数据, 目标: 世界书写入目标, 未回票?: Record<string, string[]>, 生理监测 = true) {
+/**
+ * 同步幕后状态到世界书条目。
+ *
+ * @param 上下文 **逐轮上下文**（2026-11-20 C4）：`未回票` / `剧情时间` / `生理监测`。
+ *   原来它们是三个位置参数（其中两个可选、穿五层），加字段极易错位 ——
+ *   现在收成一个具名对象，调用点不会再因为"少传一个"而整体左移。
+ */
+async function syncNpcStatesWorldbook(host: Pick<Host, 'worldbook'>, data: 彼方数据, 目标: 世界书写入目标, 上下文: 逐轮上下文 = {}) {
     if (目标 === '关闭') {
         for (const name of 已有世界书(host))
             await host.worldbook.remove(name, isBifangEntry);
@@ -94,7 +102,11 @@ async function syncNpcStatesWorldbook(host: Pick<Host, 'worldbook'>, data: 彼�
         await host.worldbook.remove(wbName, isBifangEntry);
         return;
     }
-    const content = buildInjectionPrompt(npcEntries, 未回票, String(data?.剧情时间 ?? ''), 生理监测);
+    // 剧情时间从 data 取（它是卡外的事实），逐轮上下文里那一份只作覆盖用
+    const content = buildInjectionPrompt(npcEntries, {
+        ...上下文,
+        剧情时间: 上下文.剧情时间 ?? String(data?.剧情时间 ?? ''),
+    });
     // 日志页「彼方写入世界书的内容」记录: 与写入条目的内容完全一致(同一个渲染函数),
     // 主AI 以及任何读取该世界书的环节读到的就是这一段
     useMainPromptStore().record(content);
@@ -156,7 +168,7 @@ function maybeInjectNpcStates(host: Host): void {
     const data = loadData(host);
     const 目标 = settings.启用幕后 ? settings.更新.世界书写入 : '关闭';
     // 同步失败要报到界面: 这条链路是 fire-and-forget, 吞掉异常等于"关掉了但没清干净"没人知道。
-    syncNpcStatesWorldbook(host, data, 目标, undefined, settings.更新.生理监测).catch(error => 报告世界书失败(host, error));
+    syncNpcStatesWorldbook(host, data, 目标, { 生理监测: settings.更新.生理监测 }).catch(error => 报告世界书失败(host, error));
 }
 
 export { 世界书失败文案, 报告世界书失败, syncNpcStatesWorldbook, maybeInjectNpcStates };

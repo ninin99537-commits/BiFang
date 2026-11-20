@@ -67,7 +67,7 @@ export function 建变更环境(host: 变更宿主): 变更环境 {
             return 清空全部(host);
         },
         // 手改也要带上生理开关: 否则关着生理时, 改个名字就会把生理六列重新写回世界书条目
-        同步世界书: (数据, 写入) => syncNpcStatesWorldbook(host, 数据, 写入 ? 目标 : '关闭', undefined, getSettings(host).更新.生理监测),
+        同步世界书: (数据, 写入) => syncNpcStatesWorldbook(host, 数据, 写入 ? 目标 : '关闭', { 生理监测: getSettings(host).更新.生理监测 }),
         现在: Date.now,
     };
 }

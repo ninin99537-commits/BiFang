@@ -269,7 +269,8 @@ console.log('\n[11] 提示词契约: v3 的规则承诺在源码里确实写着(
 console.log('\n[12] 差集 → 注入单元格的最后一跳(buildInjectionPrompt → 渲染注入表 → 列的第三参数)');
 {
   const entries: [string, any][] = [['小葵', { 未完成事项: [事务('T6', '2025-10-17', '讲完森林探险绘本', '进行中')] }]];
-  const 带 = buildInjectionPrompt(entries, { 小葵: ['T6'] });
+  // 2026-11-20 C4: 第三个参数从"裸的未回票表"改成「逐轮上下文」对象 —— 未回票要挂在 `未回票` 键下
+  const 带 = buildInjectionPrompt(entries, { 未回票: { 小葵: ['T6'] } });
   const 不带 = buildInjectionPrompt(entries);
   // 断言要认"单元格本身": 注入表引导句里恒有「本轮未表态，待确认」字样, 只 includes 短语会假通过。
   ok('带未回票 → 单元格里 T6 那条标"本轮未表态，待确认"', 带.includes('T6 进行中（2025-10-17 起；本轮未表态，待确认）：讲完森林探险绘本'));

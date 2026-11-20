@@ -33,7 +33,7 @@ console.log('\n[2] 认不出就原样');
 console.log('\n[3] 注入表接上了');
 {
   const 卡 = { 当前在做: '看书', 生活状态: '吃饭(2026-10-17 12:00 已用)' };
-  check('传剧情时间: 注入带提示', buildInjectionPrompt([['甲', 卡]], undefined, '2026-10-17 20:00').includes('饿了'), true);
+  check('传剧情时间: 注入带提示', buildInjectionPrompt([['甲', 卡]], { 剧情时间: '2026-10-17 20:00' }).includes('饿了'), true);
   check('不传: 原样', buildInjectionPrompt([['甲', 卡]]).includes('饿了'), false);
 }
 

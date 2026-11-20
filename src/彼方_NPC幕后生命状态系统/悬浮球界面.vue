@@ -681,7 +681,7 @@ watch(
     const 写入 = 启用 && 目标 !== '关闭' && Object.keys(data.value.NPC ?? {}).length > 0;
     // 生理开关也挂在这里: 关掉后条目里的生理六列必须马上消失, 不能等下一轮更新。
     // 总开关关掉同样要清: 关的是"彼方写世界书"这件事, 留着条目等于主AI 继续读过期状态。
-    syncNpcStatesWorldbook(host, data.value, 写入 ? 目标 : '关闭', undefined, settings.value.更新.生理监测).catch(error => 报告世界书失败(host, error));
+    syncNpcStatesWorldbook(host, data.value, 写入 ? 目标 : '关闭', { 生理监测: settings.value.更新.生理监测 }).catch(error => 报告世界书失败(host, error));
   },
 );
 
