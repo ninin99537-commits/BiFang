@@ -255,6 +255,38 @@ const 配置 = [
       展开宏: null,
     },
   },
+  {
+    名: '条件段拆分组',
+    说明: '只开 worldbook + recentTrace（不开生理/恋爱/自定义锚点/场景判断）—— 让世界书段与轨迹段各有两组覆盖',
+    入参: {
+      reply: '泰丝把账本翻到最后一页，皱了皱眉。',
+      replyCount: 1,
+      tracked: ['泰丝'],
+      inSceneHint: ['泰丝'],
+      currentCards: {
+        泰丝: {
+          当前在做: '对账',
+          当前状态: '有点烦',
+          位置: '杂货铺柜台',
+          身份锚点: '杂货铺老板娘',
+          最后剧情时刻: '2026-01-03 20:00',
+        },
+      },
+      autoTrackEnabled: true,
+      physioEnabled: false,
+      恋爱对象名单: [],
+      自定义段: [],
+      worldbook: '【设定】这是一个边境小镇，常年有商队经过。',
+      currentStoryTime: '2026-01-03 19:00',
+      storySpan: '约 1.5 小时（按正文时刻估算）',
+      recentTrace: '近期变化（从最近 2 份快照 diff）：\n泰丝：当前在做 开店铺货 → 对账',
+      storyTimeHint: '',
+      storyTimeHint仅时分: '',
+      playerName: '旅人',
+      playerDescription: '',
+      展开宏: null,
+    },
+  },
 ];
 
 const 源码 = `
