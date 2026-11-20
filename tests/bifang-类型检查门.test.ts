@@ -14,7 +14,7 @@
 //  ③ 门限外的报错**仍在打印**（不是静默吞掉）
 //  ④ 待纳入清单与实际报错的项目一致（不是"想当然的清单"）
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const ROOT = process.cwd();
@@ -87,12 +87,59 @@ console.log('\n[② 自证] 在彼方模板里写一个不存在的名字 → �
 {
   // ── 这条是整个 C9 的验收核心 ──
   //  如果这条不红，那这个门就是"看起来在检查、实际什么都没检查"。
+  //
+  // ── ⚠ 这条判据会**改真实源码文件**（必须小心）──
+  //
+  //  2026-11-20 出过一次事故：这条判据把 `页面-日志.vue` 写脏了，
+  //  而 `finally` 没执行（进程被超时 kill）→ **污染留在磁盘上**，
+  //  下一次 `run.mjs` / `typecheck` 全红，查了半天才发现是判据自己干的。
+  //
+  //  现在三重保障：
+  //    ① **开始先自愈** —— 发现遗留备份就立刻恢复（上次被 kill 的后果）
+  //    ② `finally` 还原
+  //    ③ `process.on('exit')` 兜底（正常退出路径之外的最后一道）
   const 目标 = path.join(ROOT, 'src', '彼方_NPC幕后生命状态系统', '页面-日志.vue');
   const 备份 = `${目标}.gate-test-backup`;
-  const 原文 = readFileSync(目标, 'utf8');
+
+  // ── ① 自愈：上次如果被 kill，文件里可能还留着自证变量 ──
+  //
+  //  ⚠ **不要用"有备份就恢复"** —— 那会把"本轮刚创建的备份"当成遗留，
+  //    结果刚写进去的变异被覆盖回去，门就不红了（本批实际踩过）。
+  //    判据应该是"**文件里有没有自证变量**"，而不是"有没有备份文件"。
+  const 读原文 = () => readFileSync(目标, 'utf8');
+  if (读原文().includes('门限自证变量xyz')) {
+    // 文件被污染 → 优先从备份恢复；没有备份就清掉那一行
+    if (existsSync(备份))
+      writeFileSync(目标, readFileSync(备份, 'utf8'), 'utf8');
+    else
+      writeFileSync(目标, 读原文().replace(/\n\s*<div>\{\{ 门限自证变量xyz \}\}<\/div>/, ''), 'utf8');
+    console.log('  [自愈] 发现上次遗留的自证变量，已清理');
+  }
+  // 无论怎么来的，遗留备份都删掉（后面会重新建）
+  if (existsSync(备份)) {
+    try {
+      unlinkSync(备份);
+    }
+    catch { /* 清理失败不影响 */ }
+  }
+
+  // 记录原文（内存）
+  const 原文 = 读原文();
+  // **先确认原文件是干净的**
+  ok('[前置] 目标文件本身是干净的（没有上次的残留）',
+     !原文.includes('门限自证变量xyz'),
+     '文件里已经有自证变量 —— 上次的还原失败了');
+
+  // ── ③ exit 兜底：不管怎么退出，都写回原文 ──
+  const 还原 = () => {
+    try {
+      writeFileSync(目标, 原文, 'utf8');
+    }
+    catch { /* 兜底失败也只能这样 */ }
+  };
+  process.on('exit', 还原);
 
   try {
-    copyFileSync(目标, 备份);
     writeFileSync(目标, 原文.replace('<template>', '<template>\n  <div>{{ 门限自证变量xyz }}</div>'), 'utf8');
 
     const { 退出码, 输出 } = 跑门();
@@ -101,18 +148,18 @@ console.log('\n[② 自证] 在彼方模板里写一个不存在的名字 → �
     ok('★ 它被归到了门限内（彼方）', /src\/彼方.*门限自证变量xyz|门限自证变量xyz.*src\/彼方/s.test(输出));
   }
   finally {
-    writeFileSync(目标, 原文, 'utf8');
-    try {
-      unlinkSync(备份);
-    }
-    catch {
-      // 备份清理失败不影响判据
-    }
+    // ── ② finally 还原 ──
+    还原();
   }
 
   // **还原后必须回到绿** —— 否则"红了"可能是别的原因
   const { 退出码 } = 跑门();
   ok('[自证] 还原后门重新变绿', 退出码 === 0, `实际 ${退出码}`);
+
+  // **再确认一次磁盘是干净的**
+  ok('[自证] 磁盘上确实没有残留的自证变量',
+     !读原文().includes('门限自证变量xyz'),
+     '还原之后文件里还有自证变量');
 }
 
 // ═════════════════════════════════════════════════════════════
