@@ -6,7 +6,7 @@
 //
 //  | | 共用那份 | 彼方原来 |
 //  |---|---|---|
-//  | ① 读取净化 | `球位有效(x,y,vw,vh)`：下界是 **CLOSED_SIZE**（整球）→ `{20,20}` 判无效 | 只挡 `0,0` 哨兵 → **`{20,20}` 原样返回** |
+//  | ① 读取净化 | `球位有效(x,y,vw,vh)`：下界是 **半球**（= 贴边可保存）→ `{20,20}` 判无效（20 < 23） | 只挡 `0,0` 哨兵 → **`{20,20}` 原样返回** |
 //  | ② 落盘守卫 | `if (!mountedDone \|\| !视口可用() \|\| !球位有效(...)) return` | `persistOrbPos` 只查 `null` |
 //
 //  于是 **`{20,20}` 这个毒值被钉住，永久**：
@@ -150,18 +150,19 @@ console.log('\n[★ 判据 2] 视口不可用（宽高为 0）→ 返回 null');
   eq('★ 视口可用(1280,800) = true', 视口可用(1280, 800), true);
 }
 
-console.log('\n[★ 判据 2b] `球位有效` 的阈值是"整球"不是"半球"（差一个阈值就是永久钉住）');
+console.log('\n[★ 判据 2b] `球位有效` 的下界是**半球**（= 贴边可保存），毒值仍被拦');
 {
-  // ── 这条钉住那个"差一个等号"的细节 ──
+  // ── 2026-11-20 #569 修正：下界从"整球"改回"半球" ──
   //
-  //  旧的下界是 `halfOrb()` = CLOSED_SIZE/2 = 22（球直径 44 时）
-  //  新的下界是 `CLOSED_SIZE` = 44
+  //  锚点是**球心**，所以：
+  //    center = 半（23）→ 球边缘正好贴住屏幕边，完全可见  ← **贴边，必须可保存**
+  //    center = 46     → 球离边还有 23px，永远贴不上
   //
-  //  于是 22 这个值：旧判据放行、新判据拒绝。
+  //  毒值 `{20,20}` 仍被拦（20 < 23）—— `8b239b9` 那个修复不受影响。
   const 半 = 球直径 / 2;
-  eq('★ x = 半球（22）→ 无效（这是"夹出来的毒值"）', 球位有效(半, 半, 1280, 800, 球直径), false);
-  eq('★ x = 整球（44）→ 有效（边界）', 球位有效(球直径, 球直径, 1280, 800, 球直径), true);
-  eq('★ x = 20（历史毒值）→ 无效', 球位有效(20, 20, 1280, 800, 球直径), false);
+  eq('★ x = 半球（23）→ **有效**（这是"贴边"，必须能保存）', 球位有效(半, 半, 1280, 800, 球直径), true);
+  eq('★ x = 20（历史毒值，20 < 23）→ **无效**', 球位有效(20, 20, 1280, 800, 球直径), false);
+  eq('★ x = 19 → 无效（比毒值更小）', 球位有效(19, 19, 1280, 800, 球直径), false);
 
   // 上界：不能超出视口（减去半球）
   eq('★ x = 视口宽 - 半球（边界）→ 有效', 球位有效(1280 - 半, 800 - 半, 1280, 800, 球直径), true);
@@ -172,6 +173,13 @@ console.log('\n[★ 判据 2b] `球位有效` 的阈值是"整球"不是"半球"
   eq('★ Infinity → 无效', 球位有效(Number.POSITIVE_INFINITY, 100, 1280, 800, 球直径), false);
   eq('★ 字符串 → 无效', 球位有效('100', '100', 1280, 800, 球直径), false);
   eq('★ undefined → 无效', 球位有效(undefined, undefined, 1280, 800, 球直径), false);
+
+  // **自证**：如果下界改回整球，第 1 条必须红
+  const 旧整球判据 = (x: number, y: number) => x >= 球直径 && y >= 球直径;
+  eq('[自证] 下界改回整球时，贴边位置（23）被判无效 → 第 1 条会红',
+     旧整球判据(半, 半), false);
+  eq('[自证] 但整球判据仍拦毒值（说明"拦毒值"不是判据的区分点）',
+     旧整球判据(20, 20), false);
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -204,29 +212,31 @@ console.log('\n[结构] 两处守卫确实落地了');
   ok('[结构] 偏好里有 视口可用()', /function 视口可用\(/.test(偏好源));
   ok('[结构] 读球位置 接受视口参数', /读球位置\(host: 偏好宿主, 视口\?/.test(偏好源));
   ok('[结构] 读球位置 调了 球位有效', /球位有效\(偏好\.x, 偏好\.y/.test(偏好源));
-  ok('[结构] 下界是 球直径（整球）不是半球', /x >= 球直径 && y >= 球直径/.test(偏好源));
+  ok('[结构] 下界是 半球（= 贴边可保存）', /x >= 半 && y >= 半/.test(偏好源),
+     '下界不是 半 —— 贴边位置会被判毒值');
 
   const 壳源 = 读('悬浮球界面.vue');
   ok('[结构] persistOrbPos 有 视口可用 守卫', /if \(!视口可用\(vw, vh\)\) return;/.test(壳源));
   ok('[结构] persistOrbPos 有 球位有效 守卫', /if \(!球位有效\(anchorX\.value, anchorY\.value, vw, vh, CLOSED_SIZE\)\) return;/.test(壳源));
   ok('[结构] 读球位置 传了视口进去', /读球位置\(host, \{ w: viewportW\(\), h: viewportH\(\) \}, CLOSED_SIZE\)/.test(壳源));
 
-  // ── 2026-11-20 #504①：拖动 clamp 与落盘守卫**同口径** ──
+  // ── 2026-11-20 #569：拖动夹取与落盘守卫**同口径**，且口径是**半球**（贴边） ──
   //
-  //  这是本文件第 1 条判据的**另一半**：`球位有效` 判毒值（下界整球），
-  //  但**如果拖动能夹到"半露"的位置**，用户松手后那一格就落不了盘 ——
-  //  "我明明放好了"，下次启动回默认位。
+  //  ⚠ 这一节改过两次，记录方向错误：
   //
-  //  所以判据是**两条一起看**：
-  //    ① `minAnchorX()` 的下界是整球（不是 `halfOrb()`）
-  //    ② 拖动夹取用的就是 `minAnchorX()`
-  //  任一条不成立，"拖得到但存不下"就回来了。
-  ok('★ [同口径] minAnchorX 的下界是 CLOSED_SIZE（整球），不是 halfOrb()',
-     /const minAnchorX = \(\): number => CLOSED_SIZE;/.test(壳源),
-     'minAnchorX 仍是 halfOrb() —— 球能拖到半露，而半露落不了盘');
-  ok('★ [同口径] minAnchorY 的下界是 CLOSED_HEIGHT（整球），不是 halfOrbHeight()',
-     /const minAnchorY = \(\): number => CLOSED_HEIGHT;/.test(壳源),
-     'minAnchorY 仍是 halfOrbHeight()');
+  //    第一次（#504①）：把 `minAnchorX` 改成整球 46（"与守卫一致"）
+  //    → **方向反了**。锚点是球心，`center=23` 才是真正贴边；46 会让球永远贴不上边。
+  //    → 用户实测"拖不到左上角"。
+  //
+  //    正确（#569）：**拖动保持半球（允许贴边），落盘守卫也放宽到半球（让贴边可保存）**。
+  //
+  //  > **"一致性"本身不是目标，"一致地做对的事"才是。**
+  ok('★ [同口径] minAnchorX 的下界是 halfOrb()（半球 = 能贴边）',
+     /const minAnchorX = \(\): number => halfOrb\(\) - EDGE_GAP;/.test(壳源),
+     'minAnchorX 不是半球 —— 球拖不到贴边位置');
+  ok('★ [同口径] minAnchorY 的下界是 halfOrbHeight()',
+     /const minAnchorY = \(\): number => halfOrbHeight\(\) - EDGE_GAP;/.test(壳源),
+     'minAnchorY 不是半球');
   ok('★ [同口径] 拖动夹取用的是 minAnchorX/minAnchorY（不是另写一套）',
      /clamp\(startAnchorX \+ \(point\.x - startX\), minAnchorX\(\), maxAnchorX\(\)\)/.test(壳源)
      && /clamp\(startAnchorY \+ \(point\.y - startY\), minAnchorY\(\), maxAnchorY\(\)\)/.test(壳源),
@@ -241,10 +251,10 @@ console.log('\n[结构] 两处守卫确实落地了');
      && /clamp\(anchorY\.value, minAnchorY\(\), maxAnchorY\(\)\)/.test(壳源),
      'resize 夹取没有引用 minAnchorX/minAnchorY');
 
-  // **自证**：旧写法（halfOrb - EDGE_GAP）不会被"下界是整球"那条匹配
-  ok('[自证] 旧的 `halfOrb() - EDGE_GAP` 写法不通过',
-     !/const minAnchorX = \(\): number => CLOSED_SIZE;/.test('const minAnchorX = (): number => halfOrb() - EDGE_GAP;'),
-     '正则抓不到旧写法 —— 它是恒真的');
+  // **自证**：旧的"整球"写法不通过
+  ok('[自证] `minAnchorX = () => CLOSED_SIZE`（整球，贴不了边）不通过',
+     !/const minAnchorX = \(\): number => halfOrb\(\) - EDGE_GAP;/.test('const minAnchorX = (): number => CLOSED_SIZE;'),
+     '正则抓不到整球写法 —— 它是恒真的');
 
   // **自证**：正则可以抓到旧写法
   ok('[自证] 正则能抓到"只查 null"的旧落盘守卫',
