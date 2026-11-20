@@ -161,6 +161,96 @@ function 条目身份(书名: string, entry: 世界书条目形状): string {
     return `${书名}｜${标签}`;
 }
 
+/**
+ * **世界书索引**（2026-11-20 C6b，需求方 #486）。
+ *
+ * ── 它解决什么 ──
+ *
+ *  路径二（`getPersonaTextForNpc`）原来**每个 NPC 各遍历一次所有绑定世界书**：
+ *
+ *  ```
+ *  for (const name of tracked) {            // N 个 NPC
+ *    getPersonaTextForNpc(...)              // 每次内部 entries() 遍历每本书
+ *  }
+ *  → N × 书数 次 entries() 调用
+ *  ```
+ *
+ *  5 个 NPC + 2 本书 = **10 次**（本批实测的对照数）。
+ *
+ *  建一次索引之后：**书数 次**（2 次）。
+ *
+ * ── ⚠ 为什么不复用路径一的遍历结果 ──
+ *
+ *  路径一主路径走的是 `主AI激活(name, scanText)` 插件 API，返回的是**激活结果**
+ *  （**按正文筛选过**）。而路径二需要的是**全量绿灯条目**（按 NPC 名匹配，与正文无关）。
+ *
+ *  **拿激活结果当索引 = 漏掉"正文没提到但名字匹配"的人设。**
+ *
+ *  所以索引必须**独立建**，不能顺手复用路径一的遍历。
+ *
+ * ── 索引里放什么 ──
+ *
+ *  已过门槛的**绿灯条目**：有正文、非彼方自身条目、非排除名单、`strategy` 是绿灯
+ *  （不是 `constant`/`vectorized`）。
+ *
+ *  门槛在这里过一次，路径二就不用每条再判一遍 —— 但**名字匹配仍在路径二做**
+ *  （因为每个 NPC 的别名不同）。
+ */
+type 世界书索引 = {
+    /** 已过门槛的绿灯条目，带书名（身份要用） */
+    绿灯条目: Array<{ 书名: string; entry: 有正文条目 }>;
+};
+
+/**
+ * 建世界书索引：**一次遍历所有绑定世界书**，收集全部绿灯条目。
+ *
+ * 调用方应该在"逐 NPC 循环"**之前**调一次，循环内复用（见 `更新输入.ts`）。
+ */
+async function 建世界书索引(host: 世界书宿主, excludeNames: string[] = [], names?: string[]): Promise<世界书索引> {
+    const 书名们 = names ?? 收集世界书来源(host);
+    const excludes = (excludeNames || []).map(s => String(s).trim()).filter(Boolean);
+    const isExcluded = (entry: 世界书条目形状) => 命中排除(entry, excludes);
+
+    const 绿灯条目: Array<{ 书名: string; entry: 有正文条目 }> = [];
+    const seenWorldbook = new Set<string>();
+    const seenContent = new Set<string>();
+
+    for (const 书名 of 书名们) {
+        if (seenWorldbook.has(书名))
+            continue;
+        seenWorldbook.add(书名);
+        let entries: 世界书条目形状[];
+        try {
+            entries = (await host.worldbook.entries(书名)) || [];
+        }
+        catch {
+            continue;
+        }
+        for (const entry of entries) {
+            if (!有正文(entry))
+                continue;
+            // 彼方自己写的条目要排除（否则人设参考会包含上一轮的 NPC 状态卡，自我反馈）
+            if (isBifangEntry(entry) || isExcluded(entry))
+                continue;
+            // 只认绿灯：蓝灯(constant)/向量化(vectorized)与 NPC 名字无关
+            const strategyType = entry.strategy?.type;
+            if (strategyType === 'constant' || strategyType === 'vectorized')
+                continue;
+            const keys = entry.strategy?.keys;
+            if (!Array.isArray(keys) || keys.length === 0)
+                continue;
+            // 内容去重（与路径二原来的口径一致）
+            const fingerprint = String(entry.content ?? '').trim();
+            if (fingerprint && seenContent.has(fingerprint))
+                continue;
+            if (fingerprint)
+                seenContent.add(fingerprint);
+            绿灯条目.push({ 书名, entry });
+        }
+    }
+    return { 绿灯条目 };
+}
+
 function 收集世界书来源(host: 世界书宿主): string[] {
     const names: string[] = [];
     const 加入 = (name?: string | null) => {
@@ -389,7 +479,24 @@ async function 读取世界书段(host: 世界书宿主, scanText: string, exclu
  *   这是本函数与旧实现的关键差别：**在收集阶段就跳过**，于是同一条目**只求值一次**。
  * @returns 渲染后的条目内容(已做 EJS/宏/<if> 求值), 多条目用 \n\n 拼接; 无命中返回空串
  */
-async function getPersonaTextForNpc(host: 世界书宿主, npcName: unknown, alias: unknown = '', excludeNames: string[] = [], 已注入文本 = '', 已发身份: Set<string> = new Set()) {
+/**
+ * 按 NPC 名字收集其专属的绿灯(关键词触发)条目, 用于"人设参考"注入。
+ *
+ * ── ⚠ 2026-11-20 C6b：`索引` 是**必传**的 ──
+ *
+ *  原来本函数内部 `for (const wbName of names) await host.worldbook.entries(wbName)` ——
+ *  每个 NPC 调一次就把所有绑定世界书整本遍历一遍（5 NPC × 2 书 = 10 次）。
+ *
+ *  现在索引由调用方在循环**之前**建一次（`建世界书索引`），循环内复用。
+ *  **必传而不是可选**，就是为了防止"忘了传 → 悄悄退回内部遍历" ——
+ *  那种退化不会报错，只会让性能悄悄回到 10 次。
+ *
+ * ── ⚠ `_excludeNames` 现在不用了 ──
+ *
+ *  排除名单在**建索引**时就生效了（`建世界书索引(host, excludeNames)`），
+ *  所以这里拿到的条目已经过完排除。参数保留只为**不破坏调用方签名**。
+ */
+async function getPersonaTextForNpc(host: 世界书宿主, npcName: unknown, alias: unknown = '', _excludeNames: string[] = [], 已注入文本 = '', 已发身份: Set<string> = new Set(), 索引: 世界书索引 = { 绿灯条目: [] }) {
     const 环境 = 彼方求值环境(host);
     const name = String(npcName ?? '').trim();
     if (!name)
@@ -399,13 +506,12 @@ async function getPersonaTextForNpc(host: 世界书宿主, npcName: unknown, ali
     if (trimmedAlias && trimmedAlias !== name)
         aliases.push(trimmedAlias);
     // 复用与 getActiveWorldbookText 一致的世界书收集范围: 角色卡绑定(群聊=全部成员)+聊天+persona
+    //
+    // ⚠ 2026-11-20 C6b：这里**只用来判"有没有世界书可读"**（空则早退）。
+    //   条目本身来自调用方传进来的 `索引`，不再自己遍历。
     const names = 收集世界书来源(host);
     if (names.length === 0)
         return '';
-    // 排除名单: 与 getActiveWorldbookText 同口径(标题/备注含这些字, 或内容以它开头)
-    const excludes = (excludeNames || []).map(s => String(s).trim()).filter(Boolean);
-    const isExcluded = (entry: 世界书条目形状) => 命中排除(entry, excludes);
-    /** 彼方自己写入的常驻条目: 排除(否则人设参考会包含上一轮的 NPC 状态卡, 造成自我反馈); 判定见 彼方条目.ts */
     /** 关键词匹配: 条目 keys 数组里是否有任意一个 key 等于/包含 NPC 名字(或曾用名)。
      *  只对字符串 key 做匹配; RegExp key 用 .test() 测试 NPC 名。 */
     const entryMatchesNpc = (entry: 世界书条目形状) => {
@@ -441,43 +547,31 @@ async function getPersonaTextForNpc(host: 世界书宿主, npcName: unknown, ali
     };
     // 收集所有命中条目
     //  ⚠ 带上 `书名` —— 记录身份时要用（身份 = 书名 + 标签）
+    //
+    //  ── 2026-11-20 C6b：**从索引里筛，不再自己遍历世界书** ──
+    //
+    //  原来这里是 `for (const wbName of names) { await host.worldbook.entries(wbName) ... }` ——
+    //  每个 NPC 调一次本函数，就把所有绑定世界书**整本遍历一遍**：
+    //  5 个 NPC + 2 本书 = 10 次 `entries()` 调用。
+    //
+    //  现在索引由调用方在循环**之前**建一次（书数 次），这里只做名字匹配。
+    //
+    //  ⚠ **索引里已经是"过门槛的绿灯条目"**（有正文/非彼方/非排除/绿灯/内容去重），
+    //    所以这里不用再判那些 —— 但**名字匹配仍在本地做**（每个 NPC 的别名不同）。
     const matched: Array<{ entry: 有正文条目; 书名: string }> = [];
-    const seenWorldbook = new Set<string>();
-    const seenContent = new Set<string>();
-    for (const wbName of names) {
-        if (seenWorldbook.has(wbName))
+    for (const { 书名: wbName, entry } of 索引.绿灯条目) {
+        if (!entryMatchesNpc(entry))
             continue;
-        seenWorldbook.add(wbName);
-        let entries: 世界书条目形状[];
-        try {
-            entries = (await host.worldbook.entries(wbName)) || [];
-        }
-        catch {
+        // ── 2026-11-20 C6：**按身份**跳过"世界书段已经发过"的条目 ──
+        //
+        //  这一步必须在**求值之前**（也就是在收集阶段）：
+        //  求值一次就是一次 `<if>`/EJS/表格解析，而且用空 scanText 求出来的
+        //  结果可能与路径一不同 → 那正是"同一条设定发两遍且内容不同"的来源。
+        //
+        //  跳过它 = 同一条目**只求值一次**（保留路径一的 scanText 上下文）。
+        if (已发身份.has(条目身份(wbName, entry)))
             continue;
-        }
-        for (const entry of entries) {
-            if (!有正文(entry))
-                continue;
-            if (isBifangEntry(entry) || isExcluded(entry))
-                continue;
-            if (!entryMatchesNpc(entry))
-                continue;
-            // ── 2026-11-20 C6：**按身份**跳过"世界书段已经发过"的条目 ──
-            //
-            //  这一步必须在**求值之前**（也就是在收集阶段）：
-            //  求值一次就是一次 `<if>`/EJS/表格解析，而且用空 scanText 求出来的
-            //  结果可能与路径一不同 → 那正是"同一条设定发两遍且内容不同"的来源。
-            //
-            //  跳过它 = 同一条目**只求值一次**（保留路径一的 scanText 上下文）。
-            if (已发身份.has(条目身份(wbName, entry)))
-                continue;
-            const fingerprint = String(entry.content ?? '').trim();
-            if (fingerprint && seenContent.has(fingerprint))
-                continue;
-            if (fingerprint)
-                seenContent.add(fingerprint);
-            matched.push({ entry, 书名: wbName });
-        }
+        matched.push({ entry, 书名: wbName });
     }
     if (matched.length === 0)
         return '';
@@ -511,4 +605,5 @@ async function getPersonaTextForNpc(host: 世界书宿主, npcName: unknown, ali
     return lines.join('\n\n');
 }
 
-export { getActiveWorldbookText, getPersonaTextForNpc, resetWorldbookCaches, 读取世界书段 };
+export { getActiveWorldbookText, getPersonaTextForNpc, resetWorldbookCaches, 读取世界书段, 建世界书索引 };
+export type { 世界书索引 };

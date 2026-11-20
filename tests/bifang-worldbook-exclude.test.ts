@@ -11,6 +11,7 @@ import {
   getActiveWorldbookText,
   getPersonaTextForNpc,
   resetWorldbookCaches,
+  建世界书索引,
 } from '../src/彼方_NPC幕后生命状态系统/worldbook';
 
 (globalThis as any)._ = lodash;
@@ -123,7 +124,12 @@ console.log('\n[5] 人设参考(按 NPC 名收条目)同一套判定');
     { name: '[mvu_update]9', comment: '[mvu_update]9', enabled: true, strategy: { type: 'selective', keys: ['艾莉'] }, content: 'MVU_人设' },
     { name: '艾莉人设', enabled: true, strategy: { type: 'selective', keys: ['艾莉'] }, content: '艾莉, 19岁。' },
   ];
-  const out = await getPersonaTextForNpc(假宿主({ 主书: 全部 }), '艾莉', '', ['[mvu_update]'], '');
+  // ⚠ 2026-11-20 C6b：`getPersonaTextForNpc` 的第 7 个参数 `索引` 是必传的。
+  // 不传 → 索引缺省 `{ 绿灯条目: [] }` → 路径二什么都拿不到（不是静默退回内部遍历）。
+  // 排除名单在**建索引**时生效，所以这里把 `['[mvu_update]']` 传给建索引。
+  const host = 假宿主({ 主书: 全部 });
+  const 索引 = await 建世界书索引(host, ['[mvu_update]']);
+  const out = await getPersonaTextForNpc(host, '艾莉', '', ['[mvu_update]'], '', new Set<string>(), 索引);
   check('被排除的没进人设参考', out.includes('MVU_人设'), false);
   check('正常人设进来了', out.includes('艾莉, 19岁'), true);
 }

@@ -33,7 +33,10 @@
 //  ⚠ 需求方特别要求：**调用次数要真的数（插计数器），不要靠读代码估** ——
 //    "估出来的数字就是下一个'通过数是写死的'"。
 import { createPinia, setActivePinia } from 'pinia';
-import { 读取世界书段, getPersonaTextForNpc } from '../src/彼方_NPC幕后生命状态系统/worldbook';
+// ⚠ 2026-11-20 C6b：`getPersonaTextForNpc` 多了第 7 个参数 `索引`（必传）。
+// 本文件的用例原来只传 6 个 → 索引缺省是 `{ 绿灯条目: [] }` → **路径二什么都拿不到**，
+// 判据全红。所以下面每个调用点都补上 `await 建世界书索引(host)`。
+import { 读取世界书段, getPersonaTextForNpc, 建世界书索引 } from '../src/彼方_NPC幕后生命状态系统/worldbook';
 
 setActivePinia(createPinia());
 
@@ -189,7 +192,8 @@ console.log('\n[★ 判据 1] 同一条条目既在正文命中、又命中追�
   计数.重置();
   const 段 = await 静默(async () => 读取世界书段(host, 正文));
   计数.重置();
-  const 人设 = await 静默(async () => getPersonaTextForNpc(host, '莉莉', '', [], 段.文本, 段.已发身份));
+  const 索引 = await 静默(async () => 建世界书索引(host));
+  const 人设 = await 静默(async () => getPersonaTextForNpc(host, '莉莉', '', [], 段.文本, 段.已发身份, 索引));
 
   ok('[前置] 路径一确实发出了这条', 段.文本.includes('莉莉是酒馆老板娘'), `段=${段.文本.slice(0, 80)}`);
   eq('★ 路径二不再重复发（按身份跳过）', 人设, '');
@@ -211,7 +215,8 @@ console.log('\n[★ 判据 2] `<if seed:词>` 条目 → 模型只收到一个�
   const { host, 正文 } = 造宿主({ 条目们: { 主书: [条目] }, 正文: '莉莉走进酒馆，把围裙系上。' });
 
   const 段 = await 静默(async () => 读取世界书段(host, 正文));
-  const 人设 = await 静默(async () => getPersonaTextForNpc(host, '莉莉', '', [], 段.文本, 段.已发身份));
+  const 索引 = await 静默(async () => 建世界书索引(host));
+  const 人设 = await 静默(async () => getPersonaTextForNpc(host, '莉莉', '', [], 段.文本, 段.已发身份, 索引));
 
   ok('[前置] 路径一发出了这条', 段.文本.includes('莉莉是老板娘'), `段=${段.文本.slice(0, 100)}`);
   ok('[前置] 路径一展开的是"在酒馆里忙"（scanText 含"酒馆"）',
@@ -240,13 +245,14 @@ console.log('\n[★ 判据 3] N 个 NPC → 每条条目只求值一次（不是
   const { host, 正文 } = 造宿主({ 条目们: { 主书: [条目] }, 正文: '甲、乙、丙一起走进酒馆。' });
 
   const 段 = await 静默(async () => 读取世界书段(host, 正文));
+  const 索引 = await 静默(async () => 建世界书索引(host));
 
   // 三个 NPC 依次取人设，共享同一个 已发身份
   计数.重置();
   const 人设们: string[] = [];
   const 已发身份 = new Set(段.已发身份);
   for (const 名 of ['甲', '乙', '丙'])
-    人设们.push(await 静默(async () => getPersonaTextForNpc(host, 名, '', [], 段.文本, 已发身份)));
+    人设们.push(await 静默(async () => getPersonaTextForNpc(host, 名, '', [], 段.文本, 已发身份, 索引)));
 
   ok('[前置] 路径一发出了这条', 段.文本.includes('这三个人是同一支小队'), `段=${段.文本.slice(0, 80)}`);
 
@@ -265,7 +271,7 @@ console.log('\n[★ 判据 3] N 个 NPC → 每条条目只求值一次（不是
   计数.重置();
   const 旧行为人设们: string[] = [];
   for (const 名 of ['甲', '乙', '丙'])
-    旧行为人设们.push(await 静默(async () => getPersonaTextForNpc(host, 名, '', [], '', new Set<string>())));
+    旧行为人设们.push(await 静默(async () => getPersonaTextForNpc(host, 名, '', [], '', new Set<string>(), 索引)));
 
   const 旧重复数 = 旧行为人设们.filter(x => x.includes('这三个人是同一支小队')).length;
   ok('[自证] 每次传全新空身份时三个人各拿一份（证明去重真的在起作用）', 旧重复数 === 3, `实际 ${旧重复数} 份`);
@@ -275,23 +281,23 @@ console.log('\n[★ 判据 3] N 个 NPC → 每条条目只求值一次（不是
   const 共享身份 = new Set<string>();
   const 共享人设们: string[] = [];
   for (const 名 of ['甲', '乙', '丙'])
-    共享人设们.push(await 静默(async () => getPersonaTextForNpc(host, 名, '', [], '', 共享身份)));
+    共享人设们.push(await 静默(async () => getPersonaTextForNpc(host, 名, '', [], '', 共享身份, 索引)));
   ok('[自证] 共享同一个 Set 时只有第一份（跨调用记忆生效）',
      [共享人设们[0].includes('这三个人是同一支小队'), 共享人设们[1], 共享人设们[2]].join('|') === 'true||',
      `实际: ${JSON.stringify(共享人设们)}`);
 }
 
-console.log('\n[★ 判据 3b] 数 `entries()` 调用次数：路径二不再对每个 NPC 全量遍历后求值');
+console.log('\n[★ 判据 3b] 数 `entries()` 调用次数：索引建一次，三个 NPC 复用它');
 {
   // ── 直接数宿主侧调用，不靠读代码 ──
   //
-  //  场景：一条只命中"甲"的条目（正文里没有甲，所以路径一不激活它）。
-  //  三个 NPC 依次取人设 → 路径二会被调用 3 次。
-  //  每次内部对"主书"调一次 `entries()` → **3 次 entries 调用**。
+  //  ⚠ 2026-11-20 C6b 改了这条的语义：
+  //    **旧**：路径二每次对"主书"调一次 `entries()` → 3 个 NPC = **3 次**。
+  //    **新**：索引建一次 = **1 次**，三个 NPC 复用它 = **0 次**。
   //
-  //  这条断言的是"调用次数是可观测的、且与 NPC 数线性" ——
-  //  用它来钉住"不能退化成 N 次全量遍历后再求值"这件事的下界。
-  //  （真正把 1+N 降到 1 的是身份去重：命中条目在第一次之后就跳过了。）
+  //  这条现在同时钉住两件事：
+  //    ① 索引只建一次（1 次 entries，不是 3 次）
+  //    ② 同一条目只发一次（身份去重仍在起作用）
   const 条目 = 绿灯条目('甲专属', ['甲'], '甲是铁匠。');
   const { host } = 造宿主({ 条目们: { 主书: [条目] }, 正文: '' });
   const 无甲正文 = '街道空无一人。';
@@ -300,16 +306,21 @@ console.log('\n[★ 判据 3b] 数 `entries()` 调用次数：路径二不再对
   const 段 = await 静默(async () => 读取世界书段(host, 无甲正文));
   eq('[前置] 路径一没激活它', 段.文本, '');
 
+  // ── 建索引：1 次 entries ──
+  计数.重置();
+  const 索引 = await 静默(async () => 建世界书索引(host));
+  eq('★ 建索引 = 1 次 entries（一本书）', 计数.entries调用, 1);
+
+  // ── 三个 NPC 复用索引：0 次 entries ──
   计数.重置();
   const 人设们: string[] = [];
   const 已发身份 = new Set<string>();
   for (const 名 of ['甲', '甲', '甲'])
-    人设们.push(await 静默(async () => getPersonaTextForNpc(host, 名, '', [], '', 已发身份)));
+    人设们.push(await 静默(async () => getPersonaTextForNpc(host, 名, '', [], '', 已发身份, 索引)));
 
-  // 第一次拿到人设，后两次按身份跳过
   ok('★ 第一次拿到人设', 人设们[0].includes('甲是铁匠'), `实际: ${人设们[0]}`);
   eq('★ 后两次为空（同一条目不再发）', [人设们[1], 人设们[2]], ['', '']);
-  ok('★ `entries()` 调用次数 = 3（三个 NPC 各查一次书）', 计数.entries调用 === 3, `实际 ${计数.entries调用}`);
+  eq('★ 三个 NPC 复用索引 = **0 次** entries（旧实现是 3 次）', 计数.entries调用, 0);
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -325,7 +336,8 @@ console.log('\n[边界] 路径一没发出的条目，路径二仍然要发（�
   const 段 = await 静默(async () => 读取世界书段(host, 无乙正文));
   eq('[前置] 路径一没发它', 段.文本, '');
 
-  const 人设 = await 静默(async () => getPersonaTextForNpc(host, '乙', '', [], '', 段.已发身份));
+  const 索引 = await 静默(async () => 建世界书索引(host));
+  const 人设 = await 静默(async () => getPersonaTextForNpc(host, '乙', '', [], '', 段.已发身份, 索引));
   ok('★ 路径二照常发出它', 人设.includes('乙是药剂师'), `实际: ${人设}`);
 }
 
@@ -341,7 +353,8 @@ console.log('\n[边界] 同名条目在两本不同世界书里 → 身份不同
   const 无丙正文 = '街道空无一人。';
 
   const 段 = await 静默(async () => 读取世界书段(host, 无丙正文));
-  const 人设 = await 静默(async () => getPersonaTextForNpc(host, '丙', '', [], '', 段.已发身份));
+  const 索引 = await 静默(async () => 建世界书索引(host));
+  const 人设 = await 静默(async () => getPersonaTextForNpc(host, '丙', '', [], '', 段.已发身份, 索引));
 
   ok('★ 两本书里的条目都发出来了', 人设.includes('甲书里的人设') && 人设.includes('乙书里的人设'), `实际: ${人设}`);
 }

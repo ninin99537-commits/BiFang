@@ -7,7 +7,7 @@
 import { buildUpdateMessages } from './prompts';
 import { 名字出现, 上下文, 最近回复, 正文过滤, 时间提示, 时间跳跃, 追踪NPC } from './聊天取料';
 import { 剧情跨度 } from './剧情时间';
-import { getPersonaTextForNpc, 读取世界书段 } from './worldbook';
+import { getPersonaTextForNpc, 建世界书索引, 读取世界书段 } from './worldbook';
 import { 压缩记忆回溯 } from './记忆回溯';
 import { 生活状态待更新 } from './生活状态';
 import { updateClearLayer, 读取快照序列 } from './快照';
@@ -227,13 +227,23 @@ export async function 收集本轮输入(参数: 取料参数) {
         // 跨 NPC 累积：第一个 NPC 发过的人设条目，后面的 NPC 不该再发一遍
         // （一条 keys 写了三个名字的条目，三个人都被追踪时原来会被求值 1+3=4 遍）
         const 已发身份 = new Set<string>(世界书已发身份);
+        // ── 2026-11-20 C6b：**索引只建一次**，循环内复用 ──
+        //
+        //  原来 `getPersonaTextForNpc` 内部对每个 NPC 各遍历一遍所有绑定世界书：
+        //  5 个 NPC + 2 本书 = 10 次 `entries()` 调用（本批实测的对照数）。
+        //  现在建一次索引 = 书数 次（2 次）。
+        //
+        //  ⚠ **索引必须独立建，不能复用路径一的激活结果** ——
+        //    路径一返回的是"按正文筛选过的激活条目"，而这里要"全量绿灯条目"。
+        //    拿激活结果当索引会漏掉"正文没提到但名字匹配"的人设。
+        const 索引 = await 建世界书索引(host, settings.更新.注入世界书排除 ?? []);
         for (const name of tracked) {
             const card = currentCards[name];
             if (!card)
                 continue;
             const alias = String(card['曾用名'] ?? '').trim();
             try {
-                const personaText = await getPersonaTextForNpc(host, name, alias, settings.更新.注入世界书排除 ?? [], 已发文本, 已发身份);
+                const personaText = await getPersonaTextForNpc(host, name, alias, settings.更新.注入世界书排除 ?? [], 已发文本, 已发身份, 索引);
                 if (personaText && personaText.trim()) {
                     // 零截断原则: 全量发送, 不再截断到 1500 字(规模控制只做在源头的读取范围/条目排除)。
                     card['人设参考'] = personaText.trim();
