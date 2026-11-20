@@ -26,41 +26,33 @@ function ok(label: string, cond: boolean) {
 // ---------------------------------------------------------------------------
 console.log('\n[P1-7] resize 监听：挂与摘必须是**同一个函数引用**，且卸载时真的摘掉');
 {
-  // 直接驱动"挂/摘"两段真实代码形状：用假 window 记录 add/remove
-  const 事件: { type: 'add' | 'remove'; fn: any }[] = [];
-  const 假窗口: any = {
-    addEventListener: (_t: string, fn: any) => 事件.push({ type: 'add', fn }),
-    removeEventListener: (_t: string, fn: any) => 事件.push({ type: 'remove', fn }),
-  };
-  const onViewportResize = () => {};
-  // 复刻修复后的形状：挂的时候存局部变量，摘的时候用它（而不是再读一次 ref）
-  let 挂了resize的窗口: any = null;
-  挂了resize的窗口 = 假窗口;
-  挂了resize的窗口?.addEventListener('resize', onViewportResize);
-  // 模拟 Vue 卸载时 ref 已经为 null
-  const ref已置空 = null;
-  挂了resize的窗口?.removeEventListener('resize', onViewportResize);
-  挂了resize的窗口 = null;
-  void ref已置空;
-
-  check('add 与 remove 各一次', [事件.filter(e => e.type === 'add').length, 事件.filter(e => e.type === 'remove').length], [1, 1]);
-  ok('是同一个函数引用（否则摘不掉）', 事件[0].fn === 事件[1].fn);
-
-  // 对照组：如果卸载时去读 ref（旧写法），ref 已置空 → remove 不会发生
-  const 事件2: any[] = [];
-  const 假窗口2: any = { addEventListener: (_t: string, fn: any) => 事件2.push(['add', fn]), removeEventListener: (_t: string, fn: any) => 事件2.push(['remove', fn]) };
-  const ref: any = { value: 假窗口2 };
-  ref.value?.addEventListener('resize', onViewportResize);
-  ref.value = null; // Vue 卸载顺序
-  ref.value?.removeEventListener('resize', onViewportResize); // 旧写法
-  check('对照组（旧写法）: 只 add 没 remove', [事件2.length, 事件2.filter(e => e[0] === 'remove').length], [1, 0]);
-
-  // 源码辅助：面板机制真的用了局部变量
+  // ── 2026-11-20：删掉"行为段"，只留源码形状断言（需求方 #507 ③）──
+  //
+  //  原来这段是**自导自演**：自己造假 window、造空函数、自己 add/remove 再断言各一次。
+  //  **被测的 `使用面板机制()` 从头到尾没执行** —— 把那逻辑删掉，断言照样全绿。
+  //
+  //  那比"没有断言"更糟：它让人以为"这条有行为验证"。
+  //
+  //  ⚠ 这里测不了真行为：`使用面板机制()` 要 Vue 组件上下文（`onMounted` / `onUnmounted`
+  //    / `ref` / `watch`），Node 里没有。**承认它测不了，比假装测了诚实。**
+  //
+  //  能测的是**源码形状** —— 下面四条：挂的时候存局部变量、摘的时候用它、摘完置空。
+  //  这四条**能抓到"改回旧写法"**（读 ref 而不是局部变量），因为那三处正则会全不匹配。
   const 源 = readFileSync('src/共用/面板机制.ts', 'utf8');
   ok('源码里有 挂了resize的窗口 变量', /let 挂了resize的窗口/.test(源));
   ok('挂的时候赋值给它', /挂了resize的窗口 = parentWin\.value/.test(源));
   ok('摘的时候用它（不再读 parentWin.value）', /挂了resize的窗口\?\.removeEventListener\('resize', onViewportResize\)/.test(源));
   ok('摘完置空', /挂了resize的窗口\?\.removeEventListener[\s\S]{0,80}挂了resize的窗口 = null/.test(源));
+
+  // **自证**：如果源码改回"摘的时候读 ref"，第二条与第三条必须红
+  const 旧写法源 = `
+    parentWin.value?.addEventListener('resize', onViewportResize);
+    parentWin.value?.removeEventListener('resize', onViewportResize);
+  `;
+  ok('[自证] 旧写法不会被"赋值给局部变量"那条匹配',
+     !/挂了resize的窗口 = parentWin\.value/.test(旧写法源));
+  ok('[自证] 旧写法不会被"用它摘"那条匹配',
+     !/挂了resize的窗口\?\.removeEventListener\('resize', onViewportResize\)/.test(旧写法源));
 }
 
 // ---------------------------------------------------------------------------

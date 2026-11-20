@@ -8,6 +8,7 @@
 //      分子凭空多、分母不动。回收率必须是**同一批伏笔的队列比**。
 //   ② **历史条目从未计入埋设**：v1.0 时期埋的伏笔在指标账存在之前就有了，被回收时只加分子。
 // 覆盖 dsh 要求的四例 + 三条边界（迁移只认现存条目 / 去重表有界 / 面板与账本同源）。
+import { readFileSync } from 'node:fs';
 import { createPinia, setActivePinia } from 'pinia';
 import { klona } from 'klona';
 import type { 导演账本, 伏笔 } from '../src/剧情导演/schema';
@@ -105,7 +106,25 @@ async function 主流程() {
     ok('快照装载时把账本伏笔传给了规范化指标(播种必须在能同时拿到伏笔的地方)',
       迁移源码.includes('规范化指标(snapshot.指标, data.伏笔)'));
     // 迁移说明（边界: 只能以现存条目为准）
-    ok('README 写明迁移只认现存条目', true);
+    //
+    // 2026-11-20（需求方 #507 ③）：原来是 `ok('README 写明迁移只认现存条目', true)` ——
+    // 期望值就是字面量 true，**恒真**。改成真的去 README 里找那句话。
+    {
+      const readme路径 = 'src/剧情导演/README.md';
+      let readme = '';
+      try {
+        readme = readFileSync(readme路径, 'utf8');
+      }
+      catch {
+        readme = '';
+      }
+      ok('[前置] 读到了 README', readme.length > 0, `路径 ${readme路径}`);
+      ok('★ README 写明迁移只认现存条目',
+         /现存条目|只认现存|以现存/.test(readme),
+         'README 里找不到"只认现存条目"这类说法 —— 要么文档丢了，要么这句话搬走了');
+      // **自证**：空 README 不会被这条匹配
+      ok('[自证] 空 README 不通过', !/现存条目|只认现存|以现存/.test(''));
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -199,7 +218,12 @@ async function 主流程() {
     ok('面板不再用章节口径的 回收数/埋设数 当比值', !vueSource.includes('{{ 指标.明细.回收数 }}/{{ 指标.明细.埋设数 }}'));
     ok('面板不再自己算回收率(取判据算好的值)', vueSource.includes('回收率文本') && !vueSource.includes('回收数 / 埋设数'));
     // 章节口径的字段仍然存在（只做"本章活动量"参考）
-    ok('章节统计口径的字段未被删掉', vueSource.includes('判据.明细') || true);
+    //
+    // 2026-11-20（需求方 #507 ③）：原来是 `vueSource.includes('判据.明细') || true` ——
+    // `|| true` 让条件**永真**。删掉它，让断言真的去查。
+    ok('★ 章节统计口径的字段未被删掉',
+       vueSource.includes('判据.明细') || vueSource.includes('章节统计'),
+       '面板里既没有「判据.明细」也没有「章节统计」—— 可能整块被删了');
   }
 
   // -------------------------------------------------------------------------

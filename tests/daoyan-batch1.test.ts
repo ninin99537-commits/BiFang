@@ -270,7 +270,10 @@ console.log('\n[K] 零 AI 负担: 提示词不要求 AI 输出指标字段');
 {
   ok('prompts.ts 里没有「指标」', !promptSource.includes('指标'));
   ok('prompts.ts 里没有「埋设章」', !promptSource.includes('埋设章'));
-  ok('账本数据.ts 由代码写入指标', updateSource.includes('应用引擎输出') || true);
+  // 2026-11-20（需求方 #507 ③）：原来是 `updateSource.includes('应用引擎输出') || true` ——
+  // `|| true` 让条件**永真**。删掉它。
+  ok('★ 账本数据.ts 由代码写入指标', updateSource.includes('应用引擎输出'),
+     '账本数据.ts 里找不到「应用引擎输出」—— 可能改名或删了');
 }
 
 console.log('\n[F] 剧终停引擎: 不注入 / 自动路径跳过 / 双写 / 清除出口');
