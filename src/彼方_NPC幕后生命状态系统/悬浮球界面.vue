@@ -859,17 +859,29 @@ watch(worldbookAlwaysDraft, value => {
 const viewportW = (): number => parentWin.value?.innerWidth ?? window.innerWidth;
 const viewportH = (): number => parentWin.value?.innerHeight ?? window.innerHeight;
 
-// ── 读球位：带上视口做毒值净化（2026-11-20 毒值小修，需求方 #469）──
+// ── 读球位：**必须在 onMounted 里读**（2026-11-20 #571 修的真 bug）──
 //
-//  原来只挡 `0,0` 哨兵 → `{20,20}` 这种历史毒值原样返回 →
-//  挂载恢复的下界是 `halfOrb()` ≈ 20，它刚好能通过 → **球被钉在左上角，永久**。
+//  ── 改之前（真机事故）──
 //
-//  现在传视口进去，让 `读球位置` 用**与共用那份同口径**的有效性判定：
-//  下界是 `CLOSED_SIZE`（整球，不是半个球），`{20,20}` 一律判无效 → 返回 null →
-//  下面 `onMounted` 用**默认右下**。
+//    `const savedOrb = 读球位置(host, { w: viewportW(), h: viewportH() }, CLOSED_SIZE);`
+//    写在 **setup 顶层**。那一刻 `rootEl.value` 还是 null →
+//    `parentWin` 是 null → `viewportW()` 退回 `window.innerWidth`（iframe 自己，挂载前是 0 或极小）
+//    → `读球位置` 里的 `视口可用(0, 0)` 失败 → **返回 null**
 //
-//  ⚠ 必须放在 `viewportW/H` **之后**（它们要先用，否则是 TDZ）。
-const savedOrb = 读球位置(host, { w: viewportW(), h: viewportH() }, CLOSED_SIZE);
+//    后果（需求方真机实测）：
+//      存储里 {x:23, y:29}（贴边值）
+//      球位有效(23,29) 判**有效**（所以存储没被纠正写回）
+//      但球在默认右下角 (1985, 833)
+//
+//    **判了有效，却没被用上** —— 因为读的那一刻视口还量不出来。
+//
+//  ── 现在 ──
+//
+//    挪进 `onMounted`（见下方），那时 iframe 已经有布局，`parentWin` 可读。
+//    同时**仍然做毒值净化**（`读球位置` 内部会调 `球位有效`）。
+//
+//  ⚠ 这条的教训：**"函数返回 true"和"结果真的生效"是两件事**。
+//    判据只验了 `球位有效(23,29) === true`，没验"它被用上了"。
 
 /** 视口的响应式快照: 打开面板时球停靠位置需要跟着视口重算 */
 const 视口尺寸 = ref({ w: viewportW(), h: viewportH() });
@@ -1038,13 +1050,21 @@ function applyFrame() {
 }
 
 onMounted(() => {
+  // ── 2026-11-20 #571：**读偏好必须在这里**，不能在 setup 顶层 ──
+  //
+  //  setup 顶层那一刻 iframe 还没布局，`viewportW()` 退回 `window.innerWidth`（0 或极小）
+  //  → `读球位置` 的 `视口可用` 失败 → 返回 null → 球永远用默认位（真机事故）。
+  //
+  //  这里 iframe 已挂载，`parentWin` 可读，视口量得出来。
+  const 存过的球位 = 读球位置(host, { w: viewportW(), h: viewportH() }, CLOSED_SIZE);
+
   anchorX.value =
-    typeof savedOrb?.x === 'number' && savedOrb.x >= minAnchorX() && savedOrb.x <= maxAnchorX()
-      ? savedOrb.x
+    typeof 存过的球位?.x === 'number' && 存过的球位.x >= minAnchorX() && 存过的球位.x <= maxAnchorX()
+      ? 存过的球位.x
       : viewportW() - 40;
   anchorY.value =
-    typeof savedOrb?.y === 'number' && savedOrb.y >= minAnchorY() && savedOrb.y <= maxAnchorY()
-      ? savedOrb.y
+    typeof 存过的球位?.y === 'number' && 存过的球位.y >= minAnchorY() && 存过的球位.y <= maxAnchorY()
+      ? 存过的球位.y
       : viewportH() - 110;
   记视口尺寸();
   applyFrame();

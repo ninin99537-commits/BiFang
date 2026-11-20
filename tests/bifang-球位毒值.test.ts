@@ -243,8 +243,8 @@ console.log('\n[结构] 两处守卫确实落地了');
      '拖动夹取没有引用 minAnchorX/minAnchorY');
   // 挂载恢复与 resize 夹取也走同一对函数 —— 三处一致才算"同口径"
   ok('★ [同口径] 挂载恢复也用 minAnchorX/minAnchorY',
-     /savedOrb\.x >= minAnchorX\(\) && savedOrb\.x <= maxAnchorX\(\)/.test(壳源)
-     && /savedOrb\.y >= minAnchorY\(\) && savedOrb\.y <= maxAnchorY\(\)/.test(壳源),
+     /存过的球位\.x >= minAnchorX\(\) && 存过的球位\.x <= maxAnchorX\(\)/.test(壳源)
+     && /存过的球位\.y >= minAnchorY\(\) && 存过的球位\.y <= maxAnchorY\(\)/.test(壳源),
      '挂载恢复没有引用 minAnchorX/minAnchorY');
   ok('★ [同口径] resize 夹取也用 minAnchorX/minAnchorY',
      /clamp\(anchorX\.value, minAnchorX\(\), maxAnchorX\(\)\)/.test(壳源)
@@ -259,6 +259,93 @@ console.log('\n[结构] 两处守卫确实落地了');
   // **自证**：正则可以抓到旧写法
   ok('[自证] 正则能抓到"只查 null"的旧落盘守卫',
      !/if \(!视口可用\(vw, vh\)\) return;/.test('if (anchorX.value === null || anchorY.value === null) return;'));
+}
+
+// ═════════════════════════════════════════════════════════════
+console.log('\n[★★ 端到端] 存储里是贴边值 {23,29} → 挂载后球**真的贴在左上角**');
+{
+  // ── 2026-11-20 #571：这条补的是"判有效 → 真的用上"之间那段空白 ──
+  //
+  //  真机证据（需求方实测）：
+  //    存储里 {x:23, y:29}（localStorage 与全局一致）
+  //    球位有效(23,29) 判**有效**（因为存储没被纠正写回）
+  //    但 iframe 在 (1985, 833) = 默认右下角
+  //
+  //  → **判了有效，却没被用上。**
+  //
+  //  ── 断点在哪（我查到的）──
+  //
+  //    `savedOrb` 在 **setup 顶层**求值（`悬浮球界面.vue:872`）：
+  //
+  //      const savedOrb = 读球位置(host, { w: viewportW(), h: viewportH() }, CLOSED_SIZE);
+  //
+  //    那一刻 `rootEl.value` 还是 null → `parentWin` 是 null →
+  //    `viewportW()` 退回 `window.innerWidth`（iframe 自己，挂载前是 0 或极小）
+  //    → `读球位置` 里的 `视口可用(0, 0)` 失败 → **返回 null**
+  //
+  //    → `onMounted` 里 `savedOrb` 是 null → 走默认 `viewportW() - 40`
+  //    → 而且**返回 null 不会触发"纠正写回"** → 存储保持 {23,29} 不变
+  //
+  //    **这正好解释了真机那三条证据（读到 / 判有效 / 没写回 / 球在默认位）。**
+  //
+  //  ── 这条判据怎么验 ──
+  //
+  //    不模拟真 DOM（那要 jsdom），而是**直接验那两个函数的组合语义**：
+  //      ① 视口可用时，`读球位置` 返回 {23,29}
+  //      ② 视口不可用时（0×0），返回 null ← **这就是 bug 的形状**
+  //      ③ 断言"挂载路径不该在视口不可用时读偏好"
+  const { 读球位置: 读位置 } = await import('../src/彼方_NPC幕后生命状态系统/悬浮球偏好');
+
+  // 造一个最小宿主：存储里就是贴边值
+  //
+  //  ⚠ 键名必须是 `彼方_界面偏好`（`悬浮球偏好.ts:24` 的 `偏好键`）——
+  //    第一版我写成 `界面偏好`，于是 `读偏好` 读不到 → 返回 null → 判据假红。
+  const 造宿主 = (值: any) => ({
+    vars: {
+      get: () => ({ 彼方_界面偏好: 值 }),
+      update: () => {},
+      del: () => {},
+      insertOrAssign: () => {},
+      scriptId: () => 't',
+    },
+    localStorage: {
+      getItem: () => JSON.stringify(值),
+      setItem: () => {},
+      removeItem: () => {},
+    },
+  });
+
+  // ① 视口可用（1280×800）→ 读到 {23,29}
+  const 好视口 = 读位置(造宿主({ x: 23, y: 29, 主题: 'dark' }), { w: 1280, h: 800 }, 球直径);
+  eq('★ [端到端 ①] 视口可用时，读球位置 返回贴边值 {23,29}', 好视口, { x: 23, y: 29 });
+
+  // ② 视口不可用（0×0，模拟 setup 时 iframe 还没布局）→ 返回 null
+  const 坏视口 = 读位置(造宿主({ x: 23, y: 29, 主题: 'dark' }), { w: 0, h: 0 }, 球直径);
+  eq('★ [端到端 ②] **视口不可用时返回 null —— 这就是真机那个 bug 的形状**', 坏视口, null);
+
+  // ③ 断言"挂载路径不该在 setup 顶层读偏好"（读源码形状）
+  //
+  //    ⚠ 这条是**结构断言**，不是行为断言 —— 它只能说明"代码没在那个位置读"。
+  //      真正的行为验证需要 jsdom + 真 iframe，本批没做（见缺口）。
+  const { readFileSync: 读文件 } = await import('node:fs');
+  const path = await import('node:path');
+  const 壳全文 = 读文件(path.join(process.cwd(), 'src/彼方_NPC幕后生命状态系统/悬浮球界面.vue'), 'utf8');
+  const 壳代码 = 壳全文.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+
+  // `读球位置(...)` 的调用**必须在 onMounted 里**，不能在 setup 顶层
+  const 调用位置 = 壳代码.indexOf('读球位置(host,');
+  const 挂载位置 = 壳代码.indexOf('onMounted(');
+  ok('★ [端到端 ③] `读球位置` 在 onMounted **之后**调用（不在 setup 顶层）',
+     调用位置 >= 0 && 挂载位置 >= 0 && 调用位置 > 挂载位置,
+     `读球位置 在 ${调用位置}，onMounted 在 ${挂载位置} —— 若前者更小就是 setup 顶层求值`);
+
+  // **自证**：旧写法（setup 顶层）会被这条抓到
+  ok('[自证] setup 顶层的写法不通过这条',
+     !((() => {
+       const 旧 = 'const savedOrb = 读球位置(host, { w: viewportW(), h: viewportH() }, CLOSED_SIZE);\nonMounted(() => {});';
+       return 旧.indexOf('读球位置(host,') > 旧.indexOf('onMounted(');
+     })()),
+     '自证失败：旧写法的位置判断不对');
 }
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
