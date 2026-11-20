@@ -39,6 +39,18 @@ export interface 面板机制配置 {
   阴影变量: string;
   /** 悬浮球直径(px): 球宽高、锚点偏移、外层 iframe 尺寸、贴球定位都该用它 */
   球直径: number;
+  /**
+   * 悬浮球**高度**(px)。不传 = 等于 `球直径`（正方形球，烟火/导演现行为）。
+   *
+   * 2026-11-20 C7 闸 1 追加（需求方裁定）：彼方的球是 **46×58 的非方形**，
+   * 而内核原来是"单尺寸"—— 球宽高、锚点偏移、iframe 尺寸、贴球定位全用 `球直径`。
+   * 设计文档 §5 第 4 条点名这是"内核表达不了"之一。
+   *
+   * ⚠ **只增不改**：不传时 `球高度 = 球直径`，所有既有分支的算术**一个数都不变**。
+   *   凡是原来用 `CLOSED_SIZE` 当"高度"的地方，改成 `CLOSED_HEIGHT`；
+   *   不传时 `CLOSED_HEIGHT === CLOSED_SIZE`，结果逐字符相同（几何基准会证明）。
+   */
+  球高度?: number;
   /** 酒馆页面上阴影层的 z-index */
   阴影层序: number;
   /** 面板默认尺寸(窄屏另有规则, 不受这两个数影响) */
@@ -102,6 +114,14 @@ export interface 面板机制配置 {
  */
 export function 使用面板机制(配置: 面板机制配置) {
   const CLOSED_SIZE = 配置.球直径;
+/**
+ * 球的**高度**。不传 `球高度` 时等于 `球直径`（正方形球 = 烟火/导演现行为）。
+ *
+ * 2026-11-20 C7 闸 1 追加：彼方的球是 46×58 的非方形。
+ * ⚠ 下面凡是"纵向"的算术都用它；横向仍用 `CLOSED_SIZE`。
+ *   不传时两者相等，**所有既有结果逐字符不变**。
+ */
+const CLOSED_HEIGHT = 配置.球高度 ?? 配置.球直径;
   const 偏好 = 建偏好会话(配置.存储);
 
   // ---------------------------------------------------------------------------
@@ -282,12 +302,14 @@ export function 使用面板机制(配置: 面板机制配置) {
    * 于是 {x:20,y:20} 这类历史毒值一律判无效 → 走默认右下角(读取时净化)。
    */
   function 球位有效(x: unknown, y: unknown, vw: number, vh: number): boolean {
-    const 半 = CLOSED_SIZE / 2;
+    // x 用宽度、y 用高度（非方形球时两者不同）
+    const 半宽 = CLOSED_SIZE / 2;
+    const 半高 = CLOSED_HEIGHT / 2;
     return (
       typeof x === 'number' && typeof y === 'number' &&
       Number.isFinite(x) && Number.isFinite(y) &&
-      x >= CLOSED_SIZE && y >= CLOSED_SIZE &&
-      x <= vw - 半 && y <= vh - 半
+      x >= CLOSED_SIZE && y >= CLOSED_HEIGHT &&
+      x <= vw - 半宽 && y <= vh - 半高
     );
   }
 
@@ -298,7 +320,8 @@ export function 使用面板机制(配置: 面板机制配置) {
     const vh = viewportH();
     if (!球位有效(anchorX.value, anchorY.value, vw, vh)) {
       anchorX.value = Math.max(CLOSED_SIZE, vw - 60);
-      anchorY.value = Math.max(CLOSED_SIZE, vh - 130);
+      // 纵向下界用高度：非方形球时 y 不能小于整球高
+      anchorY.value = Math.max(CLOSED_HEIGHT, vh - 130);
     }
   }
 
@@ -345,8 +368,8 @@ export function 使用面板机制(配置: 面板机制配置) {
     // 球的外扩矩形(含 6px 呼吸空间)
     const orbL = anchorX.value - CLOSED_SIZE / 2 - 6;
     const orbR = anchorX.value + CLOSED_SIZE / 2 + 6;
-    const orbT = anchorY.value - CLOSED_SIZE / 2 - 6;
-    const orbB = anchorY.value + CLOSED_SIZE / 2 + 6;
+    const orbT = anchorY.value - CLOSED_HEIGHT / 2 - 6;
+    const orbB = anchorY.value + CLOSED_HEIGHT / 2 + 6;
     const overlaps = () => orbR > x && orbL < x + panelW.value && orbB > y && orbT < y + panelH.value;
     if (overlaps()) {
       const spaceRight = viewportW() - orbR - 8;
@@ -395,9 +418,10 @@ export function 使用面板机制(配置: 面板机制配置) {
       // iframe 元素本身也裁成圆形——否则四个透明方角会把底下(可能是浅色的)楼层界面露出来,
       // 看起来就像球自带一个方形背景
       const left = clamp(anchorX.value - CLOSED_SIZE / 2, 2, Math.max(2, viewportW() - CLOSED_SIZE - 2));
-      const top = clamp(anchorY.value - CLOSED_SIZE / 2, 2, Math.max(2, viewportH() - CLOSED_SIZE - 2));
+      // 纵向用高度：非方形球的 iframe 高度不等于宽度
+      const top = clamp(anchorY.value - CLOSED_HEIGHT / 2, 2, Math.max(2, viewportH() - CLOSED_HEIGHT - 2));
       target.style.width = `${CLOSED_SIZE}px`;
-      target.style.height = `${CLOSED_SIZE}px`;
+      target.style.height = `${CLOSED_HEIGHT}px`;
       target.style.left = `${left}px`;
       target.style.top = `${top}px`;
       target.style.borderRadius = '50%';
@@ -429,11 +453,11 @@ export function 使用面板机制(配置: 面板机制配置) {
     }
 
     const orbL = clamp(anchorX.value - CLOSED_SIZE / 2, 0, Math.max(0, viewportW() - CLOSED_SIZE));
-    const orbT = clamp(anchorY.value - CLOSED_SIZE / 2, 0, Math.max(0, viewportH() - CLOSED_SIZE));
+    const orbT = clamp(anchorY.value - CLOSED_HEIGHT / 2, 0, Math.max(0, viewportH() - CLOSED_HEIGHT));
     const left = Math.max(0, Math.min(orbL, panel.x) - 4);
     const top = Math.max(0, Math.min(orbT, panel.y) - 4);
     const right = Math.min(viewportW(), Math.max(orbL + CLOSED_SIZE, panel.x + panelW.value) + 4);
-    const bottom = Math.min(viewportH(), Math.max(orbT + CLOSED_SIZE, panel.y + panelH.value) + 4);
+    const bottom = Math.min(viewportH(), Math.max(orbT + CLOSED_HEIGHT, panel.y + panelH.value) + 4);
     target.style.left = `${left}px`;
     target.style.top = `${top}px`;
     target.style.width = `${right - left}px`;
@@ -462,7 +486,7 @@ export function 使用面板机制(配置: 面板机制配置) {
     // 下界必须与 球位有效() 同口径(CLOSED_SIZE, 不是半个球): 夹到 20 这种值会被判毒值,
     // 紧接着 兜底球心 把球弹到右下角 —— 窗口一缩小球就"跳"走。
     anchorX.value = clamp(anchorX.value, CLOSED_SIZE, Math.max(CLOSED_SIZE, viewportW() - CLOSED_SIZE / 2));
-    anchorY.value = clamp(anchorY.value, CLOSED_SIZE, Math.max(CLOSED_SIZE, viewportH() - CLOSED_SIZE / 2));
+    anchorY.value = clamp(anchorY.value, CLOSED_HEIGHT, Math.max(CLOSED_HEIGHT, viewportH() - CLOSED_HEIGHT / 2));
     // 拖动过的面板跟随视口收回可视范围
     if (panelPos.value) {
       computePanelSize();
@@ -527,7 +551,7 @@ export function 使用面板机制(配置: 面板机制配置) {
       const 边距 = CLOSED_SIZE + 16;
       const 右余 = vw - (p.x + panelW.value);
       const 左余 = p.x;
-      const top = clamp(anchorY.value - CLOSED_SIZE / 2, 8, Math.max(8, vh - CLOSED_SIZE - 8));
+      const top = clamp(anchorY.value - CLOSED_HEIGHT / 2, 8, Math.max(8, vh - CLOSED_HEIGHT - 8));
       if (右余 >= 边距)
         return { left: `${Math.round(vw - 边距 - frameOrigin.value.x)}px`, top: `${Math.round(top - frameOrigin.value.y)}px`, display: '' };
       if (左余 >= 边距)
@@ -538,7 +562,7 @@ export function 使用面板机制(配置: 面板机制配置) {
 
     return {
       left: `${clamp(anchorX.value - CLOSED_SIZE / 2, 0, Math.max(0, viewportW() - CLOSED_SIZE)) - frameOrigin.value.x}px`,
-      top: `${clamp(anchorY.value - CLOSED_SIZE / 2, 0, Math.max(0, viewportH() - CLOSED_SIZE)) - frameOrigin.value.y}px`,
+      top: `${clamp(anchorY.value - CLOSED_HEIGHT / 2, 0, Math.max(0, viewportH() - CLOSED_HEIGHT)) - frameOrigin.value.y}px`,
     };
   });
 
@@ -589,7 +613,7 @@ export function 使用面板机制(配置: 面板机制配置) {
     if (Math.abs(point.x - startX) + Math.abs(point.y - startY) > 4) moved = true;
     // 下界与 球位有效() 同口径(CLOSED_SIZE 而不是半个球): 拖到的位置必须能通过读取时的净化
     anchorX.value = clamp(startAnchorX + (point.x - startX), CLOSED_SIZE, viewportW() - CLOSED_SIZE / 2);
-    anchorY.value = clamp(startAnchorY + (point.y - startY), CLOSED_SIZE, viewportH() - CLOSED_SIZE / 2);
+    anchorY.value = clamp(startAnchorY + (point.y - startY), CLOSED_HEIGHT, viewportH() - CLOSED_HEIGHT / 2);
   }
 
   function onOrbUp() {
