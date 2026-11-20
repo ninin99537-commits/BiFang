@@ -339,6 +339,17 @@ const CLOSED_HEIGHT = 配置.球高度 ?? 配置.球直径;
       isNarrow.value = false;
       panelW.value = viewportW();
       panelH.value = viewportH();
+      // ── ⚠ fullscreen 下 `panelStyleRef` 返回 (0,0) —— 这是**有意的**，不是漏算 ──
+      //
+      //  `panelRectView` 在 fullscreen 分支返回 `{x:0, y:0}`，于是
+      //  `panelStyleRef.left/top` 都是 `0px`。
+      //
+      //  **彼方不读这个值** —— 它的面板位置由自己的 CSS 决定
+      //  （`.bf-panel { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%) }`）。
+      //
+      //  ⚠ **若将来有人要用这个值，先确认它该是 (0,0) 还是居中**：
+      //    现在没有消费者，**没人验证过哪个是对的**。
+      //    "看起来正确的值"比"明确的 (0,0)"更危险 —— 那会把猜测伪装成契约。
       return;
     }
     isNarrow.value = viewportW() < 700;
